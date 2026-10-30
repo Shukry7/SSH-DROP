@@ -1,0 +1,89 @@
+name: Draft release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify and package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-15]
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Prepare sandboxed Electron on Ubuntu
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-linux-sandbox.sh
+      - run: npm run check
+      - name: Desktop regression tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+      - name: Desktop regression tests (Windows and macOS)
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
+      - name: Produce unsigned development installers
+        run: npm exec electron-builder -- --publish never
+      - uses: actions/upload-artifact@v6
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.blockmap
+          if-no-files-found: error
+          retention-days: 14
+
+  draft:
+    name: Assemble draft release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: installers-*
+          path: release-assets
+          merge-multiple: true
+      - name: Prepare checksums and release notes
+        run: node scripts/prepare-release.mjs
+      - name: Create draft for maintainer review
+        shell: bash
+        run: |
+          args=(release create "$RELEASE_TAG" --verify-tag --draft --title "SSHDrop $RELEASE_TAG" --notes-file release-assets/RELEASE_NOTES.md)
+          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          shopt -s nullglob
+          artifacts=(release-assets/*.exe release-assets/*.dmg release-assets/*.AppImage release-assets/*.deb release-assets/*.blockmap release-assets/SHA256SUMS.txt)
+          gh "${args[@]}" "${artifacts[@]}"
