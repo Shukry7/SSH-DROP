@@ -5,6 +5,76 @@ import { join } from 'node:path';
 import metadata from '../../package.json' with { type: 'json' };
 import { fixtureUserKey, sshFixture } from '../fixtures/ssh-server';
 
+test('connection help explains fields without submitting or changing the form', async () => {
+  const userData = await mkdtemp(join(tmpdir(), 'sshdrop-help-'));
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  delete environment.ELECTRON_RUN_AS_NODE;
+  environment.SSHDROP_USER_DATA_DIR = userData;
+  const application = await electron.launch({
+    args: ['.'],
+    env: environment,
+    chromiumSandbox: true,
+  });
+  try {
+    const page = await application.firstWindow();
+    await page.getByText('New to SSH? Start here', { exact: true }).click();
+    await expect(page.getByText('ssh -p 2222 deploy@203.0.113.10', { exact: true })).toBeVisible();
+    await expect(page.getByText(/compare the server fingerprint/)).toBeVisible();
+    await page.getByText('New to SSH? Start here', { exact: true }).click();
+    await page.getByLabel('Host', { exact: true }).fill('server.example.com');
+    const fields = [
+      ['Host', 'without https://'],
+      ['Username', 'hosting dashboard login'],
+      ['Port', '22 is the usual SSH port.'],
+      ['Authentication', 'does not enable it on the server'],
+      ['Password', 'not your hosting website password'],
+      ['Starting directory', 'Terminal cd commands do not change'],
+    ];
+    for (const [label, explanation] of fields) {
+      await page.getByRole('button', { name: `Help with ${label}`, exact: true }).click();
+      const panel = page.getByRole('note', { name: `${label} help`, exact: true });
+      await expect(panel).toBeVisible();
+      await expect(panel).toContainText(explanation);
+      await page.getByRole('button', { name: `Close ${label} help`, exact: true }).click();
+      await expect(panel).not.toBeVisible();
+    }
+    const hostHelp = page.getByRole('button', { name: 'Help with Host', exact: true });
+    await hostHelp.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('note', { name: 'Host help', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('note', { name: 'Host help', exact: true })).not.toBeVisible();
+    await expect(hostHelp).toBeFocused();
+    await hostHelp.click();
+    await page.getByLabel('Host', { exact: true }).click();
+    await expect(page.getByRole('note', { name: 'Host help', exact: true })).not.toBeVisible();
+    await expect(page.getByLabel('Host', { exact: true })).toHaveValue('server.example.com');
+    await expect(page.getByLabel('Port', { exact: true })).toHaveValue('22');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(page.getByText('No active connection', { exact: true })).toBeVisible();
+    await page.getByLabel('Authentication', { exact: true }).selectOption('key');
+    await page.getByRole('button', { name: 'Help with Private key', exact: true }).click();
+    await expect(page.getByRole('note', { name: 'Private key help', exact: true })).toContainText(
+      'not the .pub',
+    );
+    await page.getByRole('button', { name: 'Help with Key passphrase', exact: true }).click();
+    await expect(
+      page.getByRole('note', { name: 'Private key help', exact: true }),
+    ).not.toBeVisible();
+    await expect(
+      page.getByRole('note', { name: 'Key passphrase help', exact: true }),
+    ).toContainText('different from your server account password');
+    await page.screenshot({ path: 'artifacts/connection-help.png' });
+  } finally {
+    await application.close();
+    await rm(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+});
+
 test('desktop boots, exposes only the app bridge, and validates requests', async () => {
   const userData = await mkdtemp(join(tmpdir(), 'sshdrop-desktop-'));
   const environment = Object.fromEntries(
@@ -128,7 +198,7 @@ test('desktop connects, browses, transfers, reconnects with a key, and disconnec
     await application.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
     }, keyfile);
-    await page.getByLabel('Authentication').selectOption('key');
+    await page.getByLabel('Authentication', { exact: true }).selectOption('key');
     await page.getByRole('button', { name: 'Choose private key…' }).click();
     await expect(page.getByRole('button', { name: 'test-private-key', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Connect to server' }).click();

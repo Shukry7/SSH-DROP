@@ -2,7 +2,7 @@
 
 ## 0.1 alpha — Core vertical slice
 
-Secure desktop foundation; validated IPC; host verification; session-only password/private-key authentication; one remote terminal; SFTP browsing; single-file transfers; regression tests; cross-platform CI; desktop smoke tests; version tooling.
+Secure desktop foundation; validated IPC; host verification; session-only password/private-key authentication; beginner connection guide and field help; one remote terminal; SFTP browsing; single-file transfers; regression tests; cross-platform CI; desktop smoke tests; version tooling.
 
 ## 0.2 — Everyday file management
 

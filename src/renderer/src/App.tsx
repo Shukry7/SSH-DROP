@@ -7,6 +7,7 @@ import type {
   TransferUpdate,
 } from '../../shared/contracts';
 import { Terminal } from './Terminal';
+import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -153,32 +154,45 @@ export function App() {
           </p>
           <div className="sidebar-divider" />
           <div className="section-label">SSH CONNECTION</div>
+          <ConnectionGuide />
           <form onSubmit={connect} className="connection-form">
             <fieldset disabled={connected || connecting}>
-              <label>
-                Host
+              <ConnectionField id="connection-host" label="Host" help={connectionHelp.host}>
                 <input
+                  id="connection-host"
+                  aria-describedby="connection-host-help"
                   required
                   autoComplete="off"
                   placeholder="192.168.1.10"
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                 />
-              </label>
+              </ConnectionField>
               <div className="form-row">
-                <label>
-                  Username
+                <ConnectionField
+                  id="connection-username"
+                  label="Username"
+                  help={connectionHelp.username}
+                >
                   <input
+                    id="connection-username"
+                    aria-describedby="connection-username-help"
                     required
                     autoComplete="off"
                     placeholder="deploy"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                   />
-                </label>
-                <label className="port-field">
-                  Port
+                </ConnectionField>
+                <ConnectionField
+                  id="connection-port"
+                  label="Port"
+                  help={connectionHelp.port}
+                  className="port-field"
+                >
                   <input
+                    id="connection-port"
+                    aria-describedby="connection-port-help"
                     required
                     type="number"
                     min="1"
@@ -186,22 +200,32 @@ export function App() {
                     value={port}
                     onChange={(e) => setPort(e.target.value)}
                   />
-                </label>
+                </ConnectionField>
               </div>
-              <label>
-                Authentication
+              <ConnectionField
+                id="connection-auth"
+                label="Authentication"
+                help={connectionHelp.authentication}
+              >
                 <select
+                  id="connection-auth"
+                  aria-describedby="connection-auth-help"
                   value={auth}
                   onChange={(e) => setAuth(e.target.value as 'password' | 'key')}
                 >
                   <option value="password">Password</option>
                   <option value="key">Private key</option>
                 </select>
-              </label>
+              </ConnectionField>
               {auth === 'password' ? (
-                <label>
-                  Password
+                <ConnectionField
+                  id="connection-password"
+                  label="Password"
+                  help={connectionHelp.password}
+                >
                   <input
+                    id="connection-password"
+                    aria-describedby="connection-password-help"
                     required
                     type="password"
                     autoComplete="off"
@@ -209,39 +233,58 @@ export function App() {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Session only"
                   />
-                </label>
+                </ConnectionField>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    className="secondary key-button"
-                    onClick={() =>
-                      void run(async () => setKey(unwrap(await window.sshdrop.chooseKey())))
-                    }
+                  <ConnectionField
+                    id="connection-key"
+                    label="Private key"
+                    help={connectionHelp.privateKey}
+                    labelInput={false}
                   >
-                    {key ? key.name : 'Choose private key…'}
-                  </button>
-                  <label>
-                    Key passphrase
+                    <button
+                      id="connection-key"
+                      aria-describedby="connection-key-help"
+                      type="button"
+                      className="secondary key-button"
+                      onClick={() =>
+                        void run(async () => setKey(unwrap(await window.sshdrop.chooseKey())))
+                      }
+                    >
+                      {key ? key.name : 'Choose private key…'}
+                    </button>
+                  </ConnectionField>
+                  <ConnectionField
+                    id="connection-passphrase"
+                    label="Key passphrase"
+                    help={connectionHelp.passphrase}
+                  >
                     <input
+                      id="connection-passphrase"
+                      aria-describedby="connection-passphrase-help"
                       type="password"
                       autoComplete="off"
                       value={passphrase}
                       onChange={(e) => setPassphrase(e.target.value)}
                       placeholder="If required"
                     />
-                  </label>
+                  </ConnectionField>
                 </>
               )}
-              <label>
-                Starting directory
+              <ConnectionField
+                id="connection-directory"
+                label="Starting directory"
+                help={connectionHelp.directory}
+              >
                 <input
+                  id="connection-directory"
+                  aria-describedby="connection-directory-help"
                   required
                   pattern="/.*"
                   value={path}
                   onChange={(e) => setPath(e.target.value)}
                 />
-              </label>
+              </ConnectionField>
               <button className="primary connect-button" type="submit">
                 {connecting ? 'Connecting…' : 'Connect to server'}
                 <span>↗</span>

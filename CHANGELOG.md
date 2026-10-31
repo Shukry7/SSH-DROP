@@ -6,6 +6,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Added
 
+- Beginner SSH connection guide and keyboard/touch-accessible field help for host, username, port, authentication, password, private key, passphrase, and starting directory.
 - Electron, React, and TypeScript desktop foundation.
 - Explicit SSH host trust, session-only authentication, interactive terminal, and SFTP browsing.
 - Streamed file transfers with progress, cancellation, and exclusive destination creation.

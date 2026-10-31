@@ -7,6 +7,7 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 ## Current scope
 
 - Password or private-key authentication for one active SSH connection.
+- Beginner connection guide and accessible `?` help for each connection field, with examples and guidance on finding server details.
 - Explicit trust prompt for unknown server keys; changed identities are rejected.
 - Interactive remote terminal with resizing.
 - SFTP directory browsing with an explicit destination.
