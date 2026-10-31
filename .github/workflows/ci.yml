@@ -25,10 +25,10 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -48,7 +48,7 @@ jobs:
         run: npm exec electron-builder -- --dir --publish never
       - name: Save test diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: diagnostics-${{ matrix.os }}
           path: |
@@ -58,3 +58,30 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  verify-artifacts:
+    name: Verify diagnostic artifact downloads
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: diagnostics-*
+          path: downloaded-diagnostics
+      - name: Verify coverage artifacts from all three platforms
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          for (const os of ['ubuntu-24.04', 'windows-latest', 'macos-15']) {
+            const path = `downloaded-diagnostics/diagnostics-${os}/coverage/coverage-summary.json`;
+            const summary = JSON.parse(readFileSync(path, 'utf8'));
+            assert(summary.total.lines.total > 0, `Missing coverage data for ${os}`);
+            assert(summary.total.lines.covered > 0, `Empty coverage data for ${os}`);
+            console.log(`Verified diagnostic artifact: ${os}`);
+          }
+          NODE

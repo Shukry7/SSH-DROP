@@ -2,6 +2,13 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [Unreleased]
+
+### Changed
+
+- Update GitHub Actions dependencies and verify uploaded coverage diagnostics can be downloaded from all three platforms.
+- Defer Dependabot's TypeScript 7 updates until the ESLint tooling supports them; compatible TypeScript 6 updates remain enabled.
+
 ## [0.1.0-alpha.1] — 2026-10-31
 
 ### Added
