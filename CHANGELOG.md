@@ -15,6 +15,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Fixed
 
+- Resolve filesystem aliases when detecting direct execution of the sandbox helper, so macOS temporary-path tests execute correctly.
 - Prevent Electron cold-install download output from contaminating the Ubuntu CI AppArmor profile; validate the profile before installing it.
 
 ### Limitations

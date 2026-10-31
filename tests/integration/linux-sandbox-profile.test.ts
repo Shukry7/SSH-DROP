@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -76,5 +76,30 @@ describe('Linux sandbox profile generation', () => {
       execute(process.execPath, [join(scripts, 'linux-sandbox-profile.mjs'), output]),
     ).rejects.toThrow();
     await expect(readFile(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('runs through a symlinked directory as with macOS temporary paths', async () => {
+    const actual = join(directory, 'actual');
+    const scripts = join(actual, 'scripts');
+    const module = join(actual, 'node_modules', 'electron');
+    await mkdir(scripts, { recursive: true });
+    await mkdir(module, { recursive: true });
+    await cp(
+      new URL('../../scripts/linux-sandbox-profile.mjs', import.meta.url),
+      join(scripts, 'linux-sandbox-profile.mjs'),
+    );
+    await writeFile(
+      join(module, 'index.js'),
+      "console.log('Downloading Electron binary...'); module.exports = '/opt/sshdrop/electron';\n",
+    );
+    const alias = join(directory, 'alias');
+    await symlink(actual, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const output = join(directory, 'profile');
+    const result = await execute(process.execPath, [
+      join(alias, 'scripts', 'linux-sandbox-profile.mjs'),
+      output,
+    ]);
+    expect(result.stdout).toContain('Downloading Electron binary...');
+    expect(await readFile(output, 'utf8')).toBe(renderSandboxProfile('/opt/sshdrop/electron'));
   });
 });

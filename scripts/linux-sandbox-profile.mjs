@@ -1,7 +1,7 @@
-import { writeFile } from 'node:fs/promises';
+import { realpath, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { posix, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export function renderSandboxProfile(binary) {
   const unsafe = ['"', '\\', '*', '?', '[', ']', '{', '}'];
@@ -31,7 +31,12 @@ export async function writeSandboxProfile(
   await writeFile(destination, profile, { mode: 0o600 });
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+// macOS aliases /var to /private/var. Node resolves the module URL, but argv can
+// retain the alias. Compare real filesystem paths so direct execution still runs.
+if (
+  process.argv[1] &&
+  (await realpath(resolve(process.argv[1]))) === (await realpath(fileURLToPath(import.meta.url)))
+) {
   if (!process.argv[2])
     throw new Error('Provide a temporary output file for the AppArmor profile.');
   await writeSandboxProfile(process.argv[2]);
