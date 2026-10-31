@@ -4,13 +4,13 @@ SSHDrop is an early development preview. Evaluate it with disposable files and s
 
 ## Choose a build
 
-| Computer            | Release artifact                       | Status                                                            |
-| ------------------- | -------------------------------------- | ----------------------------------------------------------------- |
-| Windows x64         | `SSHDrop-<version>-win-x64.exe`        | Unsigned NSIS installer                                           |
-| macOS Apple Silicon | `SSHDrop-<version>-mac-arm64.dmg`      | Unsigned and not notarized                                        |
-| macOS Intel         | `SSHDrop-<version>-mac-x64.dmg`        | Unsigned and not notarized                                        |
-| Linux x64           | `SSHDrop-<version>-linux-x64.deb`      | Debian-family package; distribution compatibility needs testing   |
-| Linux x64           | `SSHDrop-<version>-linux-x64.AppImage` | Experimental; FUSE and sandbox support depend on the distribution |
+| Computer            | Release artifact                          | Status                                                            |
+| ------------------- | ----------------------------------------- | ----------------------------------------------------------------- |
+| Windows x64         | `SSHDrop-<version>-win-x64.exe`           | Unsigned NSIS installer                                           |
+| macOS Apple Silicon | `SSHDrop-<version>-mac-arm64.dmg`         | Unsigned and not notarized                                        |
+| macOS Intel         | `SSHDrop-<version>-mac-x64.dmg`           | Unsigned and not notarized                                        |
+| Linux x64           | `SSHDrop-<version>-linux-amd64.deb`       | Debian-family package; distribution compatibility needs testing   |
+| Linux x64           | `SSHDrop-<version>-linux-x86_64.AppImage` | Experimental; FUSE and sandbox support depend on the distribution |
 
 The tag workflow builds these formats and creates a draft release. Files become publicly downloadable when that draft is published. Passing CI does not certify every desktop environment or architecture.
 
@@ -57,14 +57,14 @@ CI tests the runner's native architecture. Generating both Intel and Apple Silic
 On a compatible Debian/Ubuntu system, install the downloaded `.deb` through your software installer, or run:
 
 ```sh
-sudo apt install ./SSHDrop-<version>-linux-x64.deb
+sudo apt install ./SSHDrop-<version>-linux-amd64.deb
 ```
 
 For AppImage, give the file execute permission and run it:
 
 ```sh
-chmod +x SSHDrop-<version>-linux-x64.AppImage
-./SSHDrop-<version>-linux-x64.AppImage
+chmod +x SSHDrop-<version>-linux-x86_64.AppImage
+./SSHDrop-<version>-linux-x86_64.AppImage
 ```
 
 AppImage requires compatible system libraries and may need FUSE support. Ubuntu 24.04 and other distributions can restrict the user namespaces needed by Chromium's sandbox. AppImage launch remains experimental on such systems. Do not use `--no-sandbox` or run SSHDrop as root to work around a launch failure. Report the distribution/version and error, or use a compatible packaged/development environment.
