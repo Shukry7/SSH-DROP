@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Revisit when typescript-eslint supports TypeScript 7; keep compatible 6.x updates.
+    ignore:
+      - dependency-name: typescript
+        versions: ['7.x']
     groups:
       development-tools:
         dependency-type: development
