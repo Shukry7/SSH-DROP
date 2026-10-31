@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Keep source, formatting checks, and shell scripts consistent across platforms.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary

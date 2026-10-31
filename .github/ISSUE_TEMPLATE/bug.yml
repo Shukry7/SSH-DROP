@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible SSHDrop problem without exposing secrets.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: SSHDrop version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected behavior, and actual behavior
+      description: Do not include credentials, private keys, or sensitive terminal/file contents.
+    validations:
+      required: true

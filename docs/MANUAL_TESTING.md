@@ -1,0 +1,56 @@
+# Manual testing checklist
+
+Use a disposable Linux server with SSH and SFTP enabled and an account you are allowed to access. Use a writable test folder and disposable files. The current application version is shown in the top bar. This checklist covers the implemented alpha, not the whole PRD.
+
+## Run the current code
+
+Use `npm run dev`. On this Windows development machine, if the global npm command is broken, use PowerShell:
+
+```powershell
+& 'C:\Program Files\nodejs\npm.cmd' run dev
+```
+
+An older packaged executable will not pick up source changes. Close it and run the development app, or rebuild with `npm run package:dir` before launching the new preview.
+
+## Connection and beginner help
+
+- [ ] Expand **New to SSH? Start here**. Read the setup steps, example command, and fingerprint guidance.
+- [ ] Click each **?** beside Host, Username, Port, Authentication, Password, and Starting directory. Each explanation should fit on screen. Close it with its ×, Escape, or a click outside it.
+- [ ] Use Tab to focus a help button and Enter to open it. Help must not submit the connection form or change entered values.
+- [ ] Select **Private key**. Check the Private key and Key passphrase help. The password field should be replaced by key selection and a passphrase field.
+- [ ] Connect with your server address, SSH port, Linux username, and password. For a new server, verify its fingerprint through a trusted channel before accepting it. Cancelling trust should prevent connection.
+- [ ] Try an incorrect password on a test account where failed attempts are allowed. An error should appear, the password field should clear, and correcting it should allow another attempt. Avoid repeated failures on accounts with lockout rules.
+- [ ] Disconnect, choose a private key already authorized on the server, supply its passphrase if encrypted, and connect. Keys must be private key files rather than `.pub` files.
+
+Changed host identities are blocked. Do not rotate a real server's host key merely to test this; changed-key behavior is also covered by automated tests.
+
+## Terminal and browsing
+
+- [ ] Run `pwd`, `ls`, and an interactive program available on your test server, such as `nano`. Exit the program normally.
+- [ ] Resize the app. The terminal should resize and remain usable.
+- [ ] Navigate into a directory with its name button, use **Parent**, enter an absolute path in the explorer, and use **Refresh**.
+- [ ] Check names, sizes, modification times, and hidden files if present. There is no hidden-file toggle yet.
+- [ ] Enter an inaccessible or missing directory. An error should appear without disconnecting the terminal.
+- [ ] Run `cd` in the terminal. The explorer should remain at its separately selected directory. This is intentional; automatic directory following is not implemented.
+
+## Individual file transfers
+
+- [ ] Browse to your writable test folder and select **Upload file**. Choose one small local file. Confirm progress/completion and the new listing entry.
+- [ ] Navigate to a different folder. While the directory is loading, **Upload file** should be disabled. When it becomes available, uploads must go into the newly displayed folder.
+- [ ] Choose **Download** on that file and a new local filename. Compare its contents with the original.
+- [ ] Upload the same filename again. The transfer should fail without overwriting the existing remote file.
+- [ ] Try downloading into an existing local filename. SSHDrop should refuse to overwrite it even if the native dialog asks about replacement.
+- [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own partial destination. If cleanup fails, inspect the reported destination before retrying.
+- [ ] Cancel a native upload/download file dialog. No transfer should start.
+
+Uploads target the folder displayed in the explorer, not the terminal's current working directory. Recursive folder transfers and drag-and-drop are not implemented.
+
+## Session recovery and current limits
+
+- [ ] Disconnect. The terminal should stop accepting input, and the explorer should clear.
+- [ ] Reconnect. It should create a fresh shell; old commands and transfers must not replay.
+- [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
+
+Not implemented: saved profiles or credentials; multiple servers or terminal tabs; file preview/edit/save; create/rename/copy/move/delete/permission actions; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+
+When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
