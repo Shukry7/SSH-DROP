@@ -6,6 +6,8 @@ Core coverage gates are 80% statements, lines, and functions and 70% branches. N
 
 Desktop tests explicitly keep Chromium sandboxing enabled. On the disposable Ubuntu runner, a narrowly scoped AppArmor profile permits the test Electron binary to create its user-namespace sandbox. This does not change the machine-wide AppArmor restriction and is not an end-user installation procedure.
 
+The profile is generated directly from the executable path returned by Electron's Node module. Installer logs are never treated as path data. The script checks for malformed paths and validates the temporary profile with AppArmor's parser before installing it. A regression test simulates a cold Electron install that prints download messages. Actual Ubuntu parser and sandbox behavior still require a successful hosted Linux run.
+
 After the first successful GitHub run, a maintainer should enable a ruleset for main requiring pull requests and these checks:
 
 - `Checks (ubuntu-24.04)`

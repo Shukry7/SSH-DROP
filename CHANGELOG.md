@@ -13,6 +13,10 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Regression tests, desktop smoke tests, and cross-platform GitHub Actions.
 - Version consistency checks and coordinated version bump tooling.
 
+### Fixed
+
+- Prevent Electron cold-install download output from contaminating the Ubuntu CI AppArmor profile; validate the profile before installing it.
+
 ### Limitations
 
 - Early development preview; installers are unsigned until release signing is configured.

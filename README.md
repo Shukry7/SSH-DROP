@@ -2,7 +2,7 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.1.0-alpha.1, early development preview.** Cross-platform checks are configured in GitHub Actions; hosted runs, real-device certification, and signed installers are still pending.
+**Status: 0.1.0-alpha.1, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
 
@@ -15,6 +15,8 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 - Session-only credentials; private keys stay on the local machine.
 
 Saved profiles, persistent secrets, editing, folder transfers, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
+
+For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
 
 ## Development
 

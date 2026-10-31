@@ -6,13 +6,11 @@ set -euo pipefail
 # the machine-wide AppArmor restriction. This runs only on disposable CI runners.
 restriction=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
 if [[ -f "$restriction" ]] && [[ "$(cat "$restriction")" == 1 ]]; then
-  electron_binary="$(node -p "require('electron')")"
-  sudo tee /etc/apparmor.d/sshdrop-ci >/dev/null <<PROFILE
-abi <abi/4.0>,
-include <tunables/global>
-profile sshdrop-ci "$electron_binary" flags=(unconfined) {
-  userns,
-}
-PROFILE
+  temporary_profile="$(mktemp)"
+  trap 'rm -f -- "$temporary_profile"' EXIT
+  node scripts/linux-sandbox-profile.mjs "$temporary_profile"
+  # Validate before replacing the installed profile. Keep sandboxing enabled.
+  sudo apparmor_parser --skip-kernel-load "$temporary_profile"
+  sudo install -m 0644 "$temporary_profile" /etc/apparmor.d/sshdrop-ci
   sudo apparmor_parser -r /etc/apparmor.d/sshdrop-ci
 fi
