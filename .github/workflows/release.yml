@@ -44,7 +44,7 @@ jobs:
         run: npm run test:e2e
       - name: Produce unsigned development installers
         run: npm exec electron-builder -- --publish never
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.os }}
           path: |
