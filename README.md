@@ -18,6 +18,12 @@ Saved profiles, persistent secrets, editing, folder transfers, drag-and-drop, te
 
 For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
 
+## Download the alpha
+
+Public builds, when published, are available from [GitHub Releases](https://github.com/Shukry7/SSH-DROP/releases). Start with the installation notes and known platform limitations in [INSTALLING.md](docs/INSTALLING.md). This alpha uses unsigned installers and should be evaluated with disposable test servers.
+
+End users do not need Node.js or npm for a packaged build. Developers building from source need Node.js 24.
+
 ## Development
 
 Install Node.js 24, then:

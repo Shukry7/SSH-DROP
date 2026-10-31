@@ -2,7 +2,7 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
-## [0.1.0-alpha.1] — Unreleased
+## [0.1.0-alpha.1] — 2026-10-31
 
 ### Added
 
