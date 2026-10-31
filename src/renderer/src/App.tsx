@@ -349,7 +349,7 @@ export function App() {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing}
+                  disabled={!connected || !listing || loading}
                   onClick={() =>
                     void run(async () => {
                       unwrap(await window.sshdrop.upload(listing!.path));

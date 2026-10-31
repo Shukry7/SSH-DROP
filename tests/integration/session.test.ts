@@ -136,6 +136,20 @@ describe('SSH and SFTP over a real loopback connection', () => {
       total: contents.length,
     });
   });
+  it('uploads to a selected nested directory and lists the new file there', async () => {
+    await connect();
+    const local = join(directory, 'nested-upload.txt');
+    await writeFile(local, 'nested directory bytes');
+    await session.transfer('upload', local, '/folder/nested-upload.txt');
+    expect(fixture.files.get('/folder/nested-upload.txt')?.toString()).toBe(
+      'nested directory bytes',
+    );
+    expect(fixture.files.has('/nested-upload.txt')).toBe(false);
+    expect((await session.list('/folder')).entries).toContainEqual(
+      expect.objectContaining({ name: 'nested-upload.txt', kind: 'file' }),
+    );
+  });
+
   it('transfers empty files', async () => {
     await connect();
     const source = join(directory, 'empty');

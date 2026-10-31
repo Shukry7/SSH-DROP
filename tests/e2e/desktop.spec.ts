@@ -180,10 +180,22 @@ test('desktop connects, browses, transfers, reconnects with a key, and disconnec
     await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
     await page.getByRole('button', { name: /folder/, exact: false }).click();
     await expect(page.getByRole('cell', { name: /nested.txt/ })).toBeVisible();
-    await page.getByRole('button', { name: /Parent/ }).click();
-    await page.getByRole('button', { name: /Upload file/ }).click();
+    const upload = page.getByRole('button', { name: /Upload file/ });
+    const releaseDirectoryResponse = fixture.holdNextDirectoryResponse();
+    try {
+      await page.getByRole('button', { name: /Parent/ }).click();
+      await expect(page.getByText('Loading directory…', { exact: true })).toBeVisible();
+      await expect(upload).toBeDisabled();
+      await expect(page.getByLabel('Remote directory', { exact: true })).toHaveValue('/folder');
+    } finally {
+      releaseDirectoryResponse();
+    }
+    await expect(page.getByLabel('Remote directory', { exact: true })).toHaveValue('/');
+    await expect(upload).toBeEnabled();
+    await upload.click();
     await expect(page.getByRole('cell', { name: /uploaded.txt/ })).toBeVisible();
     expect(fixture.files.get('/uploaded.txt')?.toString()).toBe('uploaded through the desktop');
+    expect(fixture.files.has('/folder/uploaded.txt')).toBe(false);
     await page
       .getByRole('row')
       .filter({ hasText: 'hello.txt' })

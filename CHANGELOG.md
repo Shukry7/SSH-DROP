@@ -15,6 +15,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Fixed
 
+- Disable uploads while the explorer is loading a directory, preventing transfers from targeting the previous folder during navigation.
 - Resolve filesystem aliases when detecting direct execution of the sandbox helper, so macOS temporary-path tests execute correctly.
 - Prevent Electron cold-install download output from contaminating the Ubuntu CI AppArmor profile; validate the profile before installing it.
 

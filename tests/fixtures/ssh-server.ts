@@ -32,6 +32,7 @@ export async function sshFixture(
   const connections = new Set<Connection>();
   let lastSize = { rows: 0, cols: 0 };
   let lastShell: ServerChannel | undefined;
+  let nextDirectoryResponse: Promise<void> | undefined;
   const server = new Server({ hostKeys: [options.key ?? fixtureHostKey] }, (client) => {
     connections.add(client);
     client.on('error', () => undefined);
@@ -109,21 +110,24 @@ export async function sshFixture(
             const entry = handles.get(raw.toString());
             if (!entry || entry.read) return sftp.status(id, status.EOF);
             entry.read = true;
-            const paths =
-              entry.path === '/'
-                ? [
-                    '/folder',
-                    ...Array.from(files.keys()).filter((path) => path.slice(1).indexOf('/') === -1),
-                  ]
-                : ['/folder/nested.txt'];
-            sftp.name(
-              id,
-              paths.map((path) => ({
-                filename: posix.basename(path),
-                longname: '',
-                attrs: attrs(path),
-              })),
-            );
+            const paths = [
+              ...(entry.path === '/' ? ['/folder'] : []),
+              ...Array.from(files.keys()).filter((path) => posix.dirname(path) === entry.path),
+            ];
+            const respond = () =>
+              sftp.name(
+                id,
+                paths.map((path) => ({
+                  filename: posix.basename(path),
+                  longname: '',
+                  attrs: attrs(path),
+                })),
+              );
+            if (nextDirectoryResponse) {
+              const response = nextDirectoryResponse;
+              nextDirectoryResponse = undefined;
+              void response.then(respond);
+            } else respond();
           });
           sftp.on('OPEN', (id, path, flags) => {
             if (path.startsWith('/blocked/')) return sftp.status(id, status.PERMISSION_DENIED);
@@ -179,6 +183,13 @@ export async function sshFixture(
     port: address.port,
     files,
     getSize: () => lastSize,
+    holdNextDirectoryResponse: () => {
+      let release!: () => void;
+      nextDirectoryResponse = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
     closeShell: () => lastShell?.end(),
     writeTerminal: (data: Buffer) => lastShell?.write(data),
     drop: () => {

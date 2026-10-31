@@ -36,6 +36,7 @@ Changed host identities are blocked. Do not rotate a real server's host key mere
 ## Individual file transfers
 
 - [ ] Browse to your writable test folder and select **Upload file**. Choose one small local file. Confirm progress/completion and the new listing entry.
+- [ ] Navigate to a different folder. While the directory is loading, **Upload file** should be disabled. When it becomes available, uploads must go into the newly displayed folder.
 - [ ] Choose **Download** on that file and a new local filename. Compare its contents with the original.
 - [ ] Upload the same filename again. The transfer should fail without overwriting the existing remote file.
 - [ ] Try downloading into an existing local filename. SSHDrop should refuse to overwrite it even if the native dialog asks about replacement.
