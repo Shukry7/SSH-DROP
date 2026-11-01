@@ -61,6 +61,7 @@ Uploads target the folder displayed in the explorer, not the terminal's current 
 
 - [ ] Disconnect. The terminal should stop accepting input, and the explorer should clear.
 - [ ] Reconnect. It should create a fresh shell; old commands and transfers must not replay.
+- [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
 Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; create/rename/copy/move/delete/permission actions; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.

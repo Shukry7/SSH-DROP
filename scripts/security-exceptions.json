@@ -1,0 +1,9 @@
+[
+  {
+    "advisory": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+    "package": "minimatch",
+    "versions": ["3.1.5", "5.1.9"],
+    "expires": "2026-12-02",
+    "reason": "Development-only legacy CommonJS consumers require the callable API. These exact versions lack firstPhasePreProcess and optimizationLevel, the algorithm described in this advisory. Modern 9/10 copies are overridden to patched 11.0.1. Reassess upstream releases and the advisory before expiry; do not force major API changes or suppress other findings."
+  }
+]

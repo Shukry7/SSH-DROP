@@ -55,11 +55,13 @@ export function App() {
         setConnected(event.connected);
         setMessage(event.message);
         if (!event.connected) {
+          setTransfers([]);
           navigation.current++;
           setListing(undefined);
           setLoading(false);
         }
       }
+      if (event.type === 'terminal-reset') setTransfers([]);
       if (event.type === 'transfer')
         setTransfers((previous) =>
           [event.transfer, ...previous.filter((item) => item.id !== event.transfer.id)].slice(

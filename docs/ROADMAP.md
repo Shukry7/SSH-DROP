@@ -10,6 +10,8 @@ Implemented in development source (not in the 0.1.0-alpha.1 installers): saved p
 
 Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, create/rename/move/delete, reconnect controls, and drag-and-drop uploads.
 
+Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
+
 ## 0.3 — Remote editing
 
 Monaco, bounded text loading, unsaved changes, safe-save capability handling, encoding policy, and remote-change conflict handling.

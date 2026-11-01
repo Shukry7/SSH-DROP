@@ -25,14 +25,18 @@ jobs:
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Dependency vulnerability policy
+        run: npm run security:audit
+      - name: Tracked-file secret scan
+        run: npm run security:secrets
       - name: Prepare sandboxed Electron on Ubuntu
         if: runner.os == 'Linux'
         run: bash scripts/ci-linux-sandbox.sh
@@ -45,15 +49,18 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:e2e
       - name: Verify native application packaging
-        run: npm exec electron-builder -- --dir --publish never
+        run: npm exec electron-builder -- --publish never
+      - name: Inspect security fuses in packaged binaries
+        run: npm run security:package
       - name: Save test diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: diagnostics-${{ matrix.os }}
           path: |
             coverage/
-            artifacts/
+            artifacts/*.png
+            artifacts/dependency-audit.json
             playwright-report/
             test-results/
           if-no-files-found: ignore
@@ -65,10 +72,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: diagnostics-*
           path: downloaded-diagnostics

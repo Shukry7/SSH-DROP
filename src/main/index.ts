@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'el
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { channels } from '../shared/channels';
 import type { Result, SessionEvent } from '../shared/contracts';
@@ -25,6 +26,12 @@ const keys = new Map<string, string>();
 
 if (!app.isPackaged && process.env.SSHDROP_USER_DATA_DIR)
   app.setPath('userData', process.env.SSHDROP_USER_DATA_DIR);
+const ownsInstance = app.requestSingleInstanceLock();
+if (!ownsInstance) app.quit();
+app.on('second-instance', () => {
+  if (window?.isMinimized()) window.restore();
+  window?.focus();
+});
 
 function trustedSender(event: IpcMainInvokeEvent): void {
   if (
@@ -33,6 +40,12 @@ function trustedSender(event: IpcMainInvokeEvent): void {
     event.senderFrame !== window.webContents.mainFrame
   )
     throw new Error('Untrusted application request.');
+  const expected =
+    !app.isPackaged && process.env.ELECTRON_RENDERER_URL
+      ? process.env.ELECTRON_RENDERER_URL
+      : pathToFileURL(join(__dirname, '../renderer/index.html')).href;
+  if (event.senderFrame.url.split('#')[0] !== new URL(expected).href.split('#')[0])
+    throw new Error('Untrusted application page.');
 }
 
 function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | T): void {
@@ -204,6 +217,8 @@ function createWindow(): void {
       sandbox: true,
       webSecurity: true,
       webviewTag: false,
+      partition: 'sshdrop-session',
+      devTools: !app.isPackaged,
     },
   });
   const trust = new HostTrust(
@@ -240,6 +255,7 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
+  if (!ownsInstance) return;
   app.setAppUserModelId('io.github.shukry7.sshdrop');
   app.setAboutPanelOptions({
     applicationName: 'SSHDrop',

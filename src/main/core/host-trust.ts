@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, rename, writeFile, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z } from 'zod';
+import { readLocalData } from './local-data';
 
 export interface HostIdentity {
   host: string;
@@ -22,7 +23,7 @@ export class HostTrust {
     const identity = JSON.stringify([host.toLowerCase(), port]);
     let records: Record<string, string>;
     try {
-      records = storeSchema.parse(JSON.parse(await readFile(this.file, 'utf8')));
+      records = storeSchema.parse(JSON.parse(await readLocalData(this.file)));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
         throw new Error('The host trust file could not be read. Connection blocked.', {
@@ -39,10 +40,13 @@ export class HostTrust {
     }
     if (!(await this.approve({ host, port, fingerprint }))) return false;
     records[identity] = fingerprint;
+    const contents = JSON.stringify(records, null, 2) + '\n';
+    if (Buffer.byteLength(contents) > 1024 * 1024)
+      throw new Error('The host trust file exceeds the safety limit. Connection blocked.');
     await mkdir(dirname(this.file), { recursive: true });
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, JSON.stringify(records, null, 2) + '\n', {
+      await writeFile(temporary, contents, {
         flag: 'wx',
         mode: 0o600,
       });

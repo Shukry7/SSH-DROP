@@ -6,10 +6,19 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Added
 
+- Security gates for dependency advisories and tracked secrets, weekly monitoring, pinned Actions, actual packaged-fuse inspection, and a privacy policy with documented review limits.
+
+### Fixed
+
+- Dispose terminal buffers and clear transfer history across connections; suppress late transfer events from disconnected sessions.
+- Bound hostile-server directory reads and local JSON storage; validate IPC page origins and prevent multiple app processes from racing local stores.
+
 - Named server profiles with add, edit, load, and confirmed deletion. Persist connection settings, starting directories, and native-selected key-file locations across restarts; passwords, passphrases, and key contents remain session-only.
 - Profile validation, bounded atomic storage, concurrent-write serialization, and regression coverage for persistence, invalid requests, damaged files, missing keys, and deletion cancellation.
 
 ### Changed
+
+- Update Electron to 45.2.1 and compatible minimatch dependencies to 11.0.1. Retain narrowly reviewed development-only legacy copies under an exception expiring 2026-12-02; raw advisory counts are not hidden.
 
 - Update GitHub Actions dependencies and verify uploaded coverage diagnostics can be downloaded from all three platforms.
 - Defer Dependabot's TypeScript 7 updates until the ESLint tooling supports them; compatible TypeScript 6 updates remain enabled.

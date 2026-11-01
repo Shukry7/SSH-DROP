@@ -51,3 +51,5 @@ Headless Linux desktop tests need `xvfb-run -a npm run test:e2e`. Build on each 
 Use focused branches and pull requests, with regression tests for new operations and bug fixes. GitHub Actions checks Windows, Linux, and macOS. See [contributing](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), [security](SECURITY.md), [versioning](docs/VERSIONING.md), and [changelog](CHANGELOG.md).
 
 Licensed under [MIT](LICENSE).
+
+Read the [privacy policy](PRIVACY.md) and [security review](docs/SECURITY_REVIEW.md) for local-data handling, automated checks, temporary dependency exceptions, and remaining signing/independent-review requirements. Development hardening is not included in the existing alpha installers.

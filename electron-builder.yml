@@ -6,6 +6,12 @@ files:
   - out/**/*
   - package.json
 asar: true
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
 npmRebuild: false
 artifactName: SSHDrop-${version}-${os}-${arch}.${ext}
 win:

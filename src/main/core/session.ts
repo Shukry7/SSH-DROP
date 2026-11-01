@@ -6,14 +6,10 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
-import type {
-  DirectoryListing,
-  RemoteEntry,
-  SessionEvent,
-  TransferUpdate,
-} from '../../shared/contracts';
+import type { DirectoryListing, SessionEvent, TransferUpdate } from '../../shared/contracts';
 import { remotePath } from '../../shared/validation';
 import type { HostTrust } from './host-trust';
+import { readDirectory } from './directory';
 
 export class Session {
   private client?: Client;
@@ -34,6 +30,7 @@ export class Session {
     if (this.client || this.connecting)
       throw new Error('Disconnect the current session before connecting again.');
     this.connecting = true;
+    this.emit({ type: 'terminal-reset' });
     const client = new Client();
     this.client = client;
     let trustError: Error | undefined;
@@ -138,6 +135,7 @@ export class Session {
     this.shell = undefined;
     this.sftp = undefined;
     client?.end();
+    this.emit({ type: 'terminal-reset' });
   }
 
   private output(data: string): void {
@@ -175,35 +173,7 @@ export class Session {
 
   async list(path: string): Promise<DirectoryListing> {
     const sftp = this.files();
-    const absolute = remotePath(path);
-    const resolved = await new Promise<string>((resolve, reject) =>
-      sftp.realpath(absolute, (error, result) => (error ? reject(error) : resolve(result))),
-    );
-    const entries = await new Promise<import('ssh2').FileEntryWithStats[]>((resolve, reject) =>
-      sftp.readdir(resolved, (error, result) => (error ? reject(error) : resolve(result))),
-    );
-    return {
-      path: resolved,
-      entries: entries
-        .filter((entry) => entry.filename !== '.' && entry.filename !== '..')
-        .map<RemoteEntry>(({ filename, attrs }) => ({
-          name: filename,
-          kind: attrs.isDirectory()
-            ? 'directory'
-            : attrs.isSymbolicLink()
-              ? 'symlink'
-              : attrs.isFile()
-                ? 'file'
-                : 'other',
-          size: attrs.size,
-          modified: attrs.mtime * 1000,
-        }))
-        .sort(
-          (a, b) =>
-            Number(b.kind === 'directory') - Number(a.kind === 'directory') ||
-            a.name.localeCompare(b.name),
-        ),
-    };
+    return readDirectory(sftp, path, () => this.sftp === sftp);
   }
 
   cancel(id: string): void {
@@ -244,7 +214,9 @@ export class Session {
       transferred: 0,
       status: 'running',
     };
-    const publish = () => this.emit({ type: 'transfer', transfer: { ...update } });
+    const publish = () => {
+      if (this.sftp === sftp) this.emit({ type: 'transfer', transfer: { ...update } });
+    };
     let ownsDestination = false;
     let remoteHandle: Buffer | undefined;
     let localHandle: FileHandle | undefined;

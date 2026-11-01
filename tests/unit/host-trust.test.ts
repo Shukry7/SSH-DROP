@@ -64,4 +64,14 @@ describe('server host trust', () => {
       }).verify('host', 22, Buffer.from('key')),
     ).rejects.toThrow('closed');
   });
+  it('blocks oversized local trust files without replacing them or asking for blind trust', async () => {
+    const contents = ' '.repeat(1024 * 1024 + 1);
+    await writeFile(file, contents);
+    const approve = vi.fn().mockResolvedValue(true);
+    await expect(
+      new HostTrust(file, approve).verify('host', 22, Buffer.from('key')),
+    ).rejects.toThrow('Connection blocked');
+    expect(approve).not.toHaveBeenCalled();
+    expect(await readFile(file, 'utf8')).toBe(contents);
+  });
 });
