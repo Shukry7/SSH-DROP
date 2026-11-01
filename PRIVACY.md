@@ -21,6 +21,8 @@ JavaScript strings and dependency/OS memory cannot be reliably zeroed. Clearing 
 
 ## What leaves this device
 
+Transfers create temporary `.sshdrop-<UUID>.part` files beside the selected destination, requesting owner-only permissions where supported. Failed cleanup or an app crash can leave these files, including their transferred content, on disk or the remote server; inspect the selected folders before removing them. Upload verification reads the remote temporary file back and consumes additional download traffic. Generic transfer-interruption warnings contain no filenames/server details and stay only in app memory until dismissed or the app closes; they may remain visible after reconnect while old transfer names and terminal contents clear.
+
 The remote server receives SSH authentication and commands/file operations needed for your actions. Verify its fingerprint through a trusted source before approving it. The app cannot protect credentials given to a server whose identity you incorrectly trust.
 
 Installing/building the source contacts dependency and build-asset services. `npm run security:audit` sends dependency names/versions to the configured npm advisory service. These are developer/CI operations, not application analytics. GitHub Actions stores test coverage, synthetic test screenshots, traces, and dependency reports for the configured retention period. Tests use disposable loopback servers and generated test keys; do not substitute production credentials or files.

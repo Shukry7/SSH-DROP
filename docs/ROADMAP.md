@@ -12,6 +12,8 @@ Remaining: supported OS secret storage, multi-file queue, recursive transfers wi
 
 Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 
+Development transfers now stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Pause/resume, queues, automatic recovery, and crash-persistent recovery records remain unimplemented.
+
 ## 0.3 — Remote editing
 
 Monaco, bounded text loading, unsaved changes, safe-save capability handling, encoding policy, and remote-change conflict handling.

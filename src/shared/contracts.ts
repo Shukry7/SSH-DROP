@@ -66,6 +66,7 @@ export interface TransferUpdate {
   transferred: number;
   total: number;
   status: 'running' | 'completed' | 'cancelled' | 'failed';
+  phase?: 'preparing' | 'transferring' | 'verifying' | 'finalizing';
   error?: string;
 }
 export type SessionEvent =
@@ -73,7 +74,8 @@ export type SessionEvent =
   | { type: 'status'; connected: boolean; message: string }
   | { type: 'terminal'; data: string; id: number }
   | { type: 'terminal-exit' }
-  | { type: 'transfer'; transfer: TransferUpdate };
+  | { type: 'transfer'; transfer: TransferUpdate }
+  | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
   info(): Promise<Result<AppInfo>>;

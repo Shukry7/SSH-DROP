@@ -23,6 +23,8 @@ export async function sshFixture(
     slow?: boolean;
     denyChanges?: boolean;
     dropAfterChange?: boolean;
+    stall?: string[];
+    corruptReadback?: boolean;
   } = {},
 ) {
   const files = new Map<string, Buffer>([
@@ -34,6 +36,7 @@ export async function sshFixture(
   const connections = new Set<Connection>();
   const directories = new Set(['/', '/folder']);
   const symlinks = new Set<string>();
+  const openedFiles: string[] = [];
   let lastSize = { rows: 0, cols: 0 };
   let lastShell: ServerChannel | undefined;
   let nextDirectoryResponse: Promise<void> | undefined;
@@ -107,9 +110,16 @@ export async function sshFixture(
           );
           for (const event of ['STAT', 'LSTAT'] as const)
             sftp.on(event, (id: number, path: string) => {
+              if (options.stall?.includes(event)) return;
               if (exists(path)) sftp.attrs(id, attrs(path));
               else sftp.status(id, status.NO_SUCH_FILE);
             });
+          sftp.on('FSTAT', (id, raw) => {
+            if (options.stall?.includes('FSTAT')) return;
+            const entry = handles.get(raw.toString());
+            if (entry && exists(entry.path)) sftp.attrs(id, attrs(entry.path));
+            else sftp.status(id, status.NO_SUCH_FILE);
+          });
           sftp.on('OPENDIR', (id, path) => {
             if (path === '/blocked') sftp.status(id, status.PERMISSION_DENIED);
             else if (directories.has(path)) sftp.handle(id, handle(path, true));
@@ -148,20 +158,29 @@ export async function sshFixture(
               return sftp.status(id, status.NO_SUCH_FILE);
             if ((flags & modes.CREAT && !files.has(path)) || flags & modes.TRUNC)
               files.set(path, Buffer.alloc(0));
-            sftp.handle(id, handle(path));
+            const opened = handle(path);
+            openedFiles.push(path);
+            if (!options.stall?.includes('OPEN')) sftp.handle(id, opened);
           });
           sftp.on('READ', (id, raw, offset, length) => {
+            if (options.stall?.includes('READ')) return;
             const entry = handles.get(raw.toString());
             const contents = entry && files.get(entry.path);
             if (!contents) return sftp.status(id, status.FAILURE);
             const respond = () => {
               if (offset >= contents.length) sftp.status(id, status.EOF);
-              else sftp.data(id, contents.subarray(offset, offset + length));
+              else {
+                const data = Buffer.from(contents.subarray(offset, offset + length));
+                if (options.corruptReadback && entry?.path.includes('.part') && data.length)
+                  data[0] ^= 1;
+                sftp.data(id, data);
+              }
             };
             if (options.slow) setTimeout(respond, 20);
             else respond();
           });
           sftp.on('WRITE', (id, raw, offset, data) => {
+            if (options.stall?.includes('WRITE')) return;
             const entry = handles.get(raw.toString());
             if (!entry || options.failWrites) return sftp.status(id, status.PERMISSION_DENIED);
             const old = files.get(entry.path)!;
@@ -175,9 +194,11 @@ export async function sshFixture(
           });
           sftp.on('CLOSE', (id, raw) => {
             handles.delete(raw.toString());
+            if (options.stall?.includes('CLOSE')) return;
             sftp.status(id, options.failClose ? status.FAILURE : status.OK);
           });
           sftp.on('REMOVE', (id, path) => {
+            if (options.stall?.includes('REMOVE')) return;
             if (options.denyChanges) return sftp.status(id, status.PERMISSION_DENIED);
             if (files.delete(path)) changed(id);
             else sftp.status(id, status.NO_SUCH_FILE);
@@ -220,7 +241,7 @@ export async function sshFixture(
                   files.set(to + item.slice(from.length), contents);
                 }
             } else return sftp.status(id, status.FAILURE);
-            changed(id);
+            if (!options.stall?.includes('RENAME')) changed(id);
           });
         });
       }),
@@ -237,6 +258,7 @@ export async function sshFixture(
     files,
     directories,
     symlinks,
+    openedFiles,
     getSize: () => lastSize,
     holdNextDirectoryResponse: () => {
       let release!: () => void;

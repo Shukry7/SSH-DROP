@@ -11,6 +11,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Fixed
 
+- Stage transfers in exclusive mode-0600 temporary sibling files, verify destination bytes with SHA-256, and publish only after source rechecks and verification. Bound setup/cleanup waits and stop stalled transfers without imposing a total-duration limit on progressing transfers. Preserve generic interruption warnings across reconnects, refuse automatic replay/rollback of uncertain publication, and reserve transfer slots before asynchronous setup.
 - Keep sidebar controls at their full height in short windows and use slim, themed scrollbars. Remove the default Electron application menu.
 - Dispose terminal buffers and clear transfer history across connections; suppress late transfer events from disconnected sessions.
 - Bound hostile-server directory reads and local JSON storage; validate IPC page origins and prevent multiple app processes from racing local stores.
