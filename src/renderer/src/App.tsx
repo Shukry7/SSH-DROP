@@ -45,6 +45,7 @@ export function App() {
   const [listing, setListing] = useState<DirectoryListing>();
   const [loading, setLoading] = useState(false);
   const [transfers, setTransfers] = useState<TransferUpdate[]>([]);
+  const [transferNotice, setTransferNotice] = useState('');
   const navigation = useRef(0);
   const connectionEpoch = useRef(0);
   const actionLock = useRef(false);
@@ -72,6 +73,7 @@ export function App() {
         }
       }
       if (event.type === 'terminal-reset') setTransfers([]);
+      if (event.type === 'transfer-warning') setTransferNotice(event.message);
       if (event.type === 'transfer')
         setTransfers((previous) =>
           [event.transfer, ...previous.filter((item) => item.id !== event.transfer.id)].slice(
@@ -403,6 +405,14 @@ export function App() {
             </div>
             <span className="protocol-label">SSH / SFTP</span>
           </div>
+          {transferNotice && (
+            <div role="alert" className="error-banner">
+              {transferNotice}
+              <button aria-label="Dismiss transfer warning" onClick={() => setTransferNotice('')}>
+                ×
+              </button>
+            </div>
+          )}
           {error && !actionInput && (
             <div role="alert" className="error-banner">
               {error}
@@ -438,8 +448,18 @@ export function App() {
                   disabled={!connected || !listing || fileBusy}
                   onClick={() =>
                     void run(async () => {
-                      unwrap(await window.sshdrop.upload(listing!.path));
-                      await browse(listing!.path);
+                      const directory = listing!.path;
+                      const epoch = connectionEpoch.current;
+                      unwrap(await window.sshdrop.upload(directory));
+                      if (epoch === connectionEpoch.current) {
+                        try {
+                          await browse(directory);
+                        } catch {
+                          setError(
+                            'Transfer finished, but refreshing failed. Refresh or reconnect to inspect the folder before retrying.',
+                          );
+                        }
+                      }
                     })
                   }
                 >
@@ -649,7 +669,7 @@ export function App() {
                     />
                     <small>
                       {transfer.error ??
-                        `${size(transfer.transferred)} / ${size(transfer.total)} · ${transfer.status}`}
+                        `${size(transfer.transferred)} / ${size(transfer.total)} · ${transfer.status === 'running' ? (transfer.phase ?? 'transferring') : transfer.status}`}
                     </small>
                   </div>
                   {transfer.status === 'running' && (

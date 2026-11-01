@@ -1,9 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { open, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
 import type {
@@ -16,6 +12,7 @@ import { remotePath } from '../../shared/validation';
 import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
 import { changeRemoteFile, type FileActionWarning } from './file-actions';
+import { runTransfer, transferLimits, transferWarning } from './transfer';
 
 export class Session {
   private client?: Client;
@@ -31,6 +28,7 @@ export class Session {
   constructor(
     private readonly trust: Pick<HostTrust, 'verify'>,
     private readonly emit: (event: SessionEvent) => void,
+    private readonly transferTiming = transferLimits,
   ) {}
 
   async connect(config: ConnectConfig): Promise<void> {
@@ -134,7 +132,9 @@ export class Session {
 
   disconnect(): void {
     this.fileAction?.abort();
-    for (const controller of this.transfers.values()) controller.abort();
+    if (this.transfers.size) this.emit({ type: 'transfer-warning', message: transferWarning });
+    for (const controller of this.transfers.values())
+      controller.abort(new Error('Transfer interrupted by disconnection.'));
     this.transfers.clear();
     this.pendingOutput.clear();
     this.outputBytes = 0;
@@ -228,108 +228,49 @@ export class Session {
     const sftp = this.files();
     const path = remotePath(remote);
     if (this.transfers.size >= 2) throw new Error('Wait for an active transfer to finish.');
-    const total =
-      direction === 'upload'
-        ? await stat(local).then((info) => {
-            if (!info.isFile())
-              throw new Error('Select an individual file. Folder transfers are not available yet.');
-            return info.size;
-          })
-        : await new Promise<number>((resolve, reject) =>
-            sftp.stat(path, (error, info) => {
-              if (error) reject(error);
-              else if (!info.isFile())
-                reject(new Error('Only individual files can be downloaded.'));
-              else resolve(info.size);
-            }),
-          );
-    if (this.sftp !== sftp) throw new Error('The connection changed before the transfer started.');
-    if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
-    if (this.transfers.size >= 2) throw new Error('Wait for an active transfer to finish.');
     const id = randomUUID();
     const controller = new AbortController();
     this.transfers.set(id, controller);
+    const client = this.client;
     const update: TransferUpdate = {
       id,
       name: basename(local),
       direction,
-      total,
+      total: 0,
       transferred: 0,
       status: 'running',
+      phase: 'preparing',
     };
     const publish = () => {
       if (this.sftp === sftp) this.emit({ type: 'transfer', transfer: { ...update } });
     };
-    let ownsDestination = false;
-    let remoteHandle: Buffer | undefined;
-    let localHandle: FileHandle | undefined;
-    const closeTarget = async () => {
-      if (remoteHandle) {
-        const handle = remoteHandle;
-        remoteHandle = undefined;
-        await new Promise<void>((resolve, reject) =>
-          sftp.close(handle, (error) => (error ? reject(error) : resolve())),
-        );
-      }
-      if (localHandle) {
-        const handle = localHandle;
-        localHandle = undefined;
-        await handle.close();
-      }
-    };
-    let lastUpdate = 0;
-    const meter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        update.transferred += chunk.length;
-        if (Date.now() - lastUpdate > 100) {
-          lastUpdate = Date.now();
-          publish();
-        }
-        callback(null, chunk);
-      },
-    });
     publish();
     try {
-      controller.signal.throwIfAborted();
-      if (direction === 'upload')
-        remoteHandle = await new Promise<Buffer>((resolve, reject) =>
-          sftp.open(path, 'wx', 0o600, (error, handle) =>
-            error ? reject(error) : resolve(handle),
-          ),
-        );
-      else localHandle = await open(local, 'wx', 0o600);
-      ownsDestination = true;
-      controller.signal.throwIfAborted();
-      const source = direction === 'upload' ? createReadStream(local) : sftp.createReadStream(path);
-      const target =
-        direction === 'upload'
-          ? sftp.createWriteStream(path, { handle: remoteHandle, autoClose: false })
-          : createWriteStream(local, { fd: localHandle!.fd, autoClose: false });
-      await pipeline(source, meter, target, { signal: controller.signal });
-      await closeTarget();
-      update.status = 'completed';
-      update.transferred = total;
-    } catch (error) {
-      update.status = controller.signal.aborted ? 'cancelled' : 'failed';
-      update.error = controller.signal.aborted
-        ? 'Transfer cancelled.'
-        : 'Transfer failed. Existing files are never overwritten; check the destination and permissions.';
-      await closeTarget().catch(() => undefined);
-      if (ownsDestination) {
-        try {
-          if (direction === 'upload')
-            await new Promise<void>((resolve, reject) =>
-              sftp.unlink(path, (failure) => (failure ? reject(failure) : resolve())),
-            );
-          else await unlink(local);
-        } catch {
-          update.error += ' A partial destination may remain; inspect it before retrying.';
-        }
-      }
-      if (!controller.signal.aborted) throw new Error(update.error, { cause: error });
+      await runTransfer({
+        sftp,
+        direction,
+        local,
+        remote: path,
+        signal: controller.signal,
+        current: () => this.sftp === sftp,
+        update,
+        publish,
+        limits: this.transferTiming,
+        warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
+        invalidate: () => {
+          if (this.client !== client) return;
+          this.disconnect();
+          client?.destroy();
+          this.emit({
+            type: 'status',
+            connected: false,
+            message:
+              'Transfer interrupted. Reconnect and inspect the selected folders before retrying.',
+          });
+        },
+      });
     } finally {
       this.transfers.delete(id);
-      publish();
     }
   }
 }

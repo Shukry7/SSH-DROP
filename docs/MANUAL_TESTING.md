@@ -52,10 +52,17 @@ Profiles contain connection metadata and key-file locations in local user-data s
 - [ ] Choose **Download** on that file and a new local filename. Compare its contents with the original.
 - [ ] Upload the same filename again. The transfer should fail without overwriting the existing remote file.
 - [ ] Try downloading into an existing local filename. SSHDrop should refuse to overwrite it even if the native dialog asks about replacement.
-- [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own partial destination. If cleanup fails, inspect the reported destination before retrying.
+- [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own temporary `.sshdrop-*.part` sibling file. If cleanup fails, inspect the selected folders before retrying.
 - [ ] Cancel a native upload/download file dialog. No transfer should start.
 
 Uploads target the folder displayed in the explorer, not the terminal's current working directory. Recursive folder transfers and drag-and-drop are not implemented.
+
+- [ ] On a throttled disposable connection, observe **preparing**, **transferring**, **verifying**, and **finalizing**. Long transfers must continue while progress occurs; the final filename should not appear until verification/publication. Upload verification reads the remote temporary file once, adding download traffic.
+- [ ] Block SFTP data requests while leaving SSH alive. After two minutes with no progress, the app should stop and disconnect. Setup/finalization requests are separately bounded at 30 seconds; cleanup is bounded at three seconds. Never test this by interfering with production servers.
+- [ ] Interrupt a running disposable transfer, then reconnect. Transfer filenames must clear, but a generic warning to inspect selected folders must remain until dismissed or the app closes. There must be no automatic replay.
+- [ ] If the connection cuts during **finalizing**, inspect both the final name and `.sshdrop-*.part` files before retrying. An unacknowledged publication may already have succeeded. The app must not delete the final file to roll back an uncertain result.
+- [ ] Change a disposable source during transfer. Size/metadata changes or destination checksum mismatch must prevent completion/publication. This is not a snapshot guarantee against concurrent writers or malicious servers.
+- [ ] Test local download publication on supported local filesystems. Filesystems that do not support hard links must fail safely without falling back to an overwrite-capable rename or directly writing a partial final file.
 
 ## Remote file actions (development source)
 

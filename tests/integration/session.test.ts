@@ -418,7 +418,9 @@ describe('SSH and SFTP over a real loopback connection', () => {
     const source = join(directory, 'private-session-name.txt');
     await writeFile(source, 'disposable fixture');
     observe = () => session.disconnect();
-    await session.transfer('upload', source, '/disconnected-transfer');
+    await expect(session.transfer('upload', source, '/disconnected-transfer')).rejects.toThrow(
+      'interrupted',
+    );
     const reset = events.map((event) => event.type).lastIndexOf('terminal-reset');
     expect(reset).toBeGreaterThan(0);
     expect(events.slice(reset + 1).some((event) => event.type === 'transfer')).toBe(false);
