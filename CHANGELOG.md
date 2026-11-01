@@ -10,6 +10,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Fixed
 
+- Keep sidebar controls at their full height in short windows and use slim, themed scrollbars. Remove the default Electron application menu.
 - Dispose terminal buffers and clear transfer history across connections; suppress late transfer events from disconnected sessions.
 - Bound hostile-server directory reads and local JSON storage; validate IPC page origins and prevent multiple app processes from racing local stores.
 

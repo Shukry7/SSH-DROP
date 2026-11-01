@@ -94,6 +94,7 @@ test('desktop boots, exposes only the app bridge, and validates requests', async
     await expect(page.getByRole('heading', { name: 'Make yourself at remote.' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect to server' })).toBeVisible();
     await expect(page.getByText(`v${metadata.version}`, { exact: true })).toBeVisible();
+    expect(await application.evaluate(({ Menu }) => Menu.getApplicationMenu())).toBeNull();
     expect(
       await page.evaluate(() => ({
         require: typeof (window as unknown as Record<string, unknown>).require,
@@ -214,6 +215,35 @@ test('desktop connects, browses, transfers, reconnects with a key, and disconnec
     await page.getByLabel('Password', { exact: true }).fill('test-password');
     await page.getByRole('button', { name: 'Connect to server' }).click();
     await expect(page.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(960, 700),
+    );
+    const disconnect = page.getByRole('button', { name: 'Disconnect', exact: true });
+    await disconnect.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() =>
+        disconnect.evaluate((button) => {
+          const bounds = button.getBoundingClientRect();
+          const sidebar = button.closest('.sidebar')!.getBoundingClientRect();
+          const note = document.querySelector('.privacy-note')!.getBoundingClientRect();
+          return (
+            bounds.height >= 32 &&
+            bounds.top >= sidebar.top &&
+            bounds.bottom <= sidebar.bottom &&
+            bounds.bottom <= note.top
+          );
+        }),
+      )
+      .toBe(true);
+    expect(
+      await page
+        .locator('.sidebar')
+        .evaluate((sidebar) => getComputedStyle(sidebar).scrollbarWidth),
+    ).toBe('thin');
+    await page.screenshot({ path: 'artifacts/sidebar-small-window.png' });
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(1440, 940),
+    );
     await expect(page.getByRole('cell', { name: /hello.txt/ })).toBeVisible();
     await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
     await page.getByRole('button', { name: /folder/, exact: false }).click();

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, type IpcMainInvokeEvent } from 'electron';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -203,6 +203,7 @@ function registerAPI(): void {
 }
 
 function createWindow(): void {
+  Menu.setApplicationMenu(null);
   window = new BrowserWindow({
     width: 1440,
     height: 940,
