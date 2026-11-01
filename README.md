@@ -13,8 +13,9 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 - SFTP directory browsing with an explicit destination.
 - Streamed individual uploads/downloads with progress and cancellation. Existing destinations are refused rather than overwritten.
 - Session-only credentials; private keys stay on the local machine.
+- Saved server profiles: add, edit, delete with confirmation, and load connection details. Profiles remember the chosen key-file location, never passwords, passphrases, or key contents.
 
-Saved profiles, persistent secrets, editing, folder transfers, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
+Saved profiles are available in the development source after the alpha. The existing `0.1.0-alpha.1` release artifacts do not include them. Persistent secrets, editing, folder transfers, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
 
 For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
 

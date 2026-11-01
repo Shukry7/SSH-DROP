@@ -24,6 +24,18 @@ An older packaged executable will not pick up source changes. Close it and run t
 
 Changed host identities are blocked. Do not rotate a real server's host key merely to test this; changed-key behavior is also covered by automated tests.
 
+## Saved server profiles (development source, after 0.1.0-alpha.1)
+
+- [ ] Fill connection details and Starting directory, enter a Profile name, and choose **Save profile**. A password is not needed to save. Saving must not connect to the server.
+- [ ] Choose **New**, then select the saved server. Its host, username, port, authentication, and directory should return; password and passphrase must be empty.
+- [ ] Enter the needed secret and connect. The explorer should open the saved starting directory. Profile controls are disabled while connected or connecting.
+- [ ] Disconnect, change the profile name or connection fields, and choose **Save profile changes**. Restart the app and check the saved settings.
+- [ ] Save a private-key profile using the native picker. Restart and load it; the key filename should return without selecting it again. Enter its passphrase if required. If the key was moved or deleted, connecting should show a recoverable error; choose the file again and save the updated profile.
+- [ ] Save a second profile and try giving it the first profile's name (ignoring case). The operation should fail without changing either saved entry.
+- [ ] Choose **Delete profile**, cancel the native confirmation, and check that it remains. Confirm deletion next; the server's files, local private key, and host trust must remain intact.
+
+Profiles contain connection metadata and key-file locations in local user-data storage. Do not upload or commit `profiles.json`. Passwords, passphrases, and key contents must never appear there. Optional secure credential persistence is not implemented.
+
 ## Terminal and browsing
 
 - [ ] Run `pwd`, `ls`, and an interactive program available on your test server, such as `nano`. Exit the program normally.
@@ -51,6 +63,6 @@ Uploads target the folder displayed in the explorer, not the terminal's current 
 - [ ] Reconnect. It should create a fresh shell; old commands and transfers must not replay.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved profiles or credentials; multiple servers or terminal tabs; file preview/edit/save; create/rename/copy/move/delete/permission actions; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; create/rename/copy/move/delete/permission actions; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.

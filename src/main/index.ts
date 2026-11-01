@@ -8,6 +8,7 @@ import type { Result, SessionEvent } from '../shared/contracts';
 import {
   childPath,
   connectionSchema,
+  profileInputSchema,
   remotePathSchema,
   terminalInputSchema,
   terminalSizeSchema,
@@ -15,6 +16,7 @@ import {
 } from '../shared/validation';
 import { HostTrust } from './core/host-trust';
 import { Session } from './core/session';
+import { ProfileStore } from './core/profiles';
 import metadata from '../../package.json';
 
 let window: BrowserWindow | undefined;
@@ -57,6 +59,7 @@ function publish(event: SessionEvent): void {
 }
 
 function registerAPI(): void {
+  const profiles = new ProfileStore(join(app.getPath('userData'), 'profiles.json'));
   handle(channels.info, () => ({
     name: 'SSHDrop',
     version: app.getVersion(),
@@ -74,13 +77,54 @@ function registerAPI(): void {
     keys.set(id, result.filePaths[0]);
     return { id, name: basename(result.filePaths[0]) };
   });
+  handle(channels.profiles, (value) => {
+    z.undefined().parse(value);
+    return profiles.list();
+  });
+  handle(channels.saveProfile, async (value) => {
+    const { keyId, ...details } = profileInputSchema.parse(value);
+    const keyPath = keyId ? keys.get(keyId) : undefined;
+    if (details.auth === 'key' && !keyPath) throw new Error('Select your private key again.');
+    return profiles.save({ ...details, ...(keyPath ? { keyPath } : {}) });
+  });
+  handle(channels.loadProfile, async (value) => {
+    const { profile, keyPath } = await profiles.load(z.string().uuid().parse(value));
+    let key = null;
+    if (keyPath) {
+      const id = randomUUID();
+      keys.clear();
+      keys.set(id, keyPath);
+      key = { id, name: basename(keyPath) };
+    }
+    return { profile, key };
+  });
+  handle(channels.deleteProfile, async (value) => {
+    const id = z.string().uuid().parse(value);
+    const { profile } = await profiles.load(id);
+    const result = await dialog.showMessageBox(window!, {
+      type: 'question',
+      title: 'Delete saved profile',
+      message: `Delete the saved profile "${profile.name}"?`,
+      detail:
+        'This removes only the saved connection details. Server files, private key files, and trusted host identities are kept.',
+      buttons: ['Cancel', 'Delete profile'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (result.response !== 1) return false;
+    await profiles.delete(id);
+    return true;
+  });
   handle(channels.connect, async (value) => {
     const input = connectionSchema.parse(value);
     let privateKey: Buffer | undefined;
     if (input.auth === 'key') {
       const file = keys.get(input.keyId!);
       if (!file) throw new Error('Select your private key again.');
-      const handle = await open(file, 'r');
+      const handle = await open(file, 'r').catch(() => {
+        throw new Error('The selected private key could not be opened. Choose the key file again.');
+      });
       try {
         const info = await handle.stat();
         if (!info.isFile() || info.size > 1024 * 1024)

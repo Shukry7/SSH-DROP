@@ -5,6 +5,10 @@ import type { DesktopAPI, SessionEvent } from '../shared/contracts';
 const api: DesktopAPI = {
   info: () => ipcRenderer.invoke(channels.info),
   chooseKey: () => ipcRenderer.invoke(channels.chooseKey),
+  profiles: () => ipcRenderer.invoke(channels.profiles),
+  saveProfile: (input) => ipcRenderer.invoke(channels.saveProfile, input),
+  loadProfile: (id) => ipcRenderer.invoke(channels.loadProfile, id),
+  deleteProfile: (id) => ipcRenderer.invoke(channels.deleteProfile, id),
   connect: (input) => ipcRenderer.invoke(channels.connect, input),
   disconnect: () => ipcRenderer.invoke(channels.disconnect),
   list: (path) => ipcRenderer.invoke(channels.list, path),

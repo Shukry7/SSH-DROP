@@ -6,7 +6,9 @@ Secure desktop foundation; validated IPC; host verification; session-only passwo
 
 ## 0.2 — Everyday file management
 
-Saved profiles, supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, create/rename/move/delete, reconnect controls, and drag-and-drop uploads.
+Implemented in development source (not in the 0.1.0-alpha.1 installers): saved profiles with add/edit/delete/load, session-only secrets, and remembered key-file locations.
+
+Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, create/rename/move/delete, reconnect controls, and drag-and-drop uploads.
 
 ## 0.3 — Remote editing
 

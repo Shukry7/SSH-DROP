@@ -29,6 +29,26 @@ export interface KeySelection {
   id: string;
   name: string;
 }
+export interface ProfileDetails {
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  auth: 'password' | 'key';
+  startingDirectory: string;
+}
+export interface ProfileInput extends ProfileDetails {
+  id?: string;
+  keyId?: string;
+}
+export interface ServerProfile extends ProfileDetails {
+  id: string;
+  keyName?: string;
+}
+export interface LoadedProfile {
+  profile: ServerProfile;
+  key: KeySelection | null;
+}
 export interface TransferUpdate {
   id: string;
   name: string;
@@ -47,6 +67,10 @@ export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
   info(): Promise<Result<AppInfo>>;
   chooseKey(): Promise<Result<KeySelection | null>>;
+  profiles(): Promise<Result<ServerProfile[]>>;
+  saveProfile(input: ProfileInput): Promise<Result<ServerProfile>>;
+  loadProfile(id: string): Promise<Result<LoadedProfile>>;
+  deleteProfile(id: string): Promise<Result<boolean>>;
   connect(input: ConnectionInput): Promise<Result<void>>;
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;

@@ -8,6 +8,7 @@ import type {
 } from '../../shared/contracts';
 import { Terminal } from './Terminal';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
+import { SavedProfiles } from './SavedProfiles';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -28,6 +29,7 @@ export function App() {
   const [info, setInfo] = useState<AppInfo>();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
   const [message, setMessage] = useState('Ready when you are. Connect to a server to begin.');
   const [error, setError] = useState('');
   const [host, setHost] = useState('');
@@ -154,9 +156,42 @@ export function App() {
           </p>
           <div className="sidebar-divider" />
           <div className="section-label">SSH CONNECTION</div>
+          <SavedProfiles
+            disabled={connected || connecting}
+            details={{
+              host,
+              port: Number(port),
+              username,
+              auth,
+              startingDirectory: path,
+              ...(auth === 'key' && key ? { keyId: key.id } : {}),
+            }}
+            onError={setError}
+            onBusy={setProfileBusy}
+            onLoad={({ profile, key: savedKey }) => {
+              setHost(profile.host);
+              setPort(String(profile.port));
+              setUsername(profile.username);
+              setAuth(profile.auth);
+              setPath(profile.startingDirectory);
+              setKey(savedKey);
+              setPassword('');
+              setPassphrase('');
+            }}
+            onNew={() => {
+              setHost('');
+              setPort('22');
+              setUsername('');
+              setAuth('password');
+              setPath('/');
+              setKey(null);
+              setPassword('');
+              setPassphrase('');
+            }}
+          />
           <ConnectionGuide />
           <form onSubmit={connect} className="connection-form">
-            <fieldset disabled={connected || connecting}>
+            <fieldset disabled={connected || connecting || profileBusy}>
               <ConnectionField id="connection-host" label="Host" help={connectionHelp.host}>
                 <input
                   id="connection-host"
@@ -211,7 +246,12 @@ export function App() {
                   id="connection-auth"
                   aria-describedby="connection-auth-help"
                   value={auth}
-                  onChange={(e) => setAuth(e.target.value as 'password' | 'key')}
+                  onChange={(e) => {
+                    setAuth(e.target.value as 'password' | 'key');
+                    setPassword('');
+                    setPassphrase('');
+                    setKey(null);
+                  }}
                 >
                   <option value="password">Password</option>
                   <option value="key">Private key</option>
@@ -287,7 +327,7 @@ export function App() {
               </ConnectionField>
               <button className="primary connect-button" type="submit">
                 {connecting ? 'Connecting…' : 'Connect to server'}
-                <span>↗</span>
+                <span aria-hidden="true">↗</span>
               </button>
             </fieldset>
           </form>
