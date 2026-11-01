@@ -168,7 +168,8 @@ export function SavedProfiles({
       </fieldset>
       <p className="profile-note">
         Fill the connection fields below, then save a profile. Only connection details and a
-        key-file location are saved. Passwords and passphrases stay in this session.
+        key-file location are saved, unencrypted on this device. Passwords and passphrases stay in
+        this session.
       </p>
       <p className="profile-notice" role="status">
         {notice || (!ready ? 'Saved profiles unavailable or loading.' : '')}

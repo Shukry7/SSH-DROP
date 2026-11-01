@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { profileDetailsSchema } from '../../shared/validation';
 import type { ServerProfile } from '../../shared/contracts';
+import { readLocalData } from './local-data';
 
 const recordSchema = profileDetailsSchema
   .extend({
@@ -58,16 +59,7 @@ export class ProfileStore {
 
   private async read(): Promise<StoredProfile[]> {
     try {
-      const handle = await open(this.file, 'r');
-      try {
-        if (!(await handle.stat()).isFile()) throw new Error('Not a file.');
-        const buffer = Buffer.alloc(1024 * 1024 + 1);
-        const { bytesRead } = await handle.read(buffer);
-        if (bytesRead > 1024 * 1024) throw new Error('Profiles file is too large.');
-        return storeSchema.parse(JSON.parse(buffer.toString('utf8', 0, bytesRead))).profiles;
-      } finally {
-        await handle.close();
-      }
+      return storeSchema.parse(JSON.parse(await readLocalData(this.file))).profiles;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw new Error('Saved profiles could not be read. The file has not been changed.', {

@@ -16,3 +16,4 @@ Thumbs.db
 *.pfx
 artifacts/
 profiles.json
+known-hosts.json

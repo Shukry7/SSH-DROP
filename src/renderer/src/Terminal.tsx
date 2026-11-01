@@ -10,49 +10,58 @@ export function Terminal({ connected }: { connected: boolean }) {
   const fit = useRef<FitAddon | null>(null);
 
   useEffect(() => {
-    const view = new XTerm({
-      cursorBlink: true,
-      fontSize: 13,
-      fontFamily: 'Cascadia Code, SFMono-Regular, Consolas, monospace',
-      scrollback: 5000,
-      allowProposedApi: false,
-      theme: {
-        background: '#0b1017',
-        foreground: '#d6dfeb',
-        cursor: '#58e0bb',
-        selectionBackground: '#25494a',
-      },
-    });
-    const addon = new FitAddon();
-    terminal.current = view;
-    fit.current = addon;
-    view.loadAddon(addon);
-    view.open(element.current!);
-    addon.fit();
-    const subscription = view.onData((data) => {
-      if (active.current) void window.sshdrop.input(data);
-    });
-    const resize = () => {
+    let disposeView = () => {};
+    const createView = () => {
+      disposeView();
+      const view = new XTerm({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: 'Cascadia Code, SFMono-Regular, Consolas, monospace',
+        scrollback: 5000,
+        allowProposedApi: false,
+        theme: {
+          background: '#0b1017',
+          foreground: '#d6dfeb',
+          cursor: '#58e0bb',
+          selectionBackground: '#25494a',
+        },
+      });
+      const addon = new FitAddon();
+      terminal.current = view;
+      fit.current = addon;
+      view.loadAddon(addon);
+      view.open(element.current!);
       addon.fit();
-      if (active.current) void window.sshdrop.resize({ cols: view.cols, rows: view.rows });
+      const subscription = view.onData((data) => {
+        if (active.current) void window.sshdrop.input(data);
+      });
+      const resize = () => {
+        addon.fit();
+        if (active.current) void window.sshdrop.resize({ cols: view.cols, rows: view.rows });
+      };
+      const observer = new ResizeObserver(resize);
+      observer.observe(element.current!);
+      disposeView = () => {
+        subscription.dispose();
+        observer.disconnect();
+        view.dispose();
+        terminal.current = null;
+        fit.current = null;
+      };
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(element.current!);
+    createView();
     const unsubscribe = window.sshdrop.onEvent((event) => {
+      if (event.type === 'terminal-reset') createView();
       if (event.type === 'terminal')
-        view.write(event.data, () => {
+        terminal.current?.write(event.data, () => {
           void window.sshdrop.acknowledge(event.id);
         });
       if (event.type === 'terminal-exit')
-        view.writeln('\r\n[Shell closed. Reconnect to start another shell.]');
+        terminal.current?.writeln('\r\n[Shell closed. Reconnect to start another shell.]');
     });
     return () => {
       unsubscribe();
-      subscription.dispose();
-      observer.disconnect();
-      view.dispose();
-      terminal.current = null;
-      fit.current = null;
+      disposeView();
     };
   }, []);
 

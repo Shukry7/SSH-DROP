@@ -128,6 +128,44 @@ test('desktop boots, exposes only the app bridge, and validates requests', async
       ok: true,
       value: { version: metadata.version, description: metadata.description },
     });
+    expect(
+      await application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].webContents.session.isPersistent(),
+      ),
+    ).toBe(false);
+    expect(
+      await page.evaluate(async () => {
+        try {
+          await fetch('https://example.invalid/sshdrop-security-check');
+          return false;
+        } catch {
+          return true;
+        }
+      }),
+    ).toBe(true);
+    const originalURL = page.url();
+    const blockedNavigation = application.evaluate(
+      ({ BrowserWindow }) =>
+        new Promise<boolean>((resolve) => {
+          BrowserWindow.getAllWindows()[0].webContents.once('will-navigate', (event) =>
+            resolve(event.defaultPrevented),
+          );
+        }),
+    );
+    await page.evaluate(() => {
+      window.open('https://example.invalid/');
+      window.location.href = 'https://example.invalid/';
+    });
+    expect(await blockedNavigation).toBe(true);
+    expect(
+      await application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].webContents.getURL(),
+      ),
+    ).toBe(originalURL);
+    expect(application.windows()).toHaveLength(1);
+    // A cancelled navigation can leave Playwright's navigation wait pending; reload the same local page.
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Connect to server' })).toBeVisible();
     await page.screenshot({ path: 'artifacts/desktop.png' });
   } finally {
     await application.close();
@@ -205,8 +243,13 @@ test('desktop connects, browses, transfers, reconnects with a key, and disconnec
       .poll(async () => readFile(destination, 'utf8').catch(() => ''))
       .toBe('Hello from the remote server.\n');
     await expect(page.getByLabel('File transfers').getByText(/completed/)).toHaveCount(2);
+    const previousTerminal = await page.locator('.terminal-surface .xterm').elementHandle();
+    expect(previousTerminal).not.toBeNull();
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await expect(page.getByText('No active connection', { exact: true })).toBeVisible();
+    await expect.poll(() => previousTerminal!.evaluate((node) => node.isConnected)).toBe(false);
+    await expect(page.locator('.terminal-surface .xterm')).toHaveCount(1);
+    await expect(page.getByLabel('File transfers')).toHaveCount(0);
     await application.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
     }, keyfile);

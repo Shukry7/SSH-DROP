@@ -59,6 +59,7 @@ export interface TransferUpdate {
   error?: string;
 }
 export type SessionEvent =
+  | { type: 'terminal-reset' }
   | { type: 'status'; connected: boolean; message: string }
   | { type: 'terminal'; data: string; id: number }
   | { type: 'terminal-exit' }
