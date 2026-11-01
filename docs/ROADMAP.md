@@ -6,9 +6,9 @@ Secure desktop foundation; validated IPC; host verification; session-only passwo
 
 ## 0.2 — Everyday file management
 
-Implemented in development source (not in the 0.1.0-alpha.1 installers): saved profiles with add/edit/delete/load, session-only secrets, and remembered key-file locations.
+Implemented in development source (not in the 0.1.0-alpha.1 installers): saved profiles with add/edit/delete/load, session-only secrets, remembered key-file locations, confirmed remote folder creation, same-folder file/folder rename, and permanent deletion of files and empty folders.
 
-Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, create/rename/move/delete, reconnect controls, and drag-and-drop uploads.
+Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, file creation, copy/move between folders, permissions editing, reconnect controls, and drag-and-drop uploads. Recursive deletion and undo are not implemented.
 
 Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 

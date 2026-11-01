@@ -246,7 +246,10 @@ test('desktop connects, browses, transfers, reconnects with a key, and disconnec
     );
     await expect(page.getByRole('cell', { name: /hello.txt/ })).toBeVisible();
     await expect(page.getByLabel('Password', { exact: true })).toHaveValue('');
-    await page.getByRole('button', { name: /folder/, exact: false }).click();
+    await page
+      .getByRole('cell', { name: /folder/ })
+      .getByRole('button', { name: /folder/ })
+      .click();
     await expect(page.getByRole('cell', { name: /nested.txt/ })).toBeVisible();
     const upload = page.getByRole('button', { name: /Upload file/ });
     const releaseDirectoryResponse = fixture.holdNextDirectoryResponse();

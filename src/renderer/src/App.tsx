@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   AppInfo,
   DirectoryListing,
+  FileAction,
   KeySelection,
   Result,
   TransferUpdate,
@@ -9,6 +10,7 @@ import type {
 import { Terminal } from './Terminal';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
 import { SavedProfiles } from './SavedProfiles';
+import { FileActionDialog } from './FileActionDialog';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -44,6 +46,12 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [transfers, setTransfers] = useState<TransferUpdate[]>([]);
   const navigation = useRef(0);
+  const connectionEpoch = useRef(0);
+  const actionLock = useRef(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
+  const fileBusy =
+    actionBusy || loading || transfers.some((transfer) => transfer.status === 'running');
 
   useEffect(() => {
     void window.sshdrop.info().then((result) => {
@@ -55,6 +63,8 @@ export function App() {
         setConnected(event.connected);
         setMessage(event.message);
         if (!event.connected) {
+          connectionEpoch.current++;
+          setActionInput(undefined);
           setTransfers([]);
           navigation.current++;
           setListing(undefined);
@@ -78,6 +88,40 @@ export function App() {
       await operation();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Operation failed.');
+    }
+  }
+
+  async function changeFile(input: FileAction): Promise<boolean> {
+    if (actionLock.current) return false;
+    actionLock.current = true;
+    setActionBusy(true);
+    setError('');
+    const epoch = connectionEpoch.current;
+    let changed = false;
+    try {
+      changed = unwrap(await window.sshdrop.fileAction(input));
+      if (epoch !== connectionEpoch.current) return true;
+      if (changed) {
+        setMessage('Remote change completed.');
+        try {
+          await browse(input.directory);
+        } catch {
+          setError(
+            'The change completed, but refreshing failed. Refresh or reconnect to inspect the folder; do not repeat the change.',
+          );
+        }
+      }
+      return true;
+    } catch (failure) {
+      setError(
+        epoch === connectionEpoch.current && failure instanceof Error
+          ? failure.message
+          : 'Connection changed during a file operation. Its result may be uncertain; inspect the remote folder before retrying.',
+      );
+      return changed;
+    } finally {
+      actionLock.current = false;
+      setActionBusy(false);
     }
   }
 
@@ -359,7 +403,7 @@ export function App() {
             </div>
             <span className="protocol-label">SSH / SFTP</span>
           </div>
-          {error && (
+          {error && !actionInput && (
             <div role="alert" className="error-banner">
               {error}
               <button aria-label="Dismiss error" onClick={() => setError('')}>
@@ -375,7 +419,7 @@ export function App() {
               <div className="toolbar">
                 <button
                   className="secondary compact"
-                  disabled={!connected || loading}
+                  disabled={!connected || fileBusy}
                   onClick={() =>
                     void run(() => browse(listing?.path.replace(/\/[^/]+\/?$/, '') || '/'))
                   }
@@ -384,14 +428,14 @@ export function App() {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || loading}
+                  disabled={!connected || fileBusy}
                   onClick={() => void run(() => browse(listing?.path ?? path))}
                 >
                   ↻ Refresh
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || loading}
+                  disabled={!connected || !listing || fileBusy}
                   onClick={() =>
                     void run(async () => {
                       unwrap(await window.sshdrop.upload(listing!.path));
@@ -400,6 +444,16 @@ export function App() {
                   }
                 >
                   ↑ Upload file
+                </button>
+                <button
+                  className="secondary compact"
+                  disabled={!connected || !listing || fileBusy}
+                  onClick={() => {
+                    setError('');
+                    setActionInput({ action: 'create-folder', directory: listing!.path, name: '' });
+                  }}
+                >
+                  New folder
                 </button>
               </div>
             </div>
@@ -415,9 +469,9 @@ export function App() {
                 aria-label="Remote directory"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                disabled={!connected}
+                disabled={!connected || actionBusy}
               />
-              <button type="submit" disabled={!connected || loading}>
+              <button type="submit" disabled={!connected || fileBusy}>
                 Go →
               </button>
             </form>
@@ -457,7 +511,7 @@ export function App() {
                               if (entry.kind === 'directory')
                                 void run(() => browse(join(listing.path, entry.name)));
                             }}
-                            disabled={entry.kind !== 'directory'}
+                            disabled={entry.kind !== 'directory' || fileBusy}
                           >
                             <span
                               className={
@@ -479,6 +533,7 @@ export function App() {
                           {entry.kind === 'file' && (
                             <button
                               className="text-button"
+                              disabled={actionBusy || loading}
                               onClick={() =>
                                 void run(async () =>
                                   unwrap(
@@ -489,6 +544,41 @@ export function App() {
                             >
                               Download ↓
                             </button>
+                          )}
+                          {(entry.kind === 'file' || entry.kind === 'directory') && (
+                            <>
+                              <button
+                                className="text-button"
+                                disabled={!connected || fileBusy}
+                                onClick={() => {
+                                  setError('');
+                                  setActionInput({
+                                    action: 'rename',
+                                    directory: listing.path,
+                                    name: entry.name,
+                                    newName: entry.name,
+                                    kind: entry.kind as 'file' | 'directory',
+                                  });
+                                }}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                className="text-button danger-button"
+                                disabled={!connected || fileBusy}
+                                title="Permanently delete this file or empty folder. Cannot be undone."
+                                onClick={() =>
+                                  void changeFile({
+                                    action: 'delete',
+                                    directory: listing.path,
+                                    name: entry.name,
+                                    kind: entry.kind as 'file' | 'directory',
+                                  })
+                                }
+                              >
+                                Delete
+                              </button>
+                            </>
                           )}
                         </td>
                       </tr>
@@ -511,6 +601,18 @@ export function App() {
               <span>Remote Linux filesystem</span>
             </div>
           </section>
+          {actionInput && (
+            <FileActionDialog
+              input={actionInput}
+              busy={actionBusy}
+              error={error}
+              submit={changeFile}
+              close={() => {
+                setActionInput(undefined);
+                setError('');
+              }}
+            />
+          )}
           <section className="terminal-panel panel" aria-label="Terminal panel">
             <div className="panel-heading">
               <h3>

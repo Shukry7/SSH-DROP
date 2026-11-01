@@ -417,6 +417,34 @@ input::placeholder {
   flex-direction: column;
   gap: 21px;
 }
+.toolbar {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.file-action-dialog {
+  width: min(440px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  color: #dce4ef;
+  background: #101720;
+  border: 1px solid #465c68;
+  border-radius: 10px;
+  padding: 24px;
+  box-shadow: 0 20px 70px #0008;
+}
+.file-action-dialog::backdrop {
+  background: #05090dbb;
+}
+.file-action-dialog p {
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.text-button.danger-button {
+  color: #ffaba7;
+}
+.text-button + .text-button {
+  margin-left: 10px;
+}
 .workspace-heading {
   display: flex;
   align-items: center;

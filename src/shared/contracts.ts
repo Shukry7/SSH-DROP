@@ -19,6 +19,16 @@ export interface DirectoryListing {
   path: string;
   entries: RemoteEntry[];
 }
+export type FileAction =
+  | { action: 'create-folder'; directory: string; name: string }
+  | {
+      action: 'rename';
+      directory: string;
+      name: string;
+      newName: string;
+      kind: 'file' | 'directory';
+    }
+  | { action: 'delete'; directory: string; name: string; kind: 'file' | 'directory' };
 export interface AppInfo {
   name: string;
   version: string;
@@ -75,6 +85,7 @@ export interface DesktopAPI {
   connect(input: ConnectionInput): Promise<Result<void>>;
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
+  fileAction(input: FileAction): Promise<Result<boolean>>;
   upload(directory: string): Promise<Result<void>>;
   download(path: string): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;

@@ -72,6 +72,53 @@ export const profileInputSchema = profileDetailsSchema
 export function remotePath(value: string): string {
   return posix.normalize(remotePathSchema.parse(value));
 }
+const actionNameSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (name) =>
+      name !== '.' &&
+      name !== '..' &&
+      !/[\\/\u202a-\u202e\u2066-\u2069]/.test(name) &&
+      !hasControl(name) &&
+      Buffer.byteLength(name, 'utf8') <= 255,
+    'Use a single filename of at most 255 UTF-8 bytes, without slashes or control characters.',
+  );
+const actionDirectorySchema = remotePathSchema.refine(
+  (path) =>
+    posix.normalize(path) === path &&
+    (path === '/' || !path.endsWith('/')) &&
+    !hasControl(path) &&
+    !/[\\\u202a-\u202e\u2066-\u2069]/.test(path) &&
+    Buffer.byteLength(path, 'utf8') <= 4096,
+  'Refresh and select a canonical remote directory.',
+);
+const actionFields = { directory: actionDirectorySchema, name: actionNameSchema };
+export const fileActionSchema = z
+  .discriminatedUnion('action', [
+    z.object({ action: z.literal('create-folder'), ...actionFields }).strict(),
+    z
+      .object({
+        action: z.literal('rename'),
+        ...actionFields,
+        newName: actionNameSchema,
+        kind: z.enum(['file', 'directory']),
+      })
+      .strict(),
+    z
+      .object({ action: z.literal('delete'), ...actionFields, kind: z.enum(['file', 'directory']) })
+      .strict(),
+  ])
+  .superRefine((input, ctx) => {
+    for (const name of [input.name, ...('newName' in input ? [input.newName] : [])])
+      if (
+        Buffer.byteLength(`${input.directory === '/' ? '' : input.directory}/${name}`, 'utf8') >
+        4096
+      )
+        ctx.addIssue({ code: 'custom', message: 'The remote path is too long.' });
+    if (input.action === 'rename' && input.name === input.newName)
+      ctx.addIssue({ code: 'custom', message: 'Choose a different name.' });
+  });
 export function childPath(directory: string, name: string): string {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))
     throw new Error('Invalid remote filename.');

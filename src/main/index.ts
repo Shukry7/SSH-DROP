@@ -9,6 +9,7 @@ import type { Result, SessionEvent } from '../shared/contracts';
 import {
   childPath,
   connectionSchema,
+  fileActionSchema,
   profileInputSchema,
   remotePathSchema,
   terminalInputSchema,
@@ -171,6 +172,21 @@ function registerAPI(): void {
     publish({ type: 'status', connected: false, message: 'Disconnected.' });
   });
   handle(channels.list, (value) => session!.list(remotePathSchema.parse(value)));
+  handle(channels.fileAction, (value) =>
+    session!.changeFile(fileActionSchema.parse(value), async (warning) => {
+      const result = await dialog.showMessageBox(window!, {
+        type: warning.button === 'Delete permanently' ? 'warning' : 'question',
+        title: warning.title,
+        message: warning.message,
+        detail: warning.detail,
+        buttons: ['Cancel', warning.button],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      return result.response === 1;
+    }),
+  );
   handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),

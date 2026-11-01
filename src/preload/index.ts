@@ -12,6 +12,7 @@ const api: DesktopAPI = {
   connect: (input) => ipcRenderer.invoke(channels.connect, input),
   disconnect: () => ipcRenderer.invoke(channels.disconnect),
   list: (path) => ipcRenderer.invoke(channels.list, path),
+  fileAction: (input) => ipcRenderer.invoke(channels.fileAction, input),
   upload: (directory) => ipcRenderer.invoke(channels.upload, directory),
   download: (path) => ipcRenderer.invoke(channels.download, path),
   cancel: (id) => ipcRenderer.invoke(channels.cancel, id),
