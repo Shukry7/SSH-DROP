@@ -6,10 +6,12 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ### Added
 
+- Confirmed remote folder creation, same-folder rename, and permanent deletion of individual files and empty folders. Strict path/IPC validation, source rechecks, operation serialization, bounded network waits, and explicit uncertain-result handling prevent automatic replay after interruptions. Symlinks and special files are refused.
 - Security gates for dependency advisories and tracked secrets, weekly monitoring, pinned Actions, actual packaged-fuse inspection, and a privacy policy with documented review limits.
 
 ### Fixed
 
+- Keep sidebar controls at their full height in short windows and use slim, themed scrollbars. Remove the default Electron application menu.
 - Dispose terminal buffers and clear transfer history across connections; suppress late transfer events from disconnected sessions.
 - Bound hostile-server directory reads and local JSON storage; validate IPC page origins and prevent multiple app processes from racing local stores.
 

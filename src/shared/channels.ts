@@ -8,6 +8,7 @@ export const channels = {
   connect: 'ssh:connect',
   disconnect: 'ssh:disconnect',
   list: 'sftp:list',
+  fileAction: 'sftp:file-action',
   upload: 'sftp:upload',
   download: 'sftp:download',
   cancel: 'transfer:cancel',

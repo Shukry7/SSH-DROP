@@ -6,10 +6,16 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
-import type { DirectoryListing, SessionEvent, TransferUpdate } from '../../shared/contracts';
+import type {
+  DirectoryListing,
+  FileAction,
+  SessionEvent,
+  TransferUpdate,
+} from '../../shared/contracts';
 import { remotePath } from '../../shared/validation';
 import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
+import { changeRemoteFile, type FileActionWarning } from './file-actions';
 
 export class Session {
   private client?: Client;
@@ -20,6 +26,7 @@ export class Session {
   private pendingOutput = new Map<number, number>();
   private outputBytes = 0;
   private outputId = 0;
+  private fileAction?: AbortController;
 
   constructor(
     private readonly trust: Pick<HostTrust, 'verify'>,
@@ -126,6 +133,7 @@ export class Session {
   }
 
   disconnect(): void {
+    this.fileAction?.abort();
     for (const controller of this.transfers.values()) controller.abort();
     this.transfers.clear();
     this.pendingOutput.clear();
@@ -176,6 +184,39 @@ export class Session {
     return readDirectory(sftp, path, () => this.sftp === sftp);
   }
 
+  async changeFile(
+    input: FileAction,
+    confirm: (warning: FileActionWarning) => Promise<boolean>,
+  ): Promise<boolean> {
+    if (this.fileAction || this.transfers.size)
+      throw new Error('Wait for the active file operation or transfer to finish.');
+    const sftp = this.files();
+    const controller = new AbortController();
+    const client = this.client;
+    this.fileAction = controller;
+    try {
+      return await changeRemoteFile(
+        sftp,
+        input,
+        () => this.sftp === sftp,
+        controller.signal,
+        confirm,
+        () => {
+          if (this.client !== client) return;
+          this.disconnect();
+          this.emit({
+            type: 'status',
+            connected: false,
+            message:
+              'File operation interrupted. Reconnect and inspect the folder before retrying.',
+          });
+        },
+      );
+    } finally {
+      if (this.fileAction === controller) this.fileAction = undefined;
+    }
+  }
+
   cancel(id: string): void {
     const controller = this.transfers.get(id);
     if (!controller) throw new Error('That transfer is no longer active.');
@@ -183,6 +224,7 @@ export class Session {
   }
 
   async transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void> {
+    if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
     const sftp = this.files();
     const path = remotePath(remote);
     if (this.transfers.size >= 2) throw new Error('Wait for an active transfer to finish.');
@@ -202,6 +244,7 @@ export class Session {
             }),
           );
     if (this.sftp !== sftp) throw new Error('The connection changed before the transfer started.');
+    if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
     if (this.transfers.size >= 2) throw new Error('Wait for an active transfer to finish.');
     const id = randomUUID();
     const controller = new AbortController();

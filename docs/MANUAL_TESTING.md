@@ -57,6 +57,21 @@ Profiles contain connection metadata and key-file locations in local user-data s
 
 Uploads target the folder displayed in the explorer, not the terminal's current working directory. Recursive folder transfers and drag-and-drop are not implemented.
 
+## Remote file actions (development source)
+
+Use only disposable files. Deletion is permanent: there is no trash or undo.
+
+- [ ] Select **New folder**, enter one name, and choose **Review change**. The native confirmation must show the complete remote path, default to Cancel, and explain permissions. Cancel first; nothing should be created. Confirm next; the new folder should appear in the displayed directory. The app requests mode 0700; inspect actual permissions on the server.
+- [ ] Try a duplicate name, `..`, a name containing `/` or `\`, and a name exceeding 255 UTF-8 bytes. These must fail without changing existing items. Spaces, quotes, and Unicode names are supported.
+- [ ] Choose **Rename** on a disposable file and folder. Cancel the native confirmation, then retry and confirm. The listing should refresh. Existing destination names must be rejected and their contents preserved.
+- [ ] Choose **Delete** on a disposable file or empty folder. The native warning must show the full path, default to Cancel, and explain permanent deletion. Cancel first, then confirm. The item should disappear only after confirmation.
+- [ ] Try deleting a nonempty disposable folder. It must fail without removing anything inside. Symbolic links and special files must not offer rename/delete controls.
+- [ ] While confirmation is pending, interrupt the test connection. Accepting the old confirmation must not apply the action on a new connection. Reconnect and inspect before retrying.
+- [ ] On a disposable server, remove write permission on a test folder and attempt an action. An error should appear; browsing and the terminal should remain usable.
+- [ ] If an acknowledgment is lost after a change, treat the result as uncertain. The app must disconnect, warn to inspect the remote folder, and never automatically repeat or roll back the operation.
+
+Remote changes use SFTP, not shell commands. Other server processes can change paths between checks; source rechecks are not a transaction or a filesystem identity guarantee. Rename relies on standard SFTP no-replacement behavior; nonconforming servers cannot be made safe by client-side checks alone. Avoid concurrent modifications of the same test paths.
+
 ## Session recovery and current limits
 
 - [ ] Disconnect. The terminal should stop accepting input, and the explorer should clear.
@@ -64,6 +79,6 @@ Uploads target the folder displayed in the explorer, not the terminal's current 
 - [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; create/rename/copy/move/delete/permission actions; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; file creation, copy/move between folders, permission changes, recursive deletion or undo; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.

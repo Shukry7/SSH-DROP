@@ -104,6 +104,121 @@ describe('SSH and SFTP over a real loopback connection', () => {
     );
     expect((await session.list('/folder')).entries[0].name).toBe('nested.txt');
   });
+  it('creates, renames, and deletes through SFTP without shell execution', async () => {
+    await connect();
+    const confirm = vi.fn(async () => true);
+    const name = "new 'quoted' 日本語";
+    await session.changeFile({ action: 'create-folder', directory: '/', name }, confirm);
+    expect((await session.list('/')).entries.some((entry) => entry.name === name)).toBe(true);
+    await session.changeFile(
+      { action: 'rename', directory: '/', name, newName: 'renamed', kind: 'directory' },
+      confirm,
+    );
+    await session.changeFile(
+      { action: 'delete', directory: '/', name: 'renamed', kind: 'directory' },
+      confirm,
+    );
+    expect(fixture.directories.has('/renamed')).toBe(false);
+    await session.changeFile(
+      { action: 'rename', directory: '/', name: 'hello.txt', newName: 'renamed.txt', kind: 'file' },
+      confirm,
+    );
+    expect(fixture.files.get('/renamed.txt')?.toString()).toContain('Hello');
+    await session.changeFile(
+      { action: 'delete', directory: '/', name: 'renamed.txt', kind: 'file' },
+      confirm,
+    );
+    expect(fixture.files.has('/renamed.txt')).toBe(false);
+    expect(confirm).toHaveBeenCalledTimes(5);
+  });
+  it('refuses nonempty folders, symlinks, and existing rename destinations', async () => {
+    await connect();
+    const confirm = async () => true;
+    await expect(
+      session.changeFile(
+        { action: 'delete', directory: '/', name: 'folder', kind: 'directory' },
+        confirm,
+      ),
+    ).rejects.toThrow('server refused');
+    expect(fixture.files.has('/folder/nested.txt')).toBe(true);
+    fixture.symlinks.add('/link');
+    await expect(
+      session.changeFile({ action: 'delete', directory: '/', name: 'link', kind: 'file' }, confirm),
+    ).rejects.toThrow('item type changed');
+    await expect(
+      session.changeFile(
+        { action: 'rename', directory: '/', name: 'hello.txt', newName: 'large.bin', kind: 'file' },
+        confirm,
+      ),
+    ).rejects.toThrow('already exists');
+    expect(fixture.files.get('/large.bin')?.length).toBe(2 * 1024 * 1024);
+  });
+  it('rejects permission failures while preserving the connection', async () => {
+    await replaceFixture({ denyChanges: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'delete', directory: '/', name: 'hello.txt', kind: 'file' },
+        async () => true,
+      ),
+    ).rejects.toThrow('denied permission');
+    expect((await session.list('/')).entries.length).toBeGreaterThan(0);
+  });
+  it('reports an applied change with a lost acknowledgment as uncertain without retrying', async () => {
+    await replaceFixture({ dropAfterChange: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'create-folder', directory: '/', name: 'possibly-created' },
+        async () => true,
+      ),
+    ).rejects.toThrow('result is uncertain');
+    expect(fixture.directories.has('/possibly-created')).toBe(true);
+    await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+  });
+  it('cancels without mutation and blocks overlapping transfers and changes while awaiting confirmation', async () => {
+    await connect();
+    let release!: (value: boolean) => void;
+    const confirmation = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const confirm = vi.fn(() => confirmation);
+    const change = session.changeFile(
+      { action: 'delete', directory: '/', name: 'hello.txt', kind: 'file' },
+      confirm,
+    );
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+    await expect(
+      session.changeFile({ action: 'create-folder', directory: '/', name: 'x' }, async () => true),
+    ).rejects.toThrow('active file operation');
+    await expect(
+      session.transfer('download', join(directory, 'out.txt'), '/hello.txt'),
+    ).rejects.toThrow('active file operation');
+    release(false);
+    expect(await change).toBe(false);
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+  });
+  it('never replays confirmed changes after a disconnect and reconnect', async () => {
+    await connect();
+    let release!: (value: boolean) => void;
+    const confirm = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const change = session.changeFile(
+      { action: 'delete', directory: '/', name: 'hello.txt', kind: 'file' },
+      confirm,
+    );
+    const rejected = expect(change).rejects.toThrow('No file change was sent');
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+    session.disconnect();
+    await connect();
+    release(true);
+    await rejected;
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+  });
   it('reports missing and inaccessible directories', async () => {
     await connect();
     await expect(session.list('/missing')).rejects.toThrow();
@@ -337,5 +452,11 @@ describe('SSH and SFTP over a real loopback connection', () => {
     expect(() => session.resize(80, 24)).toThrow('No active terminal');
     expect(() => session.cancel('missing')).toThrow('no longer active');
     await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+    await expect(
+      session.changeFile(
+        { action: 'delete', directory: '/', name: 'hello.txt', kind: 'file' },
+        async () => true,
+      ),
+    ).rejects.toThrow('SFTP is unavailable');
   });
 });
