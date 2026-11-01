@@ -42,6 +42,32 @@ export const terminalSizeSchema = z
   .object({ cols: z.number().int().min(2).max(1000), rows: z.number().int().min(1).max(1000) })
   .strict();
 export const transferIdSchema = z.string().uuid();
+export const profileDetailsSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(80)
+      .refine((s) => !hasControl(s)),
+    host: connectionSchema.shape.host,
+    port: connectionSchema.shape.port,
+    username: connectionSchema.shape.username,
+    auth: connectionSchema.shape.auth,
+    startingDirectory: remotePathSchema.refine((s) => !hasControl(s)),
+  })
+  .strict();
+export const profileInputSchema = profileDetailsSchema
+  .extend({
+    id: z.string().uuid().optional(),
+    keyId: z.string().uuid().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.auth === 'key' && !value.keyId)
+      ctx.addIssue({ code: 'custom', path: ['keyId'], message: 'Select a private key.' });
+    if (value.auth === 'password' && value.keyId)
+      ctx.addIssue({ code: 'custom', path: ['keyId'], message: 'Unexpected private key.' });
+  });
 
 export function remotePath(value: string): string {
   return posix.normalize(remotePathSchema.parse(value));

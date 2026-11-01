@@ -1,6 +1,10 @@
 export const channels = {
   info: 'app:info',
   chooseKey: 'ssh:choose-key',
+  profiles: 'profiles:list',
+  saveProfile: 'profiles:save',
+  loadProfile: 'profiles:load',
+  deleteProfile: 'profiles:delete',
   connect: 'ssh:connect',
   disconnect: 'ssh:disconnect',
   list: 'sftp:list',

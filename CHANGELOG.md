@@ -4,6 +4,11 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+### Added
+
+- Named server profiles with add, edit, load, and confirmed deletion. Persist connection settings, starting directories, and native-selected key-file locations across restarts; passwords, passphrases, and key contents remain session-only.
+- Profile validation, bounded atomic storage, concurrent-write serialization, and regression coverage for persistence, invalid requests, damaged files, missing keys, and deletion cancellation.
+
 ### Changed
 
 - Update GitHub Actions dependencies and verify uploaded coverage diagnostics can be downloaded from all three platforms.
