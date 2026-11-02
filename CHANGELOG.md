@@ -21,6 +21,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Refuse replacement and rollback after timestamp-only destination edits. Verify the independent backup again immediately before publication, and compare restored remote copies with the recorded backup hash.
 - Clear connection-specific errors and busy controls on disconnect; suppress delayed recovery/transfer errors from older connections so their paths cannot reappear in the next session.
 - Validate recovery paths before native confirmations, reject misleading control/bidirectional characters, and reject special permission bits and non-file recovery metadata before use.
+- Report cancelled conflict/recovery confirmations as cancelled operations instead of completed transfers.
 
 ## [0.2.0-alpha.1] — 2026-11-02
 

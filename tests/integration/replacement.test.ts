@@ -148,11 +148,17 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
   });
   it('cancel and keep-both leave the existing destination intact', async () => {
     await connect();
+    let lastStatus: TransferUpdate['status'] | undefined;
+    observe = (transfer) => {
+      lastStatus = transfer.status;
+    };
     choice = 0;
     await upload();
+    expect(lastStatus).toBe('cancelled');
     expect(await session.recovery()).toEqual([]);
     choice = 1;
     await upload();
+    expect(lastStatus).toBe('completed');
     expect(fixture.files.get('/hello.txt')?.toString()).toBe(original);
     expect([...fixture.files].find(([p]) => p.includes('(copy '))?.[1].toString()).toBe(
       'replacement',
@@ -222,7 +228,12 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
     await upload();
     const [record] = await session.recovery();
     choice = 0;
+    let lastStatus: TransferUpdate['status'] | undefined;
+    observe = (transfer) => {
+      lastStatus = transfer.status;
+    };
     await session.recover({ id: record.id, action: 'delete-backup' });
+    expect(lastStatus).toBe('cancelled');
     expect(await session.recovery()).toHaveLength(1);
     await writeFile(store.backup(record.id), 'tampered');
     choice = 1;

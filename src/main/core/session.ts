@@ -353,9 +353,10 @@ export class Session {
               throw new Error(nested.error ?? 'Transfer cancelled.');
           },
         });
-        if (recoveryAction) await replacements.recover(recoveryAction.id, recoveryAction.action);
-        else await replacements.transfer(direction, local, path);
-        update.status = 'completed';
+        const completed = recoveryAction
+          ? await replacements.recover(recoveryAction.id, recoveryAction.action)
+          : await replacements.transfer(direction, local, path);
+        update.status = completed ? 'completed' : 'cancelled';
         publish();
         return;
       }

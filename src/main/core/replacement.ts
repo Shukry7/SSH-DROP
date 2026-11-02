@@ -75,7 +75,11 @@ export class Replacements {
     const i = this.c.identity;
     return `Server: ${i.username}@${i.host}:${i.port}\nDestination: ${path}\n\n`;
   }
-  async transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void> {
+  async transfer(
+    direction: 'upload' | 'download',
+    local: string,
+    remote: string,
+  ): Promise<boolean> {
     // Reject control/bidirectional characters before displaying a native warning,
     // rather than waiting until a recovery record is written after approval.
     identitySchema.parse(this.c.identity);
@@ -85,7 +89,7 @@ export class Replacements {
     const previous = await io.snapshot(target);
     if (!previous) {
       await this.c.transfer(direction, local, remote);
-      return;
+      return true;
     }
     const alternate = copyName(target, direction === 'upload');
     const incoming = await this.io(direction === 'upload' ? 'download' : 'upload').snapshot(
@@ -103,17 +107,18 @@ export class Replacements {
           ? 'Replace first stores an independent SHA-256 verified copy in SSHDrop’s local backup folder. File contents and paths are stored unencrypted; protect this computer and its disk. Backups stay until you remove them (100 records / 10 GiB limit).\n\nOnly ordinary file contents and basic permissions are verified. Remote ACLs, extended attributes and hard links cannot be preserved or fully detected. Stop other writers: SSH cannot guarantee a compare-and-swap against external edits. Replacement may affect services using this file.'
           : 'This server does not advertise atomic replacement. Choose Keep both; the existing file will be preserved.'),
     });
-    if (choice === 0) return;
+    if (choice === 0) return false;
     if (choice === 1) {
       await this.c.transfer(
         direction,
         direction === 'upload' ? local : alternate,
         direction === 'upload' ? alternate : remote,
       );
-      return;
+      return true;
     }
     if (choice !== 2 || !supported) throw new Error('Invalid replacement choice.');
     await this.replace({ direction, local, remote, previous }, undefined, incoming);
+    return true;
   }
   private async replace(
     input: Pick<RecoveryRecord, 'direction' | 'local' | 'remote' | 'previous'> & {
@@ -202,7 +207,7 @@ export class Replacements {
       throw error;
     }
   }
-  async recover(id: string, action: RecoveryAction['action']): Promise<void> {
+  async recover(id: string, action: RecoveryAction['action']): Promise<boolean> {
     const c = this.c;
     const record = await c.store.load(id, c.identity);
     c.check();
@@ -217,10 +222,11 @@ export class Replacements {
             this.describe(target) +
             'Permanently delete this local backup and recovery record? This removes rollback protection. Server and destination files are kept.',
           buttons: ['Cancel', 'Delete backup permanently'],
-        })) === 1
+        })) !== 1
       )
-        await c.store.remove(id, c.identity);
-      return;
+        return false;
+      await c.store.remove(id, c.identity);
+      return true;
     }
     if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
       throw new Error(
@@ -237,7 +243,7 @@ export class Replacements {
           buttons: ['Cancel', 'Restore copy'],
         })) !== 1
       )
-        return;
+        return false;
       if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
         throw new Error('The backup changed. Restore stopped.');
       if (record.direction === 'upload') await c.transfer('upload', backup, alternate);
@@ -247,7 +253,7 @@ export class Replacements {
       c.check();
       if (!equalBytes(await io.snapshot(alternate), record.previous))
         throw new Error('Restored copy verification failed. Inspect the new file before use.');
-      return;
+      return true;
     }
     const current = await io.snapshot(target);
     if (action === 'inspect') {
@@ -259,7 +265,7 @@ export class Replacements {
             : 'not-replaced'
           : 'uncertain';
       await c.store.update(id, c.identity, { state });
-      return;
+      return true;
     }
     if (record.state !== 'completed' || !unchangedFile(current, record.installed))
       throw new Error(
@@ -276,7 +282,7 @@ export class Replacements {
         buttons: ['Cancel', 'Back up current and roll back'],
       })) !== 1
     )
-      return;
+      return false;
     // Verify the backup again after the native dialog and before using it as a source.
     if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
       throw new Error('The backup changed. Rollback stopped.');
@@ -291,5 +297,6 @@ export class Replacements {
       backup,
     );
     await c.store.update(id, c.identity, { state: 'restored' });
+    return true;
   }
 }
