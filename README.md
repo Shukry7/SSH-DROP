@@ -2,7 +2,7 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.2.0-alpha.2, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.2.0-alpha.3, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
 
@@ -25,7 +25,11 @@ For a step-by-step list of implemented behaviors to try, see the [manual testing
 
 Version 0.2.0-alpha.2 offers Cancel / Keep both / Back up and replace when a regular-file destination exists. Replace first stores an independent verified backup locally, stages the incoming file, rechecks the original, and requires atomic replacement support (OpenSSH POSIX rename for uploads; native replacement for local downloads). The **Recovery backups** panel is scoped to the connected server key, address, port, and account. Inspect unresolved outcomes; restore a separate copy if the destination changed. Rollback first backs up the current version too. Nothing is retried or restored automatically.
 
-Backups contain **unencrypted contents and paths**, retained until explicitly deleted (100 records / 10 GiB accounted contents; 50 MiB reserve). Protect your device and disk. Stop other writers. Remote ACLs, extended attributes, hidden hard links, and power-loss durability cannot be guaranteed. This feature is not in existing `0.2.0-alpha.1` installers; see the [recovery testing checklist](docs/MANUAL_TESTING.md).
+The existing `0.2.0-alpha.2` installers store **unencrypted backup contents and paths**, retained until explicitly deleted (100 records / 10 GiB accounted contents; 50 MiB reserve). Protect your device and disk. Stop other writers. Remote ACLs, extended attributes, hidden hard links, and power-loss durability cannot be guaranteed. This feature is not in existing `0.2.0-alpha.1` installers; see the [recovery testing checklist](docs/MANUAL_TESTING.md).
+
+**Version 0.2.0-alpha.3:** new backup contents and recovery metadata use AES-256-GCM authenticated encryption, with an OS-protected vault key. There is no plaintext fallback. Legacy backups show **Legacy plaintext** until you explicitly choose **Secure backup**; migration verifies the encrypted copy and saves metadata before removing the original. A non-sensitive format marker prevents older plaintext-only versions from silently starting a second recovery journal. Other legacy contents remain plaintext until individually secured. Repeat Secure backup after interrupted cleanup. This does not securely erase earlier disk contents.
+
+Keep the entire `backups` folder, including `vault-key.json`, and retain access to the original OS account/key store. Losing either can make recovery impossible; copying the folder to another computer/account is not a portable recovery method. Encryption does not protect against other software running as your OS user. Linux requires a recognized, unlocked libsecret/KWallet backend; headless or `basic_text` environments cannot create or unlock encrypted backups. Unique-file transfers and Keep both remain available without a vault. See [encrypted recovery testing](docs/MANUAL_TESTING.md#encrypted-recovery-020-alpha3).
 
 ## Download the alpha
 

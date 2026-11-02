@@ -127,6 +127,6 @@ export function childPath(directory: string, name: string): string {
 export const recoveryActionSchema = z
   .object({
     id: z.string().uuid(),
-    action: z.enum(['inspect', 'rollback', 'restore-copy', 'delete-backup']),
+    action: z.enum(['inspect', 'rollback', 'restore-copy', 'delete-backup', 'encrypt-backup']),
   })
   .strict();

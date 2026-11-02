@@ -9,7 +9,9 @@ import {
   type RecoveryRecord,
   type ServerIdentity,
 } from './recovery-store';
-import { copyLocalBackup, type ReplacementIO } from './replacement-io';
+import { join as localJoin } from 'node:path';
+import { privateFile } from './backup-vault';
+import type { ReplacementIO } from './replacement-io';
 
 export interface ReplacementApproval {
   title: string;
@@ -58,6 +60,7 @@ export const recoveryView = (r: RecoveryRecord): RecoveryView => ({
   created: r.created,
   state: r.state,
   size: r.previous.size,
+  encrypted: !!r.encrypted,
 });
 
 export class Replacements {
@@ -104,7 +107,7 @@ export class Replacements {
         this.describe(target) +
         `Existing file: ${previous.size} bytes; modified ${previous.modified === undefined ? 'unknown' : new Date(previous.modified).toISOString()}\nIncoming file: ${incoming.size} bytes; modified ${incoming.modified === undefined ? 'unknown' : new Date(incoming.modified).toISOString()}\nBackup requires at least ${previous.size} bytes locally plus a 50 MiB reserve and staging space.\nKeep both creates: ${alternate}\n\n` +
         (supported
-          ? 'Replace first stores an independent SHA-256 verified copy in SSHDrop’s local backup folder. File contents and paths are stored unencrypted; protect this computer and its disk. Backups stay until you remove them (100 records / 10 GiB limit).\n\nOnly ordinary file contents and basic permissions are verified. Remote ACLs, extended attributes and hard links cannot be preserved or fully detected. Stop other writers: SSH cannot guarantee a compare-and-swap against external edits. Replacement may affect services using this file.'
+          ? 'Replace first stores an independent SHA-256 verified, encrypted copy in SSHDrop’s local backup folder. Contents and recovery metadata use authenticated encryption with an OS-protected key. An unlocked OS key store is required; there is no plaintext fallback. Backups stay until you remove them (100 records / 10 GiB limit). Losing the OS account or vault key can make backups unrecoverable. Encryption does not protect against other software running as your OS user.\n\nOnly ordinary file contents and basic permissions are verified. Remote ACLs, extended attributes and hard links cannot be preserved or fully detected. Stop other writers: SSH cannot guarantee a compare-and-swap against external edits. Replacement may affect services using this file.'
           : 'This server does not advertise atomic replacement. Choose Keep both; the existing file will be preserved.'),
     });
     if (choice === 0) return false;
@@ -124,7 +127,7 @@ export class Replacements {
     input: Pick<RecoveryRecord, 'direction' | 'local' | 'remote' | 'previous'> & {
       parentId?: string;
     },
-    backupSource?: string,
+    backupSource?: RecoveryRecord,
     expected?: FileSnapshot,
   ): Promise<void> {
     const c = this.c;
@@ -132,21 +135,26 @@ export class Replacements {
     const target = destination(input);
     c.check();
     const record = await c.store.create({ ...input, identity: c.identity });
-    const backup = c.store.backup(record.id);
     const stage = io.sibling(target, record.id);
     const safety = `${stage}.original`;
     let publishing = false;
     let stageOwned = false;
     try {
-      if (input.direction === 'upload') await c.transfer('download', backup, target);
-      else await copyLocalBackup(target, backup);
+      try {
+        await c.store.save(record, io.read(target), () => c.check());
+      } catch (error) {
+        throw new Error('Backup verification failed. The original has not been replaced.', {
+          cause: error,
+        });
+      }
       c.check();
-      if (!equalBytes(await c.localIO.snapshot(backup), input.previous))
-        throw new Error('Backup verification failed. The original has not been replaced.');
       await c.store.update(record.id, c.identity, { state: 'backup-ready' });
       if (backupSource) {
-        if (input.direction === 'upload') await c.transfer('upload', backupSource, stage);
-        else await copyLocalBackup(backupSource, stage);
+        await io.write(
+          stage,
+          c.store.contents(backupSource, () => c.check()),
+          backupSource.previous,
+        );
       } else
         await c.transfer(
           input.direction,
@@ -167,10 +175,14 @@ export class Replacements {
         if (!equalBytes(installed, parent.previous))
           throw new Error('Rollback contents changed. The destination has not been replaced.');
       }
-      if (!equalBytes(await c.localIO.snapshot(backup), input.previous))
+      try {
+        await c.store.verify(record, () => c.check());
+      } catch (error) {
         throw new Error(
           'Backup changed before publication. The destination has not been replaced.',
+          { cause: error },
         );
+      }
       if (!unchangedFile(await io.snapshot(target), input.previous))
         throw new Error('Destination changed. The original has not been replaced.');
       if (
@@ -213,7 +225,22 @@ export class Replacements {
     c.check();
     const io = this.io(record.direction);
     const target = destination(record);
-    const backup = c.store.backup(id);
+    if (action === 'encrypt-backup') {
+      if (
+        (await this.approve({
+          title: 'Secure recovery backup',
+          detail:
+            this.describe(target) +
+            'Encrypt this legacy backup and the recovery metadata using this OS account? The plaintext original is removed only after the encrypted backup verifies and metadata is saved. Other legacy backup contents remain plaintext until secured individually. Interrupted cleanup can be retried with this button. This is not secure disk erasure. Keep the vault key with the backup folder; loss of this OS account/key may make recovery impossible.',
+          buttons: ['Cancel', 'Encrypt and clean up legacy copy'],
+        })) !== 1
+      )
+        return false;
+      const path = localJoin(c.store.directory, `${record.id}.bak`);
+      if (!record.encrypted) await privateFile(path);
+      await c.store.encryptLegacy(record, c.localIO.read(path), () => c.check());
+      return true;
+    }
     if (action === 'delete-backup') {
       if (
         (await this.approve({
@@ -228,10 +255,7 @@ export class Replacements {
       await c.store.remove(id, c.identity);
       return true;
     }
-    if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
-      throw new Error(
-        'The backup is missing or its SHA-256 verification failed. It has been preserved for inspection.',
-      );
+    await c.store.verify(record, () => c.check());
     if (action === 'restore-copy') {
       const alternate = copyName(target, record.direction === 'upload');
       if (
@@ -244,12 +268,12 @@ export class Replacements {
         })) !== 1
       )
         return false;
-      if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
-        throw new Error('The backup changed. Restore stopped.');
-      if (record.direction === 'upload') await c.transfer('upload', backup, alternate);
-      else {
-        await copyLocalBackup(backup, alternate);
-      }
+      await c.store.verify(record, () => c.check());
+      await io.write(
+        alternate,
+        c.store.contents(record, () => c.check()),
+        record.previous,
+      );
       c.check();
       if (!equalBytes(await io.snapshot(alternate), record.previous))
         throw new Error('Restored copy verification failed. Inspect the new file before use.');
@@ -284,8 +308,7 @@ export class Replacements {
     )
       return false;
     // Verify the backup again after the native dialog and before using it as a source.
-    if (!equalBytes(await c.localIO.snapshot(backup), record.previous))
-      throw new Error('The backup changed. Rollback stopped.');
+    await c.store.verify(record, () => c.check());
     await this.replace(
       {
         direction: record.direction,
@@ -294,7 +317,7 @@ export class Replacements {
         previous: current!,
         parentId: id,
       },
-      backup,
+      record,
     );
     await c.store.update(id, c.identity, { state: 'restored' });
     return true;

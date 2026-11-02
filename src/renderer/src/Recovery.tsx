@@ -59,9 +59,11 @@ export function Recovery({
         <span className="small-label">THIS SERVER & ACCOUNT</span>
       </div>
       <p className="recovery-note">
-        Backups contain unencrypted file contents and paths on this computer. They persist after
-        disconnecting. Protect your disk. Nothing is restored or deleted automatically. Stop other
-        writers before replacing files.
+        New backups and recovery metadata are encrypted with an OS-protected key. Legacy backups
+        remain plaintext until you choose Secure backup. An unlocked OS key store is required;
+        losing the OS account or vault key can make backups unrecoverable. Keep the backup folder
+        and key together. Nothing is restored or deleted automatically. Stop other writers before
+        replacing files.
       </p>
       {records.length === 0 && (
         <p className="recovery-note">No replacement backups for this verified server identity.</p>
@@ -71,28 +73,36 @@ export function Recovery({
           <div>
             <strong>{record.path}</strong>
             <small>
-              {record.direction} · {record.state} · {record.size} bytes ·{' '}
-              {new Date(record.created).toLocaleString()}
+              {record.encrypted ? 'Encrypted' : 'Legacy plaintext'} · {record.direction} ·{' '}
+              {record.state} · {record.size} bytes · {new Date(record.created).toLocaleString()}
             </small>
           </div>
           <div className="recovery-actions">
             <button
               className="text-button"
               disabled={busy}
+              onClick={() => void act(record.id, 'encrypt-backup')}
+              title="Encrypt a legacy backup or retry interrupted plaintext cleanup"
+            >
+              Secure backup
+            </button>
+            <button
+              className="text-button"
+              disabled={busy || !record.encrypted}
               onClick={() => void act(record.id, 'inspect')}
             >
               Inspect
             </button>
             <button
               className="text-button"
-              disabled={busy || record.state !== 'completed'}
+              disabled={busy || !record.encrypted || record.state !== 'completed'}
               onClick={() => void act(record.id, 'rollback')}
             >
               Roll back
             </button>
             <button
               className="text-button"
-              disabled={busy}
+              disabled={busy || !record.encrypted}
               onClick={() => void act(record.id, 'restore-copy')}
             >
               Restore copy

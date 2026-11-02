@@ -92,6 +92,8 @@ When reporting an issue, include the app version, OS, steps, expected behavior, 
 
 ## Overwrite and recovery checklist (0.2.0-alpha.2)
 
+This section describes the existing alpha.2 installer. Version 0.2.0-alpha.3 has a separate encrypted recovery checklist below.
+
 Use disposable files and a server with SFTP; stop other writers. Test a `0.2.0-alpha.2` build or current development source. Earlier `0.2.0-alpha.1` installers do not contain this feature.
 
 1. Upload a file whose remote name already exists. Cancel: both files stay unchanged. Keep both: inspect the generated filename and verify both files remain.
@@ -102,3 +104,15 @@ Use disposable files and a server with SFTP; stop other writers. Test a `0.2.0-a
 6. Restart the app: recovery records must remain; nothing should auto-run. Connect to another server/account: old paths must not appear. Disconnect: the panel must disappear. Credentials must not appear in recovery JSON.
 7. Cancel backup deletion, then confirm deletion for a resolved record: only its local backup and record should disappear. An unresolved record must not be deletable through the UI.
 8. Try denied permissions, a read-only filesystem, exhausted space, unsupported atomic replacement, local hard links, symlinks, corrupt recovery JSON and interrupted native dialogs. Original contents must remain or the result must explicitly be reported as uncertain with recoverable evidence retained. Protect the local disk; ordinary deletion is not secure erasure.
+
+## Encrypted recovery (0.2.0-alpha.3)
+
+Use an isolated test OS account/application data directory and disposable local/remote files. Keep existing production backups untouched. Desktop automation mocks the OS provider; it does not certify real-device keychain behavior.
+
+1. With the OS key store available, overwrite a test upload and download. Check that each recovery row says Encrypted. The backup folder should contain `vault-key.json`, `recovery.enc`, and UUID `.bak.enc` files, without a newly created plaintext `.bak` or plaintext recovery metadata. `recovery.json` is a non-sensitive format marker only. Ciphertext must not expose the original contents, server address, username, or destination path. Filenames and ciphertext sizes remain observable.
+2. Restart under the same OS account and verify Inspect, restore-copy, rollback with a new independent backup, and confirmed deletion. Repeat for empty files and files larger than several 64 KiB chunks. Restore-copy may leave an intentional plaintext destination; staging is not published until authentication and SHA-256 pass.
+3. On an isolated copy of the test backup folder, corrupt ciphertext, authentication tag, metadata, or the wrapped key; remove the key; swap two encrypted backup files. Recovery/replacement must stop and preserve evidence. Never reset or regenerate a key to recover encrypted data. Restore the intact test folder afterward.
+4. Lock or deny access to the actual OS key store. Replacement and encrypted recovery must fail closed. Unique-file transfers and Keep both must still work. On Linux, test GNOME/libsecret and KWallet; `basic_text`, unknown backends, and unavailable providers must be refused. Windows DPAPI and macOS Keychain must be tested on real devices, including unsigned app identity prompts. Linux key access currently uses Electron 45's synchronous provider and may block while the keyring prompts.
+5. With an isolated alpha.2 legacy folder, connect to its original verified server/account. Rows must say Legacy plaintext. Cancel Secure backup and verify no migration occurs. Confirm it, then check encrypted contents and metadata, preserved unrelated legacy backups, and removal of only the migrated plaintext original. `recovery.json` must contain only the non-sensitive `{"version":2,"encrypted":true}` marker, so older binaries fail closed. Legacy recovery requires migration first.
+6. Interrupt encryption or force a metadata write failure during migration. The plaintext original must remain, and no destination must change. Retry Secure backup explicitly. Also retry after interruption between committing metadata and unlinking plaintext; the same button must finish cleanup without replacing the vault key. Deletion is not secure disk erasure.
+7. Cut the network or cancel during encryption/decryption/restore staging. Never publish partially authenticated bytes or automatically retry a replacement. Inspect uncertain outcomes and destination-side temporary files before removing them. Losing the OS account or key can make these backups unrecoverable; portable export and key rotation are not implemented.

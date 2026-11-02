@@ -4,6 +4,40 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sshFixture } from '../fixtures/ssh-server';
 
+test('Windows OS key protection wraps and unwraps a disposable value without plaintext fallback', async () => {
+  test.skip(
+    process.platform !== 'win32',
+    'Real Linux/macOS keychains require interactive device validation.',
+  );
+  const directory = await mkdtemp(join(tmpdir(), 'sshdrop-os-key-'));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  env.SSHDROP_USER_DATA_DIR = directory;
+  delete env.ELECTRON_RUN_AS_NODE;
+  const application = await electron.launch({ args: ['.'], env, chromiumSandbox: true });
+  try {
+    const result = await application.evaluate(async ({ safeStorage }) => {
+      const available = await safeStorage.isAsyncEncryptionAvailable();
+      if (!available) return { available, verified: false, exposed: false };
+      const probe = 'Disposable SSHDrop OS key-store verification';
+      const wrapped = await safeStorage.encryptStringAsync(probe);
+      const unwrapped = await safeStorage.decryptStringAsync(wrapped);
+      return {
+        available,
+        verified: unwrapped.result === probe,
+        exposed: wrapped.includes(Buffer.from(probe)),
+      };
+    });
+    expect(result).toEqual({ available: true, verified: true, exposed: false });
+  } finally {
+    await application.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+});
+
 test('desktop confirms replacement, guards rollback, restores a copy and hides recovery on disconnect', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-recovery-ui-'));
   const fixture = await sshFixture({ atomicReplace: true });
@@ -18,22 +52,39 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
   delete env.ELECTRON_RUN_AS_NODE;
   const application = await electron.launch({ args: ['.'], env, chromiumSandbox: true });
   try {
-    await application.evaluate(({ dialog }, destination) => {
-      dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
-      dialog.showMessageBox = async (...args: unknown[]) => {
-        const options = args.at(-1) as import('electron').MessageBoxOptions;
-        if (options.title === 'File already exists') {
-          if (
-            options.defaultId !== 0 ||
-            options.cancelId !== 0 ||
-            !options.detail?.includes('unencrypted')
-          )
-            throw new Error('Unsafe conflict confirmation');
-          return { response: 2, checkboxChecked: false };
+    await application.evaluate(
+      ({ dialog, safeStorage }, { destination, mockKeyStore }) => {
+        // Exercise real Windows protection. Linux/macOS CI has no interactive keychain.
+        // Production still refuses unavailable/plaintext OS providers.
+        if (mockKeyStore) {
+          safeStorage.isAsyncEncryptionAvailable = async () => true;
+          safeStorage.isEncryptionAvailable = () => true;
+          safeStorage.getSelectedStorageBackend = () => 'gnome_libsecret';
+          safeStorage.encryptStringAsync = async (value) => Buffer.from(value, 'utf8');
+          safeStorage.decryptStringAsync = async (value) => ({
+            result: value.toString('utf8'),
+            shouldReEncrypt: false,
+          });
+          safeStorage.encryptString = (value) => Buffer.from(value, 'utf8');
+          safeStorage.decryptString = (value) => value.toString('utf8');
         }
-        return { response: 1, checkboxChecked: false };
-      };
-    }, destination);
+        dialog.showSaveDialog = async () => ({ canceled: false, filePath: destination });
+        dialog.showMessageBox = async (...args: unknown[]) => {
+          const options = args.at(-1) as import('electron').MessageBoxOptions;
+          if (options.title === 'File already exists') {
+            if (
+              options.defaultId !== 0 ||
+              options.cancelId !== 0 ||
+              !options.detail?.includes('encrypted')
+            )
+              throw new Error('Unsafe conflict confirmation');
+            return { response: 2, checkboxChecked: false };
+          }
+          return { response: 1, checkboxChecked: false };
+        };
+      },
+      { destination, mockKeyStore: process.platform !== 'win32' },
+    );
     const page = await application.firstWindow();
     await page.getByLabel('Host', { exact: true }).fill('127.0.0.1');
     await page.getByLabel('Port', { exact: true }).fill(String(fixture.port));
@@ -49,7 +100,22 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
       .click();
     await expect(recovery.locator('.recovery-record')).toHaveCount(1);
     await expect(recovery).toContainText('completed');
+    await expect(recovery).toContainText('Encrypted');
+    const stored = await readdir(join(directory, 'backups'));
+    expect(stored).toContain('recovery.enc');
+    expect(stored.some((name) => name.endsWith('.bak'))).toBe(false);
     expect(await readFile(destination, 'utf8')).toBe('Hello from the remote server.\n');
+    await application.evaluate(({ safeStorage }) => {
+      safeStorage.isAsyncEncryptionAvailable = async () => false;
+      safeStorage.isEncryptionAvailable = () => false;
+    });
+    await recovery.getByRole('button', { name: 'Restore copy' }).click();
+    await expect(page.getByRole('alert')).toContainText('preserved');
+    expect((await readdir(directory)).some((name) => name.includes('(copy '))).toBe(false);
+    await application.evaluate(({ safeStorage }) => {
+      safeStorage.isAsyncEncryptionAvailable = async () => true;
+      safeStorage.isEncryptionAvailable = () => true;
+    });
     await writeFile(destination, 'external edit');
     await recovery.getByRole('button', { name: 'Roll back' }).click();
     await expect(page.getByRole('alert')).toContainText('destination changed');

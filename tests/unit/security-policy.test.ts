@@ -120,10 +120,18 @@ describe('dependency security policy', () => {
 });
 
 describe('tracked-file secret detection', () => {
-  it.each(['profiles.json', 'data/known-hosts.json', '.env', '.env.production', 'keys/id_ed25519'])(
-    'rejects user-data file %s',
-    (file) => expect(looksSensitive(file, '{}')).toBe(true),
-  );
+  it.each([
+    'profiles.json',
+    'data/known-hosts.json',
+    'backups/vault-key.json',
+    'backups/recovery.json',
+    'backups/recovery.enc',
+    'backups/12345678-1234-1234-1234-123456789abc.bak',
+    'backups/12345678-1234-1234-1234-123456789abc.bak.enc',
+    '.env',
+    '.env.production',
+    'keys/id_ed25519',
+  ])('rejects user-data file %s', (file) => expect(looksSensitive(file, '{}')).toBe(true));
   it('detects private-key markers and common service tokens without printing contents', () => {
     for (const value of [
       '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----',
