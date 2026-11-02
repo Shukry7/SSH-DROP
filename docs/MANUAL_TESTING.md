@@ -89,3 +89,16 @@ Remote changes use SFTP, not shell commands. Other server processes can change p
 Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; file creation, copy/move between folders, permission changes, recursive deletion or undo; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
+
+## Unreleased overwrite and recovery checklist
+
+Use disposable files and a server with SFTP; stop other writers. Existing `0.2.0-alpha.1` installers do not contain this feature; run the development build.
+
+1. Upload a file whose remote name already exists. Cancel: both files stay unchanged. Keep both: inspect the generated filename and verify both files remain.
+2. Back up and replace: verify the native warning identifies the server/path and discloses unencrypted local storage. Compare bytes and basic permissions. On a server without OpenSSH atomic rename, only Cancel and Keep both should be available.
+3. Download onto an existing local file. Replace, then open Recovery backups and Roll back. Confirm it first backs up the current version; inspect both recovery records. Repeat with spaces, quotes and Unicode filenames.
+4. Edit the destination outside SSHDrop after replacement. Rollback must refuse. Restore copy should create a different filename and keep the external edit. Corrupt a disposable `.bak`: inspection/rollback must refuse its checksum.
+5. Disconnect during staging or publication. Reconnect to the same server/account and Inspect the record. Do not repeat an uncertain operation automatically. Check destination, `.ready`, `.ready.original`, and local `.bak` before manually cleaning temporary files.
+6. Restart the app: recovery records must remain; nothing should auto-run. Connect to another server/account: old paths must not appear. Disconnect: the panel must disappear. Credentials must not appear in recovery JSON.
+7. Cancel backup deletion, then confirm deletion for a resolved record: only its local backup and record should disappear. An unresolved record must not be deletable through the UI.
+8. Try denied permissions, a read-only filesystem, exhausted space, unsupported atomic replacement, local hard links, symlinks, corrupt recovery JSON and interrupted native dialogs. Original contents must remain or the result must explicitly be reported as uncertain with recoverable evidence retained. Protect the local disk; ordinary deletion is not secure erasure.

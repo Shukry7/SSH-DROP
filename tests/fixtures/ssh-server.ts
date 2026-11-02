@@ -25,6 +25,8 @@ export async function sshFixture(
     dropAfterChange?: boolean;
     stall?: string[];
     corruptReadback?: boolean;
+    atomicReplace?: boolean;
+    dropAfterReplace?: boolean;
   } = {},
 ) {
   const files = new Map<string, Buffer>([
@@ -80,6 +82,28 @@ export async function sshFixture(
         session.on('sftp', (acceptSftp, reject) => {
           if (options.noSftp) return reject();
           const sftp = acceptSftp();
+          if (options.atomicReplace) {
+            // ssh2's test server emits no extension advertisement API. Extend only
+            // its VERSION packet to exercise the real client's negotiated support.
+            const protocol = (
+              sftp as unknown as { _protocol: { channelData(channel: number, data: Buffer): void } }
+            )._protocol;
+            const send = protocol.channelData.bind(protocol);
+            protocol.channelData = (channel, data) => {
+              if (data.length === 9 && data[4] === 2) {
+                const extension = Buffer.from('posix-rename@openssh.com');
+                const packet = Buffer.alloc(9 + 4 + extension.length + 4 + 1);
+                data.copy(packet);
+                packet.writeUInt32BE(packet.length - 4);
+                packet.writeUInt32BE(extension.length, 9);
+                extension.copy(packet, 13);
+                packet.writeUInt32BE(1, 13 + extension.length);
+                packet[packet.length - 1] = 49;
+                return send(channel, packet);
+              }
+              send(channel, data);
+            };
+          }
           const status = utils.sftp.STATUS_CODE;
           const changed = (id: number) => {
             if (options.dropAfterChange) client.end();
@@ -119,6 +143,21 @@ export async function sshFixture(
             const entry = handles.get(raw.toString());
             if (entry && exists(entry.path)) sftp.attrs(id, attrs(entry.path));
             else sftp.status(id, status.NO_SUCH_FILE);
+          });
+          sftp.on('SETSTAT', (id) => sftp.status(id, status.OK));
+          sftp.on('EXTENDED', (id, name, data: Buffer) => {
+            if (!options.atomicReplace || name !== 'posix-rename@openssh.com')
+              return sftp.status(id, status.OP_UNSUPPORTED);
+            const length = data.readUInt32BE(0);
+            const from = data.subarray(4, 4 + length).toString();
+            const toLength = data.readUInt32BE(4 + length);
+            const to = data.subarray(8 + length, 8 + length + toLength).toString();
+            if (!files.has(from)) return sftp.status(id, status.NO_SUCH_FILE);
+            if (options.denyChanges) return sftp.status(id, status.PERMISSION_DENIED);
+            files.set(to, files.get(from)!);
+            files.delete(from);
+            if (options.dropAfterReplace) client.end();
+            else sftp.status(id, status.OK);
           });
           sftp.on('OPENDIR', (id, path) => {
             if (path === '/blocked') sftp.status(id, status.PERMISSION_DENIED);

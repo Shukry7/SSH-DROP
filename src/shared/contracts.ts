@@ -69,6 +69,25 @@ export interface TransferUpdate {
   phase?: 'preparing' | 'transferring' | 'verifying' | 'finalizing';
   error?: string;
 }
+export interface RecoveryView {
+  id: string;
+  direction: 'upload' | 'download';
+  path: string;
+  created: string;
+  state:
+    | 'preparing'
+    | 'backup-ready'
+    | 'publishing'
+    | 'completed'
+    | 'uncertain'
+    | 'restored'
+    | 'not-replaced';
+  size: number;
+}
+export interface RecoveryAction {
+  id: string;
+  action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup';
+}
 export type SessionEvent =
   | { type: 'terminal-reset' }
   | { type: 'status'; connected: boolean; message: string }
@@ -88,6 +107,8 @@ export interface DesktopAPI {
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  recovery(): Promise<Result<RecoveryView[]>>;
+  recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;
   download(path: string): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;

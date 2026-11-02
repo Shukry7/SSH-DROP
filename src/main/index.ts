@@ -11,6 +11,7 @@ import {
   connectionSchema,
   fileActionSchema,
   profileInputSchema,
+  recoveryActionSchema,
   remotePathSchema,
   terminalInputSchema,
   terminalSizeSchema,
@@ -19,6 +20,7 @@ import {
 import { HostTrust } from './core/host-trust';
 import { Session } from './core/session';
 import { ProfileStore } from './core/profiles';
+import { RecoveryStore } from './core/recovery-store';
 import metadata from '../../package.json';
 
 let window: BrowserWindow | undefined;
@@ -172,6 +174,11 @@ function registerAPI(): void {
     publish({ type: 'status', connected: false, message: 'Disconnected.' });
   });
   handle(channels.list, (value) => session!.list(remotePathSchema.parse(value)));
+  handle(channels.recovery, (value) => {
+    z.undefined().parse(value);
+    return session!.recovery();
+  });
+  handle(channels.recover, (value) => session!.recover(recoveryActionSchema.parse(value)));
   handle(channels.fileAction, (value) =>
     session!.changeFile(fileActionSchema.parse(value), async (warning) => {
       const result = await dialog.showMessageBox(window!, {
@@ -198,21 +205,25 @@ function registerAPI(): void {
   handle(channels.cancel, (value) => session!.cancel(transferIdSchema.parse(value)));
   handle(channels.upload, async (value) => {
     const directory = remotePathSchema.parse(value);
+    const lease = session!.lease();
     const result = await dialog.showOpenDialog(window!, {
       title: 'Upload file',
       properties: ['openFile'],
     });
     const local = result.filePaths[0];
+    lease();
     if (!result.canceled && local)
       await session!.transfer('upload', local, childPath(directory, basename(local)));
   });
   handle(channels.download, async (value) => {
     const remote = remotePathSchema.parse(value);
+    const lease = session!.lease();
     const result = await dialog.showSaveDialog(window!, {
-      title: 'Download file (choose a new filename)',
+      title: 'Download file',
       defaultPath: remote.split('/').pop(),
       buttonLabel: 'Download',
     });
+    lease();
     if (!result.canceled && result.filePath)
       await session!.transfer('download', result.filePath, remote);
   });
@@ -254,7 +265,22 @@ function createWindow(): void {
       return result.response === 1;
     },
   );
-  session = new Session(trust, publish);
+  session = new Session(trust, publish, undefined, {
+    store: new RecoveryStore(join(app.getPath('userData'), 'backups')),
+    confirm: async (approval) => {
+      const result = await dialog.showMessageBox(window!, {
+        type: 'warning',
+        title: approval.title,
+        message: approval.title,
+        detail: approval.detail,
+        buttons: approval.buttons,
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      return result.response;
+    },
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>

@@ -1,0 +1,119 @@
+import { useEffect, useRef, useState } from 'react';
+import type { RecoveryAction, RecoveryView } from '../../shared/contracts';
+
+export function Recovery({
+  connected,
+  busy,
+  revision,
+  setBusy,
+  report,
+}: {
+  connected: boolean;
+  busy: boolean;
+  revision: string;
+  setBusy(value: boolean): void;
+  report(message: string): void;
+}) {
+  const [records, setRecords] = useState<RecoveryView[]>([]);
+  const epoch = useRef(0);
+  const lock = useRef(false);
+  useEffect(() => {
+    const generation = ++epoch.current;
+    if (!connected) return;
+    void window.sshdrop.recovery().then((result) => {
+      if (generation !== epoch.current) return;
+      if (result.ok) setRecords(result.value);
+      else report(result.error);
+    });
+    return () => {
+      epoch.current = generation + 1;
+    };
+  }, [connected, revision, report]);
+  async function act(id: string, action: RecoveryAction['action']) {
+    if (lock.current || busy) return;
+    lock.current = true;
+    setBusy(true);
+    const generation = epoch.current;
+    try {
+      const result = await window.sshdrop.recover({ id, action });
+      if (!result.ok) throw new Error(result.error);
+    } catch (error) {
+      report(error instanceof Error ? error.message : 'Recovery failed.');
+    } finally {
+      if (generation === epoch.current) {
+        const result = await window.sshdrop.recovery();
+        if (generation === epoch.current) {
+          if (result.ok) setRecords(result.value);
+          else report(result.error);
+        }
+      }
+      lock.current = false;
+      setBusy(false);
+    }
+  }
+  if (!connected) return null;
+  return (
+    <section className="panel recovery-panel" aria-label="Recovery backups">
+      <div className="panel-heading">
+        <h3>Recovery backups</h3>
+        <span className="small-label">THIS SERVER & ACCOUNT</span>
+      </div>
+      <p className="recovery-note">
+        Backups contain unencrypted file contents and paths on this computer. They persist after
+        disconnecting. Protect your disk. Nothing is restored or deleted automatically. Stop other
+        writers before replacing files.
+      </p>
+      {records.length === 0 && (
+        <p className="recovery-note">No replacement backups for this verified server identity.</p>
+      )}
+      {records.map((record) => (
+        <div className="recovery-record" key={record.id}>
+          <div>
+            <strong>{record.path}</strong>
+            <small>
+              {record.direction} · {record.state} · {record.size} bytes ·{' '}
+              {new Date(record.created).toLocaleString()}
+            </small>
+          </div>
+          <div className="recovery-actions">
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={() => void act(record.id, 'inspect')}
+            >
+              Inspect
+            </button>
+            <button
+              className="text-button"
+              disabled={busy || record.state !== 'completed'}
+              onClick={() => void act(record.id, 'rollback')}
+            >
+              Roll back
+            </button>
+            <button
+              className="text-button"
+              disabled={busy}
+              onClick={() => void act(record.id, 'restore-copy')}
+            >
+              Restore copy
+            </button>
+            <button
+              className="text-button danger-button"
+              disabled={busy || !['completed', 'restored', 'not-replaced'].includes(record.state)}
+              onClick={() => void act(record.id, 'delete-backup')}
+            >
+              Delete backup
+            </button>
+          </div>
+          {['preparing', 'backup-ready', 'publishing', 'uncertain'].includes(record.state) && (
+            <p className="recovery-note">
+              Unresolved operation: inspect before retrying. Temporary files may remain beside the
+              destination: .sshdrop-recovery-{record.id}.ready and .ready.original. Never remove
+              them until you have checked the destination and backup.
+            </p>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}

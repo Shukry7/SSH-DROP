@@ -124,3 +124,9 @@ export function childPath(directory: string, name: string): string {
     throw new Error('Invalid remote filename.');
   return posix.join(remotePath(directory), name);
 }
+export const recoveryActionSchema = z
+  .object({
+    id: z.string().uuid(),
+    action: z.enum(['inspect', 'rollback', 'restore-copy', 'delete-backup']),
+  })
+  .strict();
