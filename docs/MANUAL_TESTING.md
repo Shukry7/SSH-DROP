@@ -90,9 +90,9 @@ Not implemented: saved passwords/passphrases; multiple simultaneous servers or t
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 
-## Unreleased overwrite and recovery checklist
+## Overwrite and recovery checklist (0.2.0-alpha.2)
 
-Use disposable files and a server with SFTP; stop other writers. Existing `0.2.0-alpha.1` installers do not contain this feature; run the development build.
+Use disposable files and a server with SFTP; stop other writers. Test a `0.2.0-alpha.2` build or current development source. Earlier `0.2.0-alpha.1` installers do not contain this feature.
 
 1. Upload a file whose remote name already exists. Cancel: both files stay unchanged. Keep both: inspect the generated filename and verify both files remain.
 2. Back up and replace: verify the native warning identifies the server/path and discloses unencrypted local storage. Compare bytes and basic permissions. On a server without OpenSSH atomic rename, only Cancel and Keep both should be available.
