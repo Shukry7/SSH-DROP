@@ -3,6 +3,8 @@ import { basename, dirname, extname, join, posix } from 'node:path';
 import type { RecoveryAction, RecoveryView } from '../../shared/contracts';
 import {
   RecoveryStore,
+  identitySchema,
+  recoveryPathsSchema,
   type FileSnapshot,
   type RecoveryRecord,
   type ServerIdentity,
@@ -31,6 +33,10 @@ export const equalFile = (a: FileSnapshot | undefined, b: FileSnapshot | undefin
   a.mode === b.mode &&
   a.uid === b.uid &&
   a.gid === b.gid;
+// Restored copies have new timestamps, but a destination guarded by an approval
+// must still have the same observed modification time, even if its bytes match.
+const unchangedFile = (a: FileSnapshot | undefined, b: FileSnapshot | undefined): boolean =>
+  equalFile(a, b) && a?.modified === b?.modified;
 const equalBytes = (a: FileSnapshot | undefined, b: FileSnapshot): boolean =>
   !!a && a.size === b.size && a.hash === b.hash;
 const destination = (r: Pick<RecoveryRecord, 'direction' | 'local' | 'remote'>) =>
@@ -70,6 +76,10 @@ export class Replacements {
     return `Server: ${i.username}@${i.host}:${i.port}\nDestination: ${path}\n\n`;
   }
   async transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void> {
+    // Reject control/bidirectional characters before displaying a native warning,
+    // rather than waiting until a recovery record is written after approval.
+    identitySchema.parse(this.c.identity);
+    recoveryPathsSchema.parse({ local, remote });
     const target = direction === 'upload' ? remote : local;
     const io = this.io(direction);
     const previous = await io.snapshot(target);
@@ -152,7 +162,11 @@ export class Replacements {
         if (!equalBytes(installed, parent.previous))
           throw new Error('Rollback contents changed. The destination has not been replaced.');
       }
-      if (!equalFile(await io.snapshot(target), input.previous))
+      if (!equalBytes(await c.localIO.snapshot(backup), input.previous))
+        throw new Error(
+          'Backup changed before publication. The destination has not been replaced.',
+        );
+      if (!unchangedFile(await io.snapshot(target), input.previous))
         throw new Error('Destination changed. The original has not been replaced.');
       if (
         input.direction === 'download' &&
@@ -229,15 +243,15 @@ export class Replacements {
       if (record.direction === 'upload') await c.transfer('upload', backup, alternate);
       else {
         await copyLocalBackup(backup, alternate);
-        c.check();
-        if (!equalBytes(await io.snapshot(alternate), record.previous))
-          throw new Error('Restored copy verification failed. Inspect the new file before use.');
       }
+      c.check();
+      if (!equalBytes(await io.snapshot(alternate), record.previous))
+        throw new Error('Restored copy verification failed. Inspect the new file before use.');
       return;
     }
     const current = await io.snapshot(target);
     if (action === 'inspect') {
-      const state = equalFile(current, record.installed)
+      const state = unchangedFile(current, record.installed)
         ? 'completed'
         : equalFile(current, record.previous)
           ? record.state === 'restored'
@@ -247,7 +261,7 @@ export class Replacements {
       await c.store.update(id, c.identity, { state });
       return;
     }
-    if (record.state !== 'completed' || !equalFile(current, record.installed))
+    if (record.state !== 'completed' || !unchangedFile(current, record.installed))
       throw new Error(
         'The destination changed or the outcome is unresolved. Inspect, then restore to a new filename instead.',
       );

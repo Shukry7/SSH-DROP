@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   AppInfo,
   DirectoryListing,
@@ -66,6 +66,8 @@ export function App() {
         setMessage(event.message);
         if (!event.connected) {
           connectionEpoch.current++;
+          setError('');
+          setActionBusy(false);
           setActionInput(undefined);
           setTransfers([]);
           navigation.current++;
@@ -87,10 +89,12 @@ export function App() {
 
   async function run(operation: () => Promise<unknown>) {
     setError('');
+    const epoch = connectionEpoch.current;
     try {
       await operation();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Operation failed.');
+      if (epoch === connectionEpoch.current)
+        setError(failure instanceof Error ? failure.message : 'Operation failed.');
     }
   }
 
@@ -171,6 +175,22 @@ export function App() {
       }
     });
   }
+
+  // Capture this render's connection. An old recovery promise must not publish
+  // paths/errors or release a new connection's controls after disconnecting.
+  const recoveryEpoch = connectionEpoch.current;
+  const reportRecovery = useCallback(
+    (message: string) => {
+      if (recoveryEpoch === connectionEpoch.current) setError(message);
+    },
+    [recoveryEpoch],
+  );
+  const markRecoveryBusy = useCallback(
+    (value: boolean) => {
+      if (recoveryEpoch === connectionEpoch.current) setActionBusy(value);
+    },
+    [recoveryEpoch],
+  );
 
   return (
     <div className="app-shell">
@@ -696,8 +716,8 @@ export function App() {
                 .filter((t) => t.status !== 'running')
                 .map((t) => t.id)
                 .join(',')}
-              setBusy={setActionBusy}
-              report={setError}
+              setBusy={markRecoveryBusy}
+              report={reportRecovery}
             />
           )}
         </main>

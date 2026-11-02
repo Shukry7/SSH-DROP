@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, link, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -81,6 +81,22 @@ describe('bounded, server-bound recovery storage', () => {
     await store.remove(record.id, identity);
     expect(await readFile(record.local, 'utf8')).toBe('destination');
     await expect(readFile(store.backup(record.id))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('rejects special permission bits in persisted recovery data', async () => {
+    const record = await store.create(input());
+    const path = join(directory, 'backups', 'recovery.json');
+    const contents = JSON.stringify({
+      version: 1,
+      records: [{ ...record, previous: { ...record.previous, mode: 0o4755 } }],
+    });
+    await writeFile(path, contents);
+    await expect(store.load(record.id, identity)).rejects.toThrow('unsafe');
+    expect(await readFile(path, 'utf8')).toBe(contents);
+  });
+  it('refuses non-file recovery metadata before opening it', async () => {
+    expect(await store.list(identity)).toEqual([]);
+    await mkdir(join(directory, 'backups', 'recovery.json'));
+    await expect(store.list(identity)).rejects.toThrow('unsafe');
   });
   it('enforces the byte and record quotas before creating a new operation', async () => {
     await expect(

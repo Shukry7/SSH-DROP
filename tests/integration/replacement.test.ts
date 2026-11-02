@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +7,7 @@ import { Session } from '../../src/main/core/session';
 import { RecoveryStore } from '../../src/main/core/recovery-store';
 import type { ReplacementApproval } from '../../src/main/core/replacement';
 import { sshFixture } from '../fixtures/ssh-server';
+import type { TransferUpdate } from '../../src/shared/contracts';
 
 describe('verified overwrite and persistent recovery over SFTP', () => {
   let directory: string;
@@ -15,24 +17,33 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
   let approvals: ReplacementApproval[];
   let confirmHook: (() => void | Promise<void>) | undefined;
   let store: RecoveryStore;
+  let observe: ((transfer: TransferUpdate) => void) | undefined;
   const original = 'Hello from the remote server.\n';
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'sshdrop-replace-'));
     choice = 2;
     approvals = [];
     confirmHook = undefined;
+    observe = undefined;
     store = new RecoveryStore(join(directory, 'backups'));
     fixture = await sshFixture({ atomicReplace: true });
   });
   async function connect() {
-    session = new Session({ verify: async () => true }, () => undefined, undefined, {
-      store,
-      confirm: async (approval) => {
-        approvals.push(approval);
-        await confirmHook?.();
-        return choice;
+    session = new Session(
+      { verify: async () => true },
+      (event) => {
+        if (event.type === 'transfer') observe?.(event.transfer);
       },
-    });
+      undefined,
+      {
+        store,
+        confirm: async (approval) => {
+          approvals.push(approval);
+          await confirmHook?.();
+          return choice;
+        },
+      },
+    );
     await session.connect({
       host: '127.0.0.1',
       port: fixture.port,
@@ -83,6 +94,58 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
     await session.recover({ id: record.id, action: 'rollback' });
     expect(await readFile(local, 'utf8')).toBe('local original');
   });
+  it('rejects timestamp-only edits during confirmation and before rollback', async () => {
+    await connect();
+    const local = join(directory, 'timestamp.txt');
+    await writeFile(local, 'local original');
+    const touch = async () => {
+      const info = await stat(local);
+      await utimes(local, info.atime, new Date(info.mtimeMs + 10000));
+    };
+    confirmHook = touch;
+    await expect(session.transfer('download', local, '/hello.txt')).rejects.toThrow(
+      'Destination changed',
+    );
+    expect(await readFile(local, 'utf8')).toBe('local original');
+    confirmHook = undefined;
+    await session.transfer('download', local, '/hello.txt');
+    const record = (await session.recovery()).find((r) => r.state === 'completed')!;
+    await touch();
+    choice = 1;
+    await expect(session.recover({ id: record.id, action: 'rollback' })).rejects.toThrow(
+      'destination changed',
+    );
+    expect(await readFile(local, 'utf8')).toBe(original);
+  });
+  it('rechecks its backup immediately before replacing the destination', async () => {
+    await connect();
+    let corrupted = false;
+    observe = () => {
+      const stage = [...fixture.files.keys()].find((path) => path.endsWith('.ready'));
+      if (!stage || corrupted) return;
+      corrupted = true;
+      const id = stage.match(/recovery-([a-f0-9-]+)\.ready$/)![1];
+      writeFileSync(store.backup(id), 'tampered during staging');
+    };
+    await expect(upload()).rejects.toThrow('Backup changed before publication');
+    expect(corrupted).toBe(true);
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe(original);
+  });
+  it('reports a restored remote copy that no longer matches the recorded backup', async () => {
+    await connect();
+    await upload();
+    const [record] = await session.recovery();
+    choice = 1;
+    observe = () => {
+      const copy = [...fixture.files.keys()].find((path) => path.includes('(copy '));
+      if (copy) fixture.files.set(copy, Buffer.from('changed after upload'));
+    };
+    await expect(session.recover({ id: record.id, action: 'restore-copy' })).rejects.toThrow(
+      'Restored copy verification failed',
+    );
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('replacement');
+    expect(await readFile(store.backup(record.id), 'utf8')).toBe(original);
+  });
   it('cancel and keep-both leave the existing destination intact', async () => {
     await connect();
     choice = 0;
@@ -96,6 +159,17 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
     );
     expect(await session.recovery()).toEqual([]);
   });
+  it.each(['/folder/spoof\nDestination.txt', '/folder/\u202espoof.txt'])(
+    'rejects a misleading path before native confirmation: %j',
+    async (remote) => {
+      await connect();
+      const local = join(directory, 'hello.txt');
+      await writeFile(local, 'replacement');
+      await expect(session.transfer('upload', local, remote)).rejects.toThrow();
+      expect(approvals).toEqual([]);
+      expect(fixture.files.has(remote)).toBe(false);
+    },
+  );
   it('offers only keep-both on servers without atomic replacement support', async () => {
     await fixture.close();
     fixture = await sshFixture();

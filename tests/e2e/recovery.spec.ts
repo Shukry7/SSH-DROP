@@ -68,9 +68,37 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
       window.sshdrop.recover({ id: 'not-a-uuid', action: 'rollback' }),
     );
     expect(forged.ok).toBe(false);
+    await expect(recovery.getByRole('button', { name: 'Restore copy' })).toBeEnabled();
+    await application.evaluate(({ dialog }, destination) => {
+      dialog.showMessageBox = () =>
+        new Promise((_resolve, reject) => {
+          Object.assign(globalThis, {
+            rejectRecoveryDialog: () => reject(new Error(`Stale recovery path: ${destination}`)),
+          });
+        });
+    }, destination);
+    await recovery.getByRole('button', { name: 'Restore copy' }).click();
+    await expect
+      .poll(() =>
+        application.evaluate(
+          () =>
+            typeof (globalThis as unknown as { rejectRecoveryDialog?: unknown })
+              .rejectRecoveryDialog,
+        ),
+      )
+      .toBe('function');
     await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
     await expect(recovery).toHaveCount(0);
-    await expect(page.getByText(destination, { exact: true })).toHaveCount(0);
+    await application.evaluate(() =>
+      (globalThis as unknown as { rejectRecoveryDialog(): void }).rejectRecoveryDialog(),
+    );
+    // Round-trip after the late rejection so its IPC response has been delivered.
+    await page.evaluate(() => window.sshdrop.info());
+    await expect(page.getByRole('alert')).toHaveCount(1);
+    await expect(page.getByRole('alert')).toContainText('This notice contains no filenames');
+    await expect(page.getByRole('button', { name: 'Dismiss error', exact: true })).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('Stale recovery path');
+    await expect(page.locator('body')).not.toContainText(destination);
   } finally {
     await application.close();
     await fixture.close();

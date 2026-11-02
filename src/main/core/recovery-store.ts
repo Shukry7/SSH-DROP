@@ -26,20 +26,25 @@ export const snapshotSchema = z
   .object({
     size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     hash: z.string().regex(/^[a-f0-9]{64}$/),
-    mode: z.number().int().nonnegative(),
+    mode: z.number().int().min(0).max(0o777),
     uid: z.number().int().nonnegative(),
     gid: z.number().int().nonnegative(),
     modified: z.number().finite().nonnegative().optional(),
   })
   .strict();
 export type FileSnapshot = z.infer<typeof snapshotSchema>;
+export const recoveryPathsSchema = z
+  .object({
+    local: pathSchema.refine(isAbsolute),
+    remote: pathSchema.refine((s) => s.startsWith('/')),
+  })
+  .strict();
 const recordSchema = z
   .object({
     id: z.string().uuid(),
     identity: identitySchema,
     direction: z.enum(['upload', 'download']),
-    local: pathSchema.refine(isAbsolute),
-    remote: pathSchema.refine((s) => s.startsWith('/')),
+    ...recoveryPathsSchema.shape,
     created: z.string().datetime(),
     state: z.enum([
       'preparing',
@@ -88,7 +93,11 @@ export class RecoveryStore {
     await this.root();
     try {
       const info = await lstat(join(this.directory, 'recovery.json'));
-      if (info.isSymbolicLink() || (process.platform !== 'win32' && info.mode & 0o077))
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        (process.platform !== 'win32' && info.mode & 0o077)
+      )
         throw new Error('Insecure recovery data.');
       return schema.parse(JSON.parse(await readLocalData(join(this.directory, 'recovery.json'))))
         .records;

@@ -16,6 +16,12 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Regular files only; local multiple-hard-link files and special permission bits are refused. Basic owner/group/mode are checked; remote ACLs, extended attributes, hidden hard links and concurrent writers cannot be fully detected or preserved. Stop other writers and test with disposable files. Hashes cover ordinary file contents, not alternate streams or all metadata; atomic replacement does not guarantee power-loss durability.
 - Existing released/draft `0.2.0-alpha.1` installers do not contain these unreleased changes. Application version remains unchanged until the next release boundary.
 
+### Review fixes
+
+- Refuse replacement and rollback after timestamp-only destination edits. Verify the independent backup again immediately before publication, and compare restored remote copies with the recorded backup hash.
+- Clear connection-specific errors and busy controls on disconnect; suppress delayed recovery/transfer errors from older connections so their paths cannot reappear in the next session.
+- Validate recovery paths before native confirmations, reject misleading control/bidirectional characters, and reject special permission bits and non-file recovery metadata before use.
+
 ## [0.2.0-alpha.1] — 2026-11-02
 
 ### Added
