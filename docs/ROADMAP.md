@@ -12,7 +12,7 @@ Remaining: supported OS secret storage, multi-file queue, recursive transfers wi
 
 Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 
-Development transfers now stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Pause/resume, queues, automatic recovery, and crash-persistent recovery records remain unimplemented.
+Development transfers now stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Unreleased source adds explicit conflict choices, independent local verified backups, guarded replacement/rollback, and crash-persistent recovery records with manual inspection and restore-copy. Pause/resume, queues, encrypted backup storage, automatic recovery, metadata-complete backups, and atomic compare-and-swap against other writers remain unimplemented. Existing `0.2.0-alpha.1` installers do not include these unreleased changes.
 
 ## 0.3 — Remote editing
 

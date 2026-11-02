@@ -776,3 +776,29 @@ progress {
     font-size: 19px;
   }
 }
+.recovery-note {
+  margin: 12px 20px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.recovery-record {
+  margin: 12px 20px;
+  border-top: 1px solid #273443;
+  padding-top: 12px;
+}
+.recovery-record strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.recovery-record small {
+  display: block;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+.recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}

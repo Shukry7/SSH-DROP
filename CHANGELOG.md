@@ -4,6 +4,18 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+### Added
+
+- Native conflict confirmation with Cancel, Keep both, and Back up and replace. Replacement requires a verified independent local backup, a staged incoming file, a destination recheck, and supported atomic replacement; ordinary transfers still publish without replacing existing files.
+- Persistent, bounded recovery records tied to the exact SSH host key, address, port, and account. The Recovery backups panel can inspect uncertain operations, restore a separate copy, roll back with another backup of the current version, and explicitly delete resolved backups.
+- Failure-path coverage for interrupted replacement, stale approvals, changed destinations, corrupted backups/records, storage limits, unsupported servers, and native Windows replacement.
+
+### Data and safety notes
+
+- Backups store **unencrypted file contents and path metadata** locally until explicitly removed. Limit: 100 recovery records / 10 GiB of accounted backup contents, plus a 50 MiB free-space reserve. Protect the device and its disk. There is no automatic retention deletion or automatic recovery replay.
+- Regular files only; local multiple-hard-link files and special permission bits are refused. Basic owner/group/mode are checked; remote ACLs, extended attributes, hidden hard links and concurrent writers cannot be fully detected or preserved. Stop other writers and test with disposable files. Hashes cover ordinary file contents, not alternate streams or all metadata; atomic replacement does not guarantee power-loss durability.
+- Existing released/draft `0.2.0-alpha.1` installers do not contain these unreleased changes. Application version remains unchanged until the next release boundary.
+
 ## [0.2.0-alpha.1] — 2026-11-02
 
 ### Added

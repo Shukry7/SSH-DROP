@@ -11,6 +11,7 @@ import { Terminal } from './Terminal';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
 import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
+import { Recovery } from './Recovery';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -685,6 +686,19 @@ export function App() {
                 </div>
               ))}
             </section>
+          )}
+          {connected && (
+            <Recovery
+              key={connectionEpoch.current}
+              connected={connected}
+              busy={fileBusy}
+              revision={transfers
+                .filter((t) => t.status !== 'running')
+                .map((t) => t.id)
+                .join(',')}
+              setBusy={setActionBusy}
+              report={setError}
+            />
           )}
         </main>
       </div>
