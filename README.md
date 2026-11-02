@@ -2,7 +2,7 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.2.0-alpha.1, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.2.0-alpha.2, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
 
@@ -15,14 +15,15 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 - Session-only credentials; private keys stay on the local machine.
 - Saved server profiles: add, edit, delete with confirmation, and load connection details. Profiles remember the chosen key-file location, never passwords, passphrases, or key contents.
 - Create remote folders, rename files/folders within their current folder, and permanently delete files or empty folders after native confirmation. Existing destinations are refused; symlinks, special files, recursive deletion, and undo are unsupported.
+- File transfer conflicts offer Cancel, Keep both, or verified backup and replacement where supported. Persistent recovery records support inspection, restore-copy, and guarded rollback; general undo for deletion or renaming is unsupported.
 
 This version includes saved profiles, remote file actions, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, editing, folder transfers, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
 
 For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
 
-## Unreleased source: overwrite and recovery
+## Overwrite and recovery (0.2.0-alpha.2)
 
-Development source adds Cancel / Keep both / Back up and replace when a regular-file destination exists. Replace first stores an independent verified backup locally, stages the incoming file, rechecks the original, and requires atomic replacement support (OpenSSH POSIX rename for uploads; native replacement for local downloads). The **Recovery backups** panel is scoped to the connected server key, address, port, and account. Inspect unresolved outcomes; restore a separate copy if the destination changed. Rollback first backs up the current version too. Nothing is retried or restored automatically.
+Version 0.2.0-alpha.2 offers Cancel / Keep both / Back up and replace when a regular-file destination exists. Replace first stores an independent verified backup locally, stages the incoming file, rechecks the original, and requires atomic replacement support (OpenSSH POSIX rename for uploads; native replacement for local downloads). The **Recovery backups** panel is scoped to the connected server key, address, port, and account. Inspect unresolved outcomes; restore a separate copy if the destination changed. Rollback first backs up the current version too. Nothing is retried or restored automatically.
 
 Backups contain **unencrypted contents and paths**, retained until explicitly deleted (100 records / 10 GiB accounted contents; 50 MiB reserve). Protect your device and disk. Stop other writers. Remote ACLs, extended attributes, hidden hard links, and power-loss durability cannot be guaranteed. This feature is not in existing `0.2.0-alpha.1` installers; see the [recovery testing checklist](docs/MANUAL_TESTING.md).
 

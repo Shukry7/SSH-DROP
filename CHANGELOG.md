@@ -4,6 +4,8 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+## [0.2.0-alpha.2] — 2026-11-02
+
 ### Added
 
 - Native conflict confirmation with Cancel, Keep both, and Back up and replace. Replacement requires a verified independent local backup, a staged incoming file, a destination recheck, and supported atomic replacement; ordinary transfers still publish without replacing existing files.
@@ -14,7 +16,8 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 - Backups store **unencrypted file contents and path metadata** locally until explicitly removed. Limit: 100 recovery records / 10 GiB of accounted backup contents, plus a 50 MiB free-space reserve. Protect the device and its disk. There is no automatic retention deletion or automatic recovery replay.
 - Regular files only; local multiple-hard-link files and special permission bits are refused. Basic owner/group/mode are checked; remote ACLs, extended attributes, hidden hard links and concurrent writers cannot be fully detected or preserved. Stop other writers and test with disposable files. Hashes cover ordinary file contents, not alternate streams or all metadata; atomic replacement does not guarantee power-loss durability.
-- Existing released/draft `0.2.0-alpha.1` installers do not contain these unreleased changes. Application version remains unchanged until the next release boundary.
+- Version `0.2.0-alpha.2` includes these changes; earlier `0.2.0-alpha.1` artifacts remain unchanged. Installers are unsigned, macOS notarization and independent security review remain pending, and real-device validation is still required. Test disposable files and servers.
+- Dependency policy retains 15 raw moderate development-only findings under exact reviewed exceptions expiring 2026-12-02. Passing the policy is not a zero-vulnerability claim; see the security review for scope and remaining work.
 
 ### Review fixes
 

@@ -8,11 +8,11 @@ Secure desktop foundation; validated IPC; host verification; session-only passwo
 
 Implemented in development source (not in the 0.1.0-alpha.1 installers): saved profiles with add/edit/delete/load, session-only secrets, remembered key-file locations, confirmed remote folder creation, same-folder file/folder rename, and permanent deletion of files and empty folders.
 
-Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, file creation, copy/move between folders, permissions editing, reconnect controls, and drag-and-drop uploads. Recursive deletion and undo are not implemented.
+Remaining: supported OS secret storage, multi-file queue, recursive transfers with explicit symlink behavior, file creation, copy/move between folders, permissions editing, reconnect controls, and drag-and-drop uploads. Recursive deletion and general undo for deletion/renaming are not implemented.
 
 Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 
-Development transfers now stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Unreleased source adds explicit conflict choices, independent local verified backups, guarded replacement/rollback, and crash-persistent recovery records with manual inspection and restore-copy. Pause/resume, queues, encrypted backup storage, automatic recovery, metadata-complete backups, and atomic compare-and-swap against other writers remain unimplemented. Existing `0.2.0-alpha.1` installers do not include these unreleased changes.
+Transfers stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Version `0.2.0-alpha.2` adds explicit conflict choices, independent local verified backups, guarded replacement/rollback, and crash-persistent recovery records with manual inspection and restore-copy. Pause/resume, queues, encrypted backup storage, automatic recovery, metadata-complete backups, and atomic compare-and-swap against other writers remain unimplemented. Earlier `0.2.0-alpha.1` installers do not include backup/rollback.
 
 ## 0.3 — Remote editing
 
