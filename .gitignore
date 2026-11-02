@@ -17,3 +17,8 @@ Thumbs.db
 artifacts/
 profiles.json
 known-hosts.json
+vault-key.json
+recovery.json
+recovery.enc
+*.bak.enc
+backups/

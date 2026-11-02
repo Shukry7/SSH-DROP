@@ -4,6 +4,20 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+## [0.2.0-alpha.3] — 2026-11-02
+
+### Added
+
+- AES-256-GCM encryption for new local recovery backups and recovery metadata, with random per-file nonces and a random vault key protected by the OS key store. Backup encryption streams directly to disk; recovery authenticates and verifies staged contents before publishing.
+- Explicit Secure backup migration for legacy plaintext backups. Originals remain until encrypted content verifies and metadata is committed; interrupted migrations and plaintext cleanup can be retried. Other legacy backup contents remain plaintext until secured individually.
+- Failure-path regressions for locked/unavailable OS storage, missing/corrupt keys, ciphertext tampering and substitution, partial encryption, migration failures, and recovery staging.
+
+### Safety and compatibility
+
+- No plaintext key-store fallback. Windows and macOS use Electron asynchronous safeStorage; Linux requires an available recognized libsecret/KWallet backend and uses the verified synchronous provider to avoid the independent asynchronous fallback. Linux provider migration will need review before upgrading past Electron 45.
+- Keep `vault-key.json` with the entire backup folder and retain access to the original OS account/key store. Copying the folder alone does not make a portable backup. Encryption does not protect against software running as the same OS user; ordinary deletion is not secure erasure.
+- Existing alpha.2 installers are unchanged. These changes are included in the 0.2.0-alpha.3 draft prerelease. Installers remain unsigned, and real-device macOS/Linux key-store validation is pending.
+
 ## [0.2.0-alpha.2] — 2026-11-02
 
 ### Added

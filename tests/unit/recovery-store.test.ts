@@ -1,3 +1,4 @@
+import { testVault } from '../fixtures/backup-vault';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,7 @@ describe('bounded, server-bound recovery storage', () => {
   });
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'sshdrop-journal-'));
-    store = new RecoveryStore(join(directory, 'backups'));
+    store = new RecoveryStore(join(directory, 'backups'), testVault(join(directory, 'backups')));
   });
   afterEach(async () => {
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -41,7 +42,10 @@ describe('bounded, server-bound recovery storage', () => {
     const records = await Promise.all([store.create(input()), store.create(input())]);
     expect(await store.list(identity)).toHaveLength(2);
     expect(() => store.backup('../private-key')).toThrow();
-    const persisted = await readFile(join(directory, 'backups', 'recovery.json'), 'utf8');
+    const persisted = await store.vault.metadata();
+    expect(await readFile(join(directory, 'backups', 'recovery.enc'), 'utf8')).not.toContain(
+      identity.host,
+    );
     expect(persisted).not.toMatch(/password|passphrase|privateKey|terminal/);
     expect((await store.load(records[0].id, identity)).state).toBe('preparing');
   });
@@ -61,15 +65,16 @@ describe('bounded, server-bound recovery storage', () => {
   );
   it('blocks corrupt/version-incompatible/oversize journals without discarding them', async () => {
     await store.create(input());
-    const path = join(directory, 'backups', 'recovery.json');
+    const path = join(directory, 'backups', 'recovery.enc');
     for (const contents of [
       'invalid',
       JSON.stringify({ version: 2, records: [] }),
       ' '.repeat(1024 * 1024 + 1),
     ]) {
-      await writeFile(path, contents);
+      await store.vault.writeMetadata(contents);
+      const encrypted = await readFile(path);
       await expect(store.create(input())).rejects.toThrow('preserved');
-      expect(await readFile(path, 'utf8')).toBe(contents);
+      expect(await readFile(path)).toEqual(encrypted);
     }
   });
   it('requires inspection before deletion and never deletes the destination', async () => {
@@ -84,18 +89,17 @@ describe('bounded, server-bound recovery storage', () => {
   });
   it('rejects special permission bits in persisted recovery data', async () => {
     const record = await store.create(input());
-    const path = join(directory, 'backups', 'recovery.json');
     const contents = JSON.stringify({
       version: 1,
       records: [{ ...record, previous: { ...record.previous, mode: 0o4755 } }],
     });
-    await writeFile(path, contents);
+    await store.vault.writeMetadata(contents);
     await expect(store.load(record.id, identity)).rejects.toThrow('unsafe');
-    expect(await readFile(path, 'utf8')).toBe(contents);
+    expect(await store.vault.metadata()).toBe(contents);
   });
   it('refuses non-file recovery metadata before opening it', async () => {
     expect(await store.list(identity)).toEqual([]);
-    await mkdir(join(directory, 'backups', 'recovery.json'));
+    await mkdir(join(directory, 'backups', 'recovery.enc'));
     await expect(store.list(identity)).rejects.toThrow('unsafe');
   });
   it('enforces the byte and record quotas before creating a new operation', async () => {
@@ -103,8 +107,7 @@ describe('bounded, server-bound recovery storage', () => {
       store.create({ ...input(), previous: { ...previous, size: 11 * 1024 ** 3 } }),
     ).rejects.toThrow('storage limit');
     const record = await store.create(input());
-    await writeFile(
-      join(directory, 'backups', 'recovery.json'),
+    await store.vault.writeMetadata(
       JSON.stringify({
         version: 1,
         records: Array.from({ length: 100 }, () => ({ ...record, id: randomUUID() })),
@@ -114,7 +117,7 @@ describe('bounded, server-bound recovery storage', () => {
   });
   it.skipIf(process.platform === 'win32')('rejects permissive recovery files', async () => {
     await store.create(input());
-    await chmod(join(directory, 'backups', 'recovery.json'), 0o644);
+    await chmod(join(directory, 'backups', 'recovery.enc'), 0o644);
     await expect(store.list(identity)).rejects.toThrow('unsafe');
   });
   it('accepts only named recovery actions and opaque UUIDs over IPC', () => {

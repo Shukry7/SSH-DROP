@@ -42,6 +42,7 @@ export async function sshFixture(
   let lastSize = { rows: 0, cols: 0 };
   let lastShell: ServerChannel | undefined;
   let nextDirectoryResponse: Promise<void> | undefined;
+  let afterRename: ((path: string) => void) | undefined;
   const server = new Server({ hostKeys: [options.key ?? fixtureHostKey] }, (client) => {
     connections.add(client);
     client.on('error', () => undefined);
@@ -268,6 +269,7 @@ export async function sshFixture(
             if (files.has(from)) {
               files.set(to, files.get(from)!);
               files.delete(from);
+              afterRename?.(to);
             } else if (directories.has(from)) {
               for (const item of [...directories])
                 if (item === from || item.startsWith(from + '/')) {
@@ -293,6 +295,9 @@ export async function sshFixture(
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('No fixture address.');
   return {
+    set afterRename(callback: ((path: string) => void) | undefined) {
+      afterRename = callback;
+    },
     port: address.port,
     files,
     directories,

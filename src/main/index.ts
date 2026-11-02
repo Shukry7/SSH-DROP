@@ -1,4 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, type IpcMainInvokeEvent } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  safeStorage,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +29,8 @@ import { HostTrust } from './core/host-trust';
 import { Session } from './core/session';
 import { ProfileStore } from './core/profiles';
 import { RecoveryStore } from './core/recovery-store';
+import { BackupVault } from './core/backup-vault';
+import { osKeyProtection } from './core/os-key-protection';
 import metadata from '../../package.json';
 
 let window: BrowserWindow | undefined;
@@ -266,7 +276,10 @@ function createWindow(): void {
     },
   );
   session = new Session(trust, publish, undefined, {
-    store: new RecoveryStore(join(app.getPath('userData'), 'backups')),
+    store: new RecoveryStore(
+      join(app.getPath('userData'), 'backups'),
+      new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
+    ),
     confirm: async (approval) => {
       const result = await dialog.showMessageBox(window!, {
         type: 'warning',

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, copyFile, lstat, open, rename, unlink } from 'node:fs/promises';
+import { chmod, copyFile, link, lstat, open, rename, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import type { SFTPWrapper } from 'ssh2';
@@ -9,6 +9,8 @@ import type { FileSnapshot } from './recovery-store';
 
 type Reply<T = void> = (error?: Error | null, value?: T) => void;
 export interface ReplacementIO {
+  read(path: string): AsyncGenerator<Buffer, FileSnapshot | undefined>;
+  write(path: string, source: AsyncIterable<Buffer>, expected: FileSnapshot): Promise<void>;
   snapshot(path: string): Promise<FileSnapshot | undefined>;
   supports(path: string): Promise<boolean>;
   sibling(path: string, id: string): string;
@@ -39,7 +41,7 @@ export function replacementIO(
     });
   const info = (path: string) =>
     sftp ? request<import('ssh2').Stats>((cb) => sftp.lstat(path, cb)) : local(() => lstat(path));
-  const snapshot = async (path: string): Promise<FileSnapshot | undefined> => {
+  const read = async function* (path: string): AsyncGenerator<Buffer, FileSnapshot | undefined> {
     let before;
     try {
       before = await info(path);
@@ -130,6 +132,7 @@ export function replacementIO(
         if (!count) break;
         hash.update(buffer.subarray(0, count));
         position += count;
+        yield buffer.subarray(0, count);
       }
       const after = await info(path);
       const modified = (s: typeof before) =>
@@ -165,7 +168,119 @@ export function replacementIO(
         }, 3000).catch(() => undefined);
     }
   };
+  const snapshot = async (path: string) => {
+    const source = read(path);
+    for (;;) {
+      const result = await source.next();
+      if (result.done) return result.value;
+    }
+  };
   return {
+    read,
+    write: async (path, source, expected) => {
+      const temporary = sftp
+        ? posix.join(posix.dirname(path), `.sshdrop-${randomUUID()}.part`)
+        : join(dirname(path), `.sshdrop-${randomUUID()}.part`);
+      let owned = false;
+      let publishing = false;
+      let remoteHandle: Buffer | undefined;
+      let localHandle: Awaited<ReturnType<typeof open>> | undefined;
+      try {
+        if (sftp)
+          remoteHandle = await transferWait<Buffer>(
+            (cb) => {
+              check();
+              sftp.open(temporary, 'wx', 0o600, cb);
+            },
+            30000,
+            signal,
+            (handle) => {
+              if (current()) sftp.close(handle, () => undefined);
+            },
+            invalidate,
+          );
+        else
+          localHandle = await transferWait<Awaited<ReturnType<typeof open>>>(
+            (cb) => {
+              check();
+              void open(temporary, 'wx', 0o600).then(
+                (h) => cb(undefined, h),
+                (e: Error) => cb(e),
+              );
+            },
+            30000,
+            signal,
+            (h) => {
+              void h.close().catch(() => undefined);
+            },
+          );
+        owned = true;
+        let position = 0;
+        const hash = createHash('sha256');
+        // Authentication may fail only at the end of the iterator. All data remains
+        // in an exclusive staging file until the iterator and SHA-256 both verify.
+        for await (const chunk of source) {
+          check();
+          if (position + chunk.length > expected.size)
+            throw new Error('Recovery source exceeds its recorded size.');
+          if (sftp)
+            await request<void>(
+              (cb) => sftp.write(remoteHandle!, chunk, 0, chunk.length, position, cb),
+              true,
+            );
+          else {
+            let offset = 0;
+            while (offset < chunk.length) {
+              const result = await local(() =>
+                localHandle!.write(chunk, offset, chunk.length - offset, position + offset),
+              );
+              if (!result.bytesWritten) throw new Error('Recovery write made no progress.');
+              offset += result.bytesWritten;
+            }
+          }
+          position += chunk.length;
+          hash.update(chunk);
+        }
+        if (position !== expected.size || hash.digest('hex') !== expected.hash)
+          throw new Error('Backup SHA-256 verification failed.');
+        if (sftp) {
+          await request<void>((cb) => sftp.close(remoteHandle!, cb));
+          remoteHandle = undefined;
+        } else {
+          await local(() => localHandle!.sync());
+          await localHandle!.close();
+          localHandle = undefined;
+        }
+        const verified = await snapshot(temporary);
+        if (verified?.hash !== expected.hash || verified.size !== expected.size)
+          throw new Error('Recovery staging verification failed.');
+        check();
+        publishing = true;
+        if (sftp) await request<void>((cb) => sftp.rename(temporary, path, cb));
+        else {
+          await local(() => link(temporary, path));
+          await local(() => unlink(temporary));
+        }
+        owned = false;
+        check();
+      } catch (error) {
+        if (publishing)
+          throw new Error(
+            'Recovery publication is uncertain. Inspect the destination and temporary files before retrying; no automatic retry was attempted.',
+            { cause: error },
+          );
+        throw error;
+      } finally {
+        if (remoteHandle && current())
+          await transferWait<void>((cb) => sftp!.close(remoteHandle!, cb), 3000).catch(invalidate);
+        if (localHandle) await localHandle.close().catch(() => undefined);
+        if (owned && !publishing) {
+          if (sftp && current())
+            await transferWait<void>((cb) => sftp.unlink(temporary, cb), 3000).catch(invalidate);
+          else if (!sftp) await unlink(temporary).catch(() => undefined);
+        }
+      }
+    },
     snapshot,
     sibling: (path, id) =>
       sftp

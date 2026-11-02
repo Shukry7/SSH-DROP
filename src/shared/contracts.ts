@@ -70,6 +70,7 @@ export interface TransferUpdate {
   error?: string;
 }
 export interface RecoveryView {
+  encrypted: boolean;
   id: string;
   direction: 'upload' | 'download';
   path: string;
@@ -86,7 +87,7 @@ export interface RecoveryView {
 }
 export interface RecoveryAction {
   id: string;
-  action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup';
+  action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup' | 'encrypt-backup';
 }
 export type SessionEvent =
   | { type: 'terminal-reset' }

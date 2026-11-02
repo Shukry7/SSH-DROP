@@ -10,7 +10,7 @@ const patterns = [
 ];
 export function looksSensitive(file, contents) {
   return (
-    (/(?:^|\/)(?:profiles\.json|known-hosts\.json|\.env(?:\.[^/]+)?|id_(?:rsa|ed25519|ecdsa))$/.test(
+    (/(?:^|\/)(?:profiles\.json|known-hosts\.json|vault-key\.json|recovery\.(?:json|enc)|[a-f0-9-]{36}\.bak(?:\.enc)?|\.env(?:\.[^/]+)?|id_(?:rsa|ed25519|ecdsa))$/.test(
       file,
     ) &&
       !file.endsWith('.env.example')) ||

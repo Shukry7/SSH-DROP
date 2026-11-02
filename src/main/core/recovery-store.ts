@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, rename, statfs, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, statfs, unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { readLocalData } from './local-data';
+import { BackupVault, privateFile } from './backup-vault';
 
 const pathSchema = z
   .string()
@@ -58,6 +59,7 @@ const recordSchema = z
     previous: snapshotSchema,
     installed: snapshotSchema.optional(),
     parentId: z.string().uuid().optional(),
+    encrypted: z.literal(true).optional(),
   })
   .strict();
 export type RecoveryRecord = z.infer<typeof recordSchema>;
@@ -70,9 +72,73 @@ export const sameIdentity = (a: ServerIdentity, b: ServerIdentity) =>
 
 export class RecoveryStore {
   private pending: Promise<unknown> = Promise.resolve();
-  constructor(readonly directory: string) {}
+  constructor(
+    readonly directory: string,
+    readonly vault: BackupVault,
+  ) {}
   backup(id: string): string {
+    return join(this.directory, `${z.string().uuid().parse(id)}.bak.enc`);
+  }
+  private legacy(id: string): string {
     return join(this.directory, `${z.string().uuid().parse(id)}.bak`);
+  }
+  async verify(record: RecoveryRecord, check?: () => void): Promise<void> {
+    try {
+      if (record.encrypted) await this.vault.verify(`${record.id}.bak.enc`, record.previous, check);
+      else throw new Error('Encrypt this legacy backup before using it.');
+    } catch (error) {
+      throw new Error(
+        'Backup is locked, missing, or SHA-256/authentication verification failed. Data has been preserved.',
+        { cause: error },
+      );
+    }
+  }
+  async save(
+    record: RecoveryRecord,
+    source: AsyncIterable<Buffer>,
+    check: () => void,
+  ): Promise<void> {
+    await this.vault.seal(`${record.id}.bak.enc`, source, check);
+    await this.verify(record, check);
+  }
+  contents(record: RecoveryRecord, check: () => void): AsyncIterable<Buffer> {
+    if (!record.encrypted) throw new Error('Encrypt this legacy backup before using it.');
+    return this.vault.read(`${record.id}.bak.enc`, record.previous.size, check);
+  }
+  async encryptLegacy(
+    record: RecoveryRecord,
+    source: AsyncIterable<Buffer>,
+    check: () => void,
+  ): Promise<void> {
+    if (!record.encrypted) {
+      const space = await statfs(this.directory);
+      if (space.bavail * space.bsize < record.previous.size + 50 * 1024 ** 2)
+        throw new Error('Insufficient space to encrypt the backup while retaining its original.');
+      // Failed/interrupted migrations keep both the original and any incomplete encrypted
+      // output. Remove only that record's unused encrypted output before an explicit retry.
+      await unlink(this.backup(record.id)).catch((e: NodeJS.ErrnoException) => {
+        if (e.code !== 'ENOENT') throw e;
+      });
+      await this.save({ ...record, encrypted: true }, source, check);
+      await this.queue(async () => {
+        const records = await this.read();
+        const found = records.findIndex(
+          (r) => r.id === record.id && sameIdentity(r.identity, record.identity),
+        );
+        if (found < 0) throw new Error('Recovery record is missing.');
+        records[found] = { ...records[found], encrypted: true };
+        check();
+        await this.write(records);
+      });
+    } else {
+      await this.verify(record, check);
+      await this.queue(async () => this.write(await this.read()));
+    }
+    check();
+    // Commit encrypted content AND metadata before unlinking a plaintext original.
+    await unlink(this.legacy(record.id)).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== 'ENOENT') throw e;
+    });
   }
   private queue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.pending.then(operation);
@@ -92,6 +158,12 @@ export class RecoveryStore {
   private async read(): Promise<RecoveryRecord[]> {
     await this.root();
     try {
+      try {
+        await privateFile(join(this.directory, 'recovery.enc'));
+        return schema.parse(JSON.parse(await this.vault.metadata())).records;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
       const info = await lstat(join(this.directory, 'recovery.json'));
       if (
         !info.isFile() ||
@@ -102,7 +174,9 @@ export class RecoveryStore {
       return schema.parse(JSON.parse(await readLocalData(join(this.directory, 'recovery.json'))))
         .records;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (!(await readdir(this.directory)).some((name) => name.endsWith('.enc'))) return [];
+      }
       throw new Error(
         'Recovery records are unreadable or unsafe. They have been preserved; replacement is blocked.',
         { cause: error },
@@ -113,18 +187,21 @@ export class RecoveryStore {
     const contents = JSON.stringify(schema.parse({ version: 1, records }), null, 2) + '\n';
     if (Buffer.byteLength(contents) > 1024 * 1024)
       throw new Error('Recovery metadata exceeds the storage limit.');
-    const temporary = join(this.directory, `${randomUUID()}.tmp`);
+    await this.vault.writeMetadata(contents);
+    // Leave a non-sensitive format marker so older plaintext-only app versions
+    // fail closed rather than starting a second, unrelated recovery journal.
+    const marker = join(this.directory, `${randomUUID()}.tmp`);
     try {
-      const handle = await open(temporary, 'wx', 0o600);
+      const handle = await open(marker, 'wx', 0o600);
       try {
-        await handle.writeFile(contents);
+        await handle.writeFile('{"version":2,"encrypted":true}\n');
         await handle.sync();
       } finally {
         await handle.close();
       }
-      await rename(temporary, join(this.directory, 'recovery.json'));
+      await rename(marker, join(this.directory, 'recovery.json'));
     } finally {
-      await unlink(temporary).catch(() => undefined);
+      await unlink(marker).catch(() => undefined);
     }
   }
   list(identity: ServerIdentity): Promise<RecoveryRecord[]> {
@@ -163,6 +240,7 @@ export class RecoveryStore {
         id: randomUUID(),
         created: new Date().toISOString(),
         state: 'preparing',
+        encrypted: true,
       });
       await this.write([...records, record]);
       return record;
@@ -189,6 +267,9 @@ export class RecoveryStore {
       if (!record || !['completed', 'restored', 'not-replaced'].includes(record.state))
         throw new Error('Inspect the operation before removing its recovery backup.');
       await unlink(this.backup(id)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+      await unlink(this.legacy(id)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
       await this.write(records.filter((r) => r.id !== id));
