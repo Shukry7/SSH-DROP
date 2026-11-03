@@ -72,6 +72,21 @@ describe('bounded folder queue over real SSH/SFTP', () => {
     expect(fixture.files.get('/copy/existing')?.toString()).toBe('keep');
     expect(fixture.files.has('/copy/nested/data.txt')).toBe(false);
   });
+  it('accepts an initially selected parent alias while retaining strict descendant link checks', async () => {
+    const alias = join(directory, 'native-parent-alias');
+    await symlink(directory, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    session.enqueue([
+      { direction: 'upload', local: join(alias, 'source'), remote: '/copy', folder: true },
+    ]);
+    await finished('completed');
+    session.enqueue([
+      { direction: 'download', local: join(alias, 'received'), remote: '/copy', folder: true },
+    ]);
+    await expect.poll(() => updates().filter((item) => item.status === 'completed').length).toBe(2);
+    expect(await readFile(join(directory, 'received', 'nested', 'data.txt'), 'utf8')).toBe(
+      'exact folder bytes',
+    );
+  });
   it('refuses existing local folders before writing', async () => {
     session.enqueue([
       { direction: 'download', local: join(directory, 'source'), remote: '/folder', folder: true },

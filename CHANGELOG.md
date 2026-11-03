@@ -14,6 +14,10 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 - Bounded folder uploads/downloads into new destinations, with native default-Cancel warnings showing both paths, empty-folder preservation, aggregate progress/cancellation, strict link/name/size/depth limits and per-file staged SHA-256 verification. Existing folder destinations are refused; partial copies remain for inspection after failure.
 
+### Fixed
+
+- Resolve the initially selected local parent to support native macOS path aliases such as `/var` → `/private/var`, while retaining link checks on the selected folder and all descendants.
+
 ### Limits
 
 - No folder merging, persistent queue, automatic retries or byte-level transfer pause/resume. Navigation and remote file mutations are locked while files remain queued; recovery inspection remains available while the queue is paused. New queued work retains the originally selected destination.

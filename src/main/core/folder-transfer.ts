@@ -162,8 +162,15 @@ export async function runFolderTransfer(options: {
   };
   const source = io(options.direction === 'download');
   const target = io(options.direction === 'upload');
-  const sourceRoot = options.direction === 'upload' ? options.local : options.remote;
-  const targetRoot = options.direction === 'upload' ? options.remote : options.local;
+  // Native selections can contain OS aliases (macOS /var -> /private/var).
+  // Resolve only the initially selected parent, then keep the canonical path fixed.
+  // The selected root itself and every descendant still undergo lstat/link checks.
+  const localRoot = join(
+    await local(() => realpath(dirname(options.local))),
+    basename(options.local),
+  );
+  const sourceRoot = options.direction === 'upload' ? localRoot : options.remote;
+  const targetRoot = options.direction === 'upload' ? options.remote : localRoot;
   const entries: { parts: string[]; directory: boolean; key: string; size: number }[] = [];
   const deadline = Date.now() + folderLimits.scan;
   scanDeadline = deadline;

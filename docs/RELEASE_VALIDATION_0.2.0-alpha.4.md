@@ -4,11 +4,12 @@ Prepared on 2026-11-03. This unsigned alpha adds the session-only multi-file que
 
 ## Local automated validation
 
-- `npm run check`: 353 passed, two Unix-permission tests skipped on Windows, 94.1% line coverage. Version metadata, formatting, lint, types, coverage thresholds and production build pass.
+- `npm run check`: 354 passed, two Unix-permission tests skipped on Windows, above 94% line coverage. Version metadata, formatting, lint, types, coverage thresholds and production build pass.
 - `npm run test:e2e`: all 16 desktop regressions passed against the final alpha.4 build on Windows.
 - Desktop regressions use isolated application-data directories and disposable loopback SSH/SFTP servers. No production profiles, credentials, servers or backup data are used. Windows recovery exercises real OS key protection; headless Linux/macOS recovery uses an isolated test provider.
 - Queue regressions cover sequential execution, waiting/active cancellation, failure pause, explicit continuation, no failed-job retry, bounded selections, unsafe IPC, stale native pickers/confirmations, and connection isolation.
 - Folder regressions cover nested and empty directories, exact transferred bytes, aggregate progress, existing/newly appeared destinations, symbolic links/junctions, local hard links, colliding/unsafe names, scan/item/depth/size limits, changed sources, cancellation, stalled scans and network loss. Every file retains staged SHA-256 readback and no-replace publication.
+- Cross-platform CI exposed native macOS parent aliases (`/var` → `/private/var`). The initial parent is now canonicalized once; a regression covers parent aliases in both copy directions while selected-root and descendant link checks remain strict.
 - Secret scanning includes tracked and untracked release source. Dependency policy passes with 15 raw moderate development-only findings in four reviewed paths; existing exceptions expire 2026-12-02. No new dependency is introduced.
 - The folder controls and layout were inspected in an automated Windows screenshot. This is distinct from hands-on native installation or real-device certification.
 
