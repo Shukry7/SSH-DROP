@@ -6,6 +6,7 @@ import type {
   KeySelection,
   Result,
   TransferUpdate,
+  QueueState,
 } from '../../shared/contracts';
 import { Terminal } from './Terminal';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
@@ -46,6 +47,11 @@ export function App() {
   const [listing, setListing] = useState<DirectoryListing>();
   const [loading, setLoading] = useState(false);
   const [transfers, setTransfers] = useState<TransferUpdate[]>([]);
+  const [queue, setQueue] = useState<QueueState>({ pending: 0, active: false, paused: false });
+  const [selected, setSelected] = useState<string[]>([]);
+  const listingPath = useRef<string | undefined>(undefined);
+  const selectableFiles = listing?.entries.filter((entry) => entry.kind === 'file') ?? [];
+  const selectionPage = selectableFiles.slice(0, 100);
   const [transferNotice, setTransferNotice] = useState('');
   const navigation = useRef(0);
   const connectionEpoch = useRef(0);
@@ -53,7 +59,11 @@ export function App() {
   const [actionBusy, setActionBusy] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const fileBusy =
-    actionBusy || loading || transfers.some((transfer) => transfer.status === 'running');
+    actionBusy ||
+    loading ||
+    queue.active ||
+    queue.pending > 0 ||
+    transfers.some((transfer) => transfer.status === 'running' || transfer.status === 'queued');
 
   useEffect(() => {
     void window.sshdrop.info().then((result) => {
@@ -70,6 +80,9 @@ export function App() {
           setActionBusy(false);
           setActionInput(undefined);
           setTransfers([]);
+          setQueue({ pending: 0, active: false, paused: false });
+          setSelected([]);
+          listingPath.current = undefined;
           navigation.current++;
           setListing(undefined);
           setLoading(false);
@@ -77,13 +90,31 @@ export function App() {
       }
       if (event.type === 'terminal-reset') setTransfers([]);
       if (event.type === 'transfer-warning') setTransferNotice(event.message);
-      if (event.type === 'transfer')
+      if (event.type === 'queue') setQueue(event.queue);
+      if (event.type === 'transfer') {
         setTransfers((previous) =>
-          [event.transfer, ...previous.filter((item) => item.id !== event.transfer.id)].slice(
-            0,
-            30,
+          [event.transfer, ...previous.filter((item) => item.id !== event.transfer.id)].filter(
+            (item, index) => item.status === 'queued' || item.status === 'running' || index < 150,
           ),
         );
+        if (
+          event.transfer.status === 'completed' &&
+          event.transfer.direction === 'upload' &&
+          listingPath.current
+        ) {
+          const directory = listingPath.current;
+          const epoch = connectionEpoch.current;
+          const request = ++navigation.current;
+          void window.sshdrop.list(directory).then((result) => {
+            if (epoch !== connectionEpoch.current || request !== navigation.current) return;
+            if (result.ok) setListing(result.value);
+            else
+              setError(
+                'Transfer completed, but refreshing failed. Inspect the folder before retrying.',
+              );
+          });
+        }
+      }
     });
   }, []);
 
@@ -139,6 +170,8 @@ export function App() {
       const result = unwrap(await window.sshdrop.list(destination));
       if (request === navigation.current) {
         setListing(result);
+        listingPath.current = result.path;
+        setSelected([]);
         setPath(result.path);
       }
     } finally {
@@ -466,25 +499,37 @@ export function App() {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || fileBusy}
+                  disabled={!connected || !listing || actionBusy || loading}
+                  onClick={() =>
+                    void run(async () => unwrap(await window.sshdrop.upload(listing!.path)))
+                  }
+                >
+                  ↑ Upload files
+                </button>
+                <button
+                  className="secondary compact"
+                  disabled={!connected || !listing || actionBusy || loading}
+                  onClick={() =>
+                    void run(async () => unwrap(await window.sshdrop.uploadFolder(listing!.path)))
+                  }
+                >
+                  Upload folder
+                </button>
+                <button
+                  className="secondary compact"
+                  disabled={!connected || !listing || !selected.length || actionBusy || loading}
                   onClick={() =>
                     void run(async () => {
-                      const directory = listing!.path;
-                      const epoch = connectionEpoch.current;
-                      unwrap(await window.sshdrop.upload(directory));
-                      if (epoch === connectionEpoch.current) {
-                        try {
-                          await browse(directory);
-                        } catch {
-                          setError(
-                            'Transfer finished, but refreshing failed. Refresh or reconnect to inspect the folder before retrying.',
-                          );
-                        }
-                      }
+                      unwrap(
+                        await window.sshdrop.downloadMany(
+                          selected.map((name) => join(listing!.path, name)),
+                        ),
+                      );
+                      setSelected([]);
                     })
                   }
                 >
-                  ↑ Upload file
+                  Download selected ({selected.length})
                 </button>
                 <button
                   className="secondary compact"
@@ -534,7 +579,27 @@ export function App() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Name</th>
+                      <th>
+                        <input
+                          type="checkbox"
+                          aria-label={
+                            selectableFiles.length > 100
+                              ? 'Select first 100 files'
+                              : 'Select all files'
+                          }
+                          disabled={actionBusy || loading || !selectionPage.length}
+                          checked={
+                            selectionPage.length > 0 &&
+                            selectionPage.every((entry) => selected.includes(entry.name))
+                          }
+                          onChange={(event) =>
+                            setSelected(
+                              event.target.checked ? selectionPage.map((entry) => entry.name) : [],
+                            )
+                          }
+                        />{' '}
+                        Name
+                      </th>
                       <th>Size</th>
                       <th>Modified</th>
                       <th>
@@ -546,39 +611,66 @@ export function App() {
                     {listing.entries.map((entry) => (
                       <tr key={entry.name}>
                         <td>
-                          <button
-                            className="file-name"
-                            onClick={() => {
-                              if (entry.kind === 'directory')
-                                void run(() => browse(join(listing.path, entry.name)));
-                            }}
-                            disabled={entry.kind !== 'directory' || fileBusy}
-                          >
-                            <span
-                              className={
-                                entry.kind === 'directory' ? 'folder-icon' : 'document-icon'
-                              }
+                          <div className="file-label">
+                            {entry.kind === 'file' && (
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${entry.name}`}
+                                disabled={
+                                  actionBusy ||
+                                  loading ||
+                                  (!selected.includes(entry.name) && selected.length >= 100)
+                                }
+                                checked={selected.includes(entry.name)}
+                                onChange={(event) =>
+                                  setSelected((previous) =>
+                                    event.target.checked
+                                      ? previous.includes(entry.name) || previous.length >= 100
+                                        ? previous
+                                        : [...previous, entry.name]
+                                      : previous.filter((name) => name !== entry.name),
+                                  )
+                                }
+                              />
+                            )}
+                            <button
+                              className="file-name"
+                              onClick={() => {
+                                if (entry.kind === 'directory')
+                                  void run(() => browse(join(listing.path, entry.name)));
+                              }}
+                              disabled={entry.kind !== 'directory' || fileBusy}
                             >
-                              {entry.kind === 'directory'
-                                ? '▰'
-                                : entry.kind === 'symlink'
-                                  ? '↗'
-                                  : '▫'}
-                            </span>
-                            {entry.name}
-                          </button>
+                              <span
+                                className={
+                                  entry.kind === 'directory' ? 'folder-icon' : 'document-icon'
+                                }
+                              >
+                                {entry.kind === 'directory'
+                                  ? '▰'
+                                  : entry.kind === 'symlink'
+                                    ? '↗'
+                                    : '▫'}
+                              </span>
+                              {entry.name}
+                            </button>
+                          </div>
                         </td>
                         <td>{entry.kind === 'directory' ? '—' : size(entry.size)}</td>
                         <td>{new Date(entry.modified).toLocaleString()}</td>
                         <td>
-                          {entry.kind === 'file' && (
+                          {(entry.kind === 'file' || entry.kind === 'directory') && (
                             <button
                               className="text-button"
                               disabled={actionBusy || loading}
                               onClick={() =>
                                 void run(async () =>
                                   unwrap(
-                                    await window.sshdrop.download(join(listing.path, entry.name)),
+                                    await (entry.kind === 'directory'
+                                      ? window.sshdrop.downloadFolder(
+                                          join(listing.path, entry.name),
+                                        )
+                                      : window.sshdrop.download(join(listing.path, entry.name))),
                                   ),
                                 )
                               }
@@ -676,10 +768,28 @@ export function App() {
             <section className="transfers panel" aria-label="File transfers">
               <div className="panel-heading">
                 <h3>Transfers</h3>
-                <span className="small-label">THIS SESSION</span>
+                <span className="small-label">{queue.pending} WAITING · ONE FILE AT A TIME</span>
               </div>
+              {queue.paused && (
+                <div className="queue-notice" role="status">
+                  Queue paused after a failed or cancelled file. Inspect its destination before
+                  continuing. The failed file will not be retried.
+                  <button
+                    className="text-button"
+                    disabled={queue.active || !queue.pending || actionBusy}
+                    onClick={() => void run(async () => unwrap(await window.sshdrop.resumeQueue()))}
+                  >
+                    Continue queue
+                  </button>
+                </div>
+              )}
               {transfers.map((transfer) => (
-                <div className="transfer-row" key={transfer.id}>
+                <div
+                  className="transfer-row"
+                  key={transfer.id}
+                  role="group"
+                  aria-label={`Transfer ${transfer.name}`}
+                >
                   <span>{transfer.direction === 'upload' ? '↑' : '↓'}</span>
                   <div className="transfer-details">
                     <strong>{transfer.name}</strong>
@@ -693,7 +803,7 @@ export function App() {
                         `${size(transfer.transferred)} / ${size(transfer.total)} · ${transfer.status === 'running' ? (transfer.phase ?? 'transferring') : transfer.status}`}
                     </small>
                   </div>
-                  {transfer.status === 'running' && (
+                  {(transfer.status === 'running' || transfer.status === 'queued') && (
                     <button
                       className="text-button"
                       onClick={() =>
@@ -711,9 +821,14 @@ export function App() {
             <Recovery
               key={connectionEpoch.current}
               connected={connected}
-              busy={fileBusy}
+              busy={
+                actionBusy ||
+                loading ||
+                queue.active ||
+                transfers.some((transfer) => transfer.status === 'running')
+              }
               revision={transfers
-                .filter((t) => t.status !== 'running')
+                .filter((t) => t.status !== 'running' && t.status !== 'queued')
                 .map((t) => t.id)
                 .join(',')}
               setBusy={markRecoveryBusy}

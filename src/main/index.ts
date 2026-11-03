@@ -16,8 +16,10 @@ import { channels } from '../shared/channels';
 import type { Result, SessionEvent } from '../shared/contracts';
 import {
   childPath,
+  actionDirectorySchema,
   connectionSchema,
   fileActionSchema,
+  downloadSelectionSchema,
   profileInputSchema,
   recoveryActionSchema,
   remotePathSchema,
@@ -31,6 +33,8 @@ import { ProfileStore } from './core/profiles';
 import { RecoveryStore } from './core/recovery-store';
 import { BackupVault } from './core/backup-vault';
 import { osKeyProtection } from './core/os-key-protection';
+import { downloadSelection } from './core/download-selection';
+import { folderName } from './core/folder-transfer';
 import metadata from '../../package.json';
 
 let window: BrowserWindow | undefined;
@@ -85,6 +89,16 @@ function publish(event: SessionEvent): void {
 }
 
 function registerAPI(): void {
+  let choosingFiles = false;
+  const selectFiles = async <T>(operation: () => Promise<T>): Promise<T> => {
+    if (choosingFiles) throw new Error('Finish the open file selection first.');
+    choosingFiles = true;
+    try {
+      return await operation();
+    } finally {
+      choosingFiles = false;
+    }
+  };
   const profiles = new ProfileStore(join(app.getPath('userData'), 'profiles.json'));
   handle(channels.info, () => ({
     name: 'SSHDrop',
@@ -213,30 +227,121 @@ function registerAPI(): void {
     session!.resize(size.cols, size.rows);
   });
   handle(channels.cancel, (value) => session!.cancel(transferIdSchema.parse(value)));
-  handle(channels.upload, async (value) => {
-    const directory = remotePathSchema.parse(value);
-    const lease = session!.lease();
-    const result = await dialog.showOpenDialog(window!, {
-      title: 'Upload file',
-      properties: ['openFile'],
-    });
-    const local = result.filePaths[0];
-    lease();
-    if (!result.canceled && local)
-      await session!.transfer('upload', local, childPath(directory, basename(local)));
+  handle(channels.resumeQueue, async (value) => {
+    z.undefined().parse(value);
+    await session!.resumeQueue(
+      async () =>
+        (
+          await dialog.showMessageBox(window!, {
+            type: 'warning',
+            title: 'Continue transfer queue',
+            message: 'Continue the remaining queued files?',
+            detail:
+              'Inspect the failed or cancelled operation and its destination first. The failed file will not be retried. Remaining files keep their originally selected destinations and each conflict still requires confirmation. Nothing is replayed after disconnect.',
+            buttons: ['Cancel', 'Continue remaining files'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          })
+        ).response === 1,
+    );
   });
-  handle(channels.download, async (value) => {
-    const remote = remotePathSchema.parse(value);
-    const lease = session!.lease();
-    const result = await dialog.showSaveDialog(window!, {
-      title: 'Download file',
-      defaultPath: remote.split('/').pop(),
-      buttonLabel: 'Download',
-    });
-    lease();
-    if (!result.canceled && result.filePath)
-      await session!.transfer('download', result.filePath, remote);
-  });
+  handle(channels.upload, (value) =>
+    selectFiles(async () => {
+      const directory = remotePathSchema.parse(value);
+      const lease = session!.lease();
+      const result = await dialog.showOpenDialog(window!, {
+        title: 'Upload file',
+        properties: ['openFile', 'multiSelections'],
+      });
+      lease();
+      if (!result.canceled && result.filePaths.length > 100)
+        throw new Error('Select at most 100 files per upload batch.');
+      if (!result.canceled && result.filePaths.length)
+        session!.enqueue(
+          result.filePaths.map((local) => ({
+            direction: 'upload',
+            local,
+            remote: childPath(directory, basename(local)),
+          })),
+        );
+    }),
+  );
+  const confirmFolder = async (source: string, destination: string) =>
+    (
+      await dialog.showMessageBox(window!, {
+        type: 'warning',
+        title: 'Copy folder into a new destination',
+        message: `Copy ${JSON.stringify(source)} into new folder ${JSON.stringify(destination)}?`,
+        detail:
+          'Up to 100 items (including folders), 16 levels and 10 GiB. Links and special files are refused. Existing destination folders are refused; files are never merged or overwritten. New folders request owner-only permissions. Cancellation or connection failure can leave a partial copy. Inspect it before retrying; completed files are not automatically removed or resumed. Sources and destination folders must stay unchanged during the copy.',
+        buttons: ['Cancel', 'Copy folder'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+    ).response === 1;
+  handle(channels.uploadFolder, (value) =>
+    selectFiles(async () => {
+      const directory = actionDirectorySchema.parse(value);
+      const lease = session!.lease();
+      const result = await dialog.showOpenDialog(window!, {
+        title: 'Choose upload folder',
+        properties: ['openDirectory'],
+      });
+      lease();
+      if (result.canceled || !result.filePaths[0]) return;
+      const local = result.filePaths[0];
+      const remote = childPath(directory, folderName(basename(local)));
+      if (!(await confirmFolder(local, remote))) return;
+      lease();
+      session!.enqueue([{ direction: 'upload', local, remote, folder: true }]);
+    }),
+  );
+  handle(channels.downloadFolder, (value) =>
+    selectFiles(async () => {
+      const remote = downloadSelectionSchema.parse([value])[0];
+      const lease = session!.lease();
+      const result = await dialog.showOpenDialog(window!, {
+        title: 'Choose parent folder for download',
+        properties: ['openDirectory'],
+      });
+      lease();
+      if (result.canceled || !result.filePaths[0]) return;
+      const name = folderName(remote.split('/').pop()!);
+      const local = join(result.filePaths[0], name);
+      if (!(await confirmFolder(remote, local))) return;
+      lease();
+      session!.enqueue([{ direction: 'download', local, remote, folder: true }]);
+    }),
+  );
+  handle(channels.download, (value) =>
+    selectFiles(async () => {
+      const remote = remotePathSchema.parse(value);
+      const lease = session!.lease();
+      const result = await dialog.showSaveDialog(window!, {
+        title: 'Download file',
+        defaultPath: remote.split('/').pop(),
+        buttonLabel: 'Download',
+      });
+      lease();
+      if (!result.canceled && result.filePath)
+        session!.enqueue([{ direction: 'download', local: result.filePath, remote }]);
+    }),
+  );
+  handle(channels.downloadMany, (value) =>
+    selectFiles(async () => {
+      const paths = downloadSelectionSchema.parse(value);
+      const lease = session!.lease();
+      const result = await dialog.showOpenDialog(window!, {
+        title: 'Choose download folder',
+        properties: ['openDirectory'],
+      });
+      lease();
+      if (!result.canceled && result.filePaths[0])
+        session!.enqueue(downloadSelection(result.filePaths[0], paths));
+    }),
+  );
 }
 
 function createWindow(): void {

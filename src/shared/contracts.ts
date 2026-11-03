@@ -65,9 +65,14 @@ export interface TransferUpdate {
   direction: 'upload' | 'download';
   transferred: number;
   total: number;
-  status: 'running' | 'completed' | 'cancelled' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
   phase?: 'preparing' | 'transferring' | 'verifying' | 'finalizing';
   error?: string;
+}
+export interface QueueState {
+  pending: number;
+  active: boolean;
+  paused: boolean;
 }
 export interface RecoveryView {
   encrypted: boolean;
@@ -90,6 +95,7 @@ export interface RecoveryAction {
   action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup' | 'encrypt-backup';
 }
 export type SessionEvent =
+  | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
   | { type: 'status'; connected: boolean; message: string }
   | { type: 'terminal'; data: string; id: number }
@@ -111,7 +117,11 @@ export interface DesktopAPI {
   recovery(): Promise<Result<RecoveryView[]>>;
   recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;
+  uploadFolder(directory: string): Promise<Result<void>>;
+  downloadFolder(path: string): Promise<Result<void>>;
   download(path: string): Promise<Result<void>>;
+  downloadMany(paths: string[]): Promise<Result<void>>;
+  resumeQueue(): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;
   input(data: string): Promise<Result<void>>;
   acknowledge(id: number): Promise<Result<void>>;

@@ -4,6 +4,25 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+## [0.2.0-alpha.4] — 2026-11-03
+
+### Added
+
+- A session-only multi-file transfer queue: select multiple local files for upload or select remote files and a native destination folder for downloads. At most 100 active/waiting files run sequentially, retaining per-file progress, cancellation, verification, and overwrite/backup safeguards.
+- Waiting files can be cancelled without opening their sources or modifying destinations. A failed/interrupted active file pauses the remaining queue; Continue queue requires a native confirmation and never retries the failed file. Disconnect discards pending work and clears connection-specific names rather than replaying it after reconnect.
+- Strict batch validation, conservative destination-collision detection, Windows filename protection for batch downloads, and regression coverage for cancellation, failure pauses, stale pickers/confirmations and connection isolation.
+
+- Bounded folder uploads/downloads into new destinations, with native default-Cancel warnings showing both paths, empty-folder preservation, aggregate progress/cancellation, strict link/name/size/depth limits and per-file staged SHA-256 verification. Existing folder destinations are refused; partial copies remain for inspection after failure.
+
+### Fixed
+
+- Resolve the initially selected local parent to support native macOS path aliases such as `/var` → `/private/var`, while retaining link checks on the selected folder and all descendants.
+
+### Limits
+
+- No folder merging, persistent queue, automatic retries or byte-level transfer pause/resume. Navigation and remote file mutations are locked while files remain queued; recovery inspection remains available while the queue is paused. New queued work retains the originally selected destination.
+- Existing 0.2.0-alpha.3 installers are unchanged; queue and folder copies require 0.2.0-alpha.4. Installers remain unsigned development previews.
+
 ## [0.2.0-alpha.3] — 2026-11-02
 
 ### Added

@@ -1,5 +1,18 @@
 # Manual testing checklist
 
+## Multi-file queue (0.2.0-alpha.4)
+
+Use disposable local/remote files. Existing alpha.3 installers do not include this queue.
+
+Queued files are read and verified when their job starts; selection does not freeze a copy of their contents. Keep selected source files and destination folders stable while work is waiting. Declining a per-file overwrite conflict skips that file; cancelling an active transfer or encountering a failure pauses the remaining queue for inspection.
+
+1. Choose two or more files with Upload files. Confirm one runs while the rest show queued, each completes independently, and uploaded names appear in the explorer after completion. Test empty files and larger files on a slow connection.
+2. Select remote-file checkboxes, choose Download selected, and pick a local folder. Verify every file's bytes, its original destination, and progress/status. Folder and symlink rows must not be selectable. Confirm batch filename collisions or unsafe Windows names reject the entire selection before any job starts.
+3. Cancel a waiting file: it must never open or publish. Cancel an active transfer: preserve the existing destination, pause the rest if the operation fails, and inspect uncertainty warnings before continuing. Continue queue must use a native confirmation defaulting to Cancel and must not retry the failed file.
+4. Trigger an unreadable/missing source, denied write, or a conflict. Existing Cancel/Keep both/verified backup-and-replace choices must still apply per file. Recovery inspection must remain usable while paused; file mutations and navigation stay locked until queued files complete or are cancelled.
+5. Disconnect during streaming or a pending picker/continuation confirmation, then reconnect. Old jobs must not run, old names/history must clear, and late approvals must not apply to the new connection. No queue should survive an application restart.
+6. Queue more files while one runs; enforce at most 100 active/waiting jobs. Confirm duplicate selected basenames (including case/Unicode variants) reject the batch. There is no persistent queue, folder merging, automatic retry or byte-level pause/resume.
+
 Use a disposable Linux server with SSH and SFTP enabled and an account you are allowed to access. Use a writable test folder and disposable files. The current application version is shown in the top bar. This checklist covers the implemented alpha, not the whole PRD.
 
 ## Run the current code
@@ -55,7 +68,7 @@ Profiles contain connection metadata and key-file locations in local user-data s
 - [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own temporary `.sshdrop-*.part` sibling file. If cleanup fails, inspect the selected folders before retrying.
 - [ ] Cancel a native upload/download file dialog. No transfer should start.
 
-Uploads target the folder displayed in the explorer, not the terminal's current working directory. Recursive folder transfers and drag-and-drop are not implemented.
+Uploads target the folder displayed in the explorer, not the terminal's current working directory. Version 0.2.0-alpha.4 supports bounded folder copies into new destinations; see the folder checklist below. Drag-and-drop is not implemented.
 
 - [ ] On a throttled disposable connection, observe **preparing**, **transferring**, **verifying**, and **finalizing**. Long transfers must continue while progress occurs; the final filename should not appear until verification/publication. Upload verification reads the remote temporary file once, adding download traffic.
 - [ ] Block SFTP data requests while leaving SSH alive. After two minutes with no progress, the app should stop and disconnect. Setup/finalization requests are separately bounded at 30 seconds; cleanup is bounded at three seconds. Never test this by interfering with production servers.
@@ -86,7 +99,7 @@ Remote changes use SFTP, not shell commands. Other server processes can change p
 - [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; file creation, copy/move between folders, permission changes, recursive deletion or undo; a transfer queue or resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; file creation, copy/move between folders, permission changes, recursive deletion or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 
@@ -116,3 +129,15 @@ Use an isolated test OS account/application data directory and disposable local/
 5. With an isolated alpha.2 legacy folder, connect to its original verified server/account. Rows must say Legacy plaintext. Cancel Secure backup and verify no migration occurs. Confirm it, then check encrypted contents and metadata, preserved unrelated legacy backups, and removal of only the migrated plaintext original. `recovery.json` must contain only the non-sensitive `{"version":2,"encrypted":true}` marker, so older binaries fail closed. Legacy recovery requires migration first.
 6. Interrupt encryption or force a metadata write failure during migration. The plaintext original must remain, and no destination must change. Retry Secure backup explicitly. Also retry after interruption between committing metadata and unlinking plaintext; the same button must finish cleanup without replacing the vault key. Deletion is not secure disk erasure.
 7. Cut the network or cancel during encryption/decryption/restore staging. Never publish partially authenticated bytes or automatically retry a replacement. Inspect uncertain outcomes and destination-side temporary files before removing them. Losing the OS account or key can make these backups unrecoverable; portable export and key rotation are not implemented.
+
+## Version 0.2.0-alpha.4 folder copies
+
+Use disposable data and new destination names. Existing alpha.3 installers do not include this feature.
+
+1. Upload a small folder containing nested files, zero-byte files and empty directories. Cancel the native warning first and verify no change. Confirm next; both paths and limits should be visible, defaulting to Cancel. Check every file byte-for-byte and verify empty directories.
+2. Download that remote folder using its row’s Download button and select a local parent. Confirm the copied root retains its name and exact contents. Check aggregate progress and cancellation controls.
+3. Retry with the same destination. It must refuse the existing root and leave existing bytes unchanged. No folder merging or recursive deletion is offered.
+4. Test symbolic links, local junctions/hard-linked files, special files, case/Unicode-normalization collisions and Windows-reserved names on supported test devices. The scan must fail before creating the root.
+5. Test more than 100 items (root/folders count), more than 16 levels and more than 10 GiB. Verify refusal without a destination. Never use important data for these checks.
+6. Cancel during a slow copy or disconnect mid-file. Completed files/folders may remain; inspect them. Later files must not start and reconnect must not replay the copy. Delete or rename the partial root manually before retrying. Waiting folder cancellation must touch no destination.
+7. Change a source or replace a parent during a disposable copy; detected changes must stop work. These checks do not prevent all filesystem races; stop other writers in normal use. There is no folder rollback, resume, permission/ACL preservation or automatic partial-tree cleanup.
