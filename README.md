@@ -2,7 +2,7 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.2.0-alpha.3, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.2.0-alpha.4, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
 
@@ -17,9 +17,13 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 - Create remote folders, rename files/folders within their current folder, and permanently delete files or empty folders after native confirmation. Existing destinations are refused; symlinks, special files, recursive deletion, and undo are unsupported.
 - File transfer conflicts offer Cancel, Keep both, or verified backup and replacement where supported. Persistent recovery records support inspection, restore-copy, and guarded rollback; general undo for deletion or renaming is unsupported.
 
-This version includes saved profiles, remote file actions, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, editing, folder transfers, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
+This version includes saved profiles, remote file actions, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, editing, folder merging, drag-and-drop, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
 
 For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
+
+**Version 0.2.0-alpha.4:** Upload files accepts multiple native-selected files. Select remote-file checkboxes and Download selected to queue downloads into a native-selected folder. The session-only queue runs one file at a time, with at most 100 active/waiting jobs, per-file status/cancellation, and existing verification/overwrite safeguards. A failure pauses the queue until you confirm Continue queue; the failed file is never automatically retried. Disconnect discards waiting jobs. Folder copies are also available in 0.2.0-alpha.4: Upload folder or a remote folder’s Download button copies into a **new** destination folder. A native warning defaults to Cancel and shows both paths. The complete scan is limited to 100 items including folders, 16 levels, 10 GiB and 30 seconds. Links, special files, nonportable/colliding names and existing destination folders are refused. Empty folders are preserved; files are staged and SHA-256 verified. A folder is one queue job with aggregate byte progress and cancellation; a failed/cancelled copy can retain completed files and empty folders. Inspect or rename the partial copy before retrying. There is no folder merging, metadata/ACL preservation, automatic cleanup, automatic retry, or byte-level resume. Stop other writers during a copy. Existing alpha.3 installers do not include the queue.
+
+Queued source contents are read/checked when the job starts, rather than frozen at selection time. Keep selected files and destination folders stable while waiting. Declining an overwrite skips that individual file; active cancellation/failure pauses remaining jobs.
 
 ## Overwrite and recovery (0.2.0-alpha.2)
 

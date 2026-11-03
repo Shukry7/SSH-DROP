@@ -4,6 +4,8 @@ SSHDrop has no implemented analytics, advertising, cloud account, or cloud-sync 
 
 ## What stays on this device
 
+Version 0.2.0-alpha.4 keeps its multi-file queue in main-process session memory. Native-selected local paths and selected remote destinations remain only as needed for queued work; pending jobs are discarded on disconnect and are not persisted or replayed. The UI keeps a bounded recent transfer history plus active/waiting items, clearing names on disconnect. A queue failure pauses remaining files until explicit confirmation; failed files are never automatically retried. This does not guarantee forensic erasure from process memory, OS swap or crash dumps.
+
 | Data                                                                                               | Location and retention                                                                                                                                                    |
 | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Saved profile name, host, username, port, authentication method, starting directory, key-file path | Unencrypted `profiles.json` in Electron's application user-data directory, until you delete the profile or remove that file while the app is closed.                      |
@@ -42,3 +44,5 @@ The remote server receives SSH authentication and commands/file operations neede
 Installing/building the source contacts dependency and build-asset services. `npm run security:audit` sends dependency names/versions to the configured npm advisory service. These are developer/CI operations, not application analytics. GitHub Actions stores test coverage, synthetic test screenshots, traces, and dependency reports for the configured retention period. Tests use disposable loopback servers and generated test keys; do not substitute production credentials or files.
 
 Do not share profiles, host records, private keys, sensitive terminal output, or downloaded server files in issues, screenshots, or Git commits. The tracked-file secret scan is a baseline detector, not an exhaustive historical secret audit.
+
+Version 0.2.0-alpha.4 folder copies scan filenames and file metadata within the selected tree in memory. No tree manifests are persisted. A folder uses one queue entry with its root basename and aggregate byte progress. On interruption, completed plaintext copies and empty folders can remain at the chosen destination; these are user-selected copies, not encrypted recovery backups. They are never recursively deleted or replayed automatically.

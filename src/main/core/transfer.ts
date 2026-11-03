@@ -10,7 +10,7 @@ import { transferWait, TransferFailure } from './transfer-wait';
 
 export const transferLimits = { request: 30000, inactivity: 120000, cleanup: 3000 };
 export const transferWarning =
-  'A transfer was interrupted or needs inspection. A temporary .sshdrop-*.part file or a completed destination may remain in the selected folders. Inspect before retrying; nothing was automatically repeated. This notice contains no filenames and lasts until dismissed or the app closes.';
+  'A transfer was interrupted or needs inspection. A temporary .sshdrop-*.part file, completed destination or partial folder copy may remain in the selected folders. Inspect before retrying; nothing was automatically repeated. This notice contains no filenames and lasts until dismissed or the app closes.';
 
 type Reply<T = void> = (error?: Error | null, value?: T) => void;
 const code = (error: unknown) => (error as { code?: number | string })?.code;

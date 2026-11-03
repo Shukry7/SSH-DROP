@@ -72,7 +72,7 @@ export const profileInputSchema = profileDetailsSchema
 export function remotePath(value: string): string {
   return posix.normalize(remotePathSchema.parse(value));
 }
-const actionNameSchema = z
+export const actionNameSchema = z
   .string()
   .min(1)
   .refine(
@@ -84,7 +84,7 @@ const actionNameSchema = z
       Buffer.byteLength(name, 'utf8') <= 255,
     'Use a single filename of at most 255 UTF-8 bytes, without slashes or control characters.',
   );
-const actionDirectorySchema = remotePathSchema.refine(
+export const actionDirectorySchema = remotePathSchema.refine(
   (path) =>
     posix.normalize(path) === path &&
     (path === '/' || !path.endsWith('/')) &&
@@ -93,6 +93,21 @@ const actionDirectorySchema = remotePathSchema.refine(
     Buffer.byteLength(path, 'utf8') <= 4096,
   'Refresh and select a canonical remote directory.',
 );
+export const downloadSelectionSchema = z
+  .array(
+    remotePathSchema.refine(
+      (path) =>
+        path !== '/' &&
+        posix.normalize(path) === path &&
+        !path.endsWith('/') &&
+        actionNameSchema.safeParse(posix.basename(path)).success &&
+        !hasControl(path) &&
+        !/[\\\u202a-\u202e\u2066-\u2069]/.test(path),
+    ),
+  )
+  .min(1)
+  .max(100)
+  .refine((paths) => new Set(paths).size === paths.length, 'Select each file only once.');
 const actionFields = { directory: actionDirectorySchema, name: actionNameSchema };
 export const fileActionSchema = z
   .discriminatedUnion('action', [

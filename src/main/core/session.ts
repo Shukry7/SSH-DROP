@@ -17,6 +17,8 @@ import { runTransfer, transferLimits, transferWarning } from './transfer';
 import { Replacements, recoveryView, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
 import { type RecoveryStore, type ServerIdentity } from './recovery-store';
+import { TransferQueue, type QueuedFile } from './transfer-queue';
+import { runFolderTransfer } from './folder-transfer';
 
 export class Session {
   private client?: Client;
@@ -30,6 +32,11 @@ export class Session {
   private fileAction?: AbortController;
   private identity?: ServerIdentity;
   private recoveryBusy = false;
+  private readonly queue = new TransferQueue(
+    (job) => this.transfer(job.direction, job.local, job.remote, undefined, job.id, job.folder),
+    (transfer) => this.emit({ type: 'transfer', transfer }),
+    (queue) => this.emit({ type: 'queue', queue }),
+  );
 
   constructor(
     private readonly trust: Pick<HostTrust, 'verify'>,
@@ -152,7 +159,9 @@ export class Session {
 
   disconnect(): void {
     this.fileAction?.abort();
-    if (this.transfers.size) this.emit({ type: 'transfer-warning', message: transferWarning });
+    if (this.transfers.size || this.queue.size)
+      this.emit({ type: 'transfer-warning', message: transferWarning });
+    this.queue.clear();
     for (const controller of this.transfers.values())
       controller.abort(new Error('Transfer interrupted by disconnection.'));
     this.transfers.clear();
@@ -209,7 +218,7 @@ export class Session {
     input: FileAction,
     confirm: (warning: FileActionWarning) => Promise<boolean>,
   ): Promise<boolean> {
-    if (this.fileAction || this.transfers.size)
+    if (this.fileAction || this.transfers.size || this.queue.size)
       throw new Error('Wait for the active file operation or transfer to finish.');
     const sftp = this.files();
     const controller = new AbortController();
@@ -239,9 +248,29 @@ export class Session {
   }
 
   cancel(id: string): void {
+    if (this.queue.cancel(id)) return;
     const controller = this.transfers.get(id);
     if (!controller) throw new Error('That transfer is no longer active.');
     controller.abort();
+  }
+  enqueue(files: QueuedFile[]): void {
+    this.files();
+    if (this.fileAction || ((this.transfers.size || this.recoveryBusy) && !this.queue.activeId))
+      throw new Error('Wait for the active file or recovery operation to finish.');
+    this.queue.enqueue(files);
+  }
+  async resumeQueue(confirm: () => Promise<boolean>): Promise<void> {
+    if (this.transfers.size || this.fileAction || this.recoveryBusy)
+      throw new Error('Wait for the active operation before continuing the queue.');
+    const check = this.lease();
+    const revision = this.queue.revision;
+    if (!(await confirm())) return;
+    check();
+    if (this.transfers.size || this.fileAction || this.recoveryBusy)
+      throw new Error('Wait for the active operation before continuing the queue.');
+    if (revision !== this.queue.revision)
+      throw new Error('The queue changed while confirming. Review it and try again.');
+    this.queue.resume();
   }
 
   lease(): () => void {
@@ -269,14 +298,22 @@ export class Session {
     local: string,
     remote: string,
     recoveryAction?: RecoveryAction,
+    queueId?: string,
+    folder = false,
   ): Promise<void> {
+    if (
+      this.queue.size &&
+      (!queueId || queueId !== this.queue.activeId) &&
+      !(recoveryAction && this.queue.isPaused && !this.queue.activeId)
+    )
+      throw new Error('Finish or cancel the queued files before starting a recovery operation.');
     if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
     if (this.recoveryBusy || (this.recoveryOptions && this.transfers.size))
       throw new Error('Wait for the active transfer or recovery operation to finish.');
     const sftp = this.files();
     const path = remotePath(remote);
     if (this.transfers.size >= 2) throw new Error('Wait for an active transfer to finish.');
-    const id = randomUUID();
+    const id = queueId ?? randomUUID();
     const controller = new AbortController();
     this.transfers.set(id, controller);
     const client = this.client;
@@ -306,6 +343,22 @@ export class Session {
     };
     publish();
     try {
+      if (folder) {
+        await runFolderTransfer({
+          sftp,
+          direction,
+          local,
+          remote: path,
+          signal: controller.signal,
+          current,
+          update,
+          publish,
+          limits: this.transferTiming,
+          invalidate,
+          warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
+        });
+        return;
+      }
       if (this.recoveryOptions && this.identity) {
         this.recoveryBusy = true;
         const check = () => {
