@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.2.0-alpha.5, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.2.0-alpha.6, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
+
+**Development source `0.2.0-alpha.6`** adds optional [idle session protection](docs/IDLE_PROTECTION.md): a visible timer, final-minute countdown and disconnect-and-clear privacy screen. It defaults off. It does not keep an authenticated connection behind an app lock; expiry may interrupt active work. Existing alpha.5 installers do not contain this feature.
 
 Version **0.2.0-alpha.5** adds optional **Replace without backup** (permanent, no rollback) and [saved commands/workflows](docs/WORKFLOWS.md), including variables, exact previews and server confirmation enabled by default. It also fixes terminal layout/refitting for clipped rows. Run again reviews the latest saved workflow with fresh variable inputs and the saved confirmation preference; it never resumes or automatically replays previous commands. Older alpha.4 installers do not include these additions.
 

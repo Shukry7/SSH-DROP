@@ -11,6 +11,7 @@ export default defineConfig({
         'src/main/core/**/*.ts',
         'src/shared/validation.ts',
         'src/shared/workflows.ts',
+        'src/shared/idle.ts',
         'scripts/version-policy.mjs',
       ],
       reporter: ['text', 'lcov', 'json-summary'],

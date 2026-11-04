@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type {
   AppInfo,
   DirectoryListing,
@@ -30,7 +30,7 @@ function join(directory: string, name: string): string {
   return `${directory === '/' ? '' : directory}/${name}`;
 }
 
-export function App() {
+export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const [info, setInfo] = useState<AppInfo>();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -237,6 +237,7 @@ export function App() {
           <span className="version">v{info?.version ?? '…'}</span>
         </div>
         <div className="topbar-right">
+          {sessionProtection}
           <span className={`connection-pill ${connected ? 'live' : ''}`}>
             <i />
             {connected ? `${username}@${host}` : 'No active connection'}

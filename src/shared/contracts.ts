@@ -95,6 +95,7 @@ export interface RecoveryAction {
   action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup' | 'encrypt-backup';
 }
 export type SessionEvent =
+  | { type: 'idle'; state: import('./idle').IdleState }
   | { type: 'workflow-warning'; message: string }
   | { type: 'workflow'; update: import('./workflows').WorkflowUpdate }
   | { type: 'workflow-reset' }
@@ -107,6 +108,13 @@ export type SessionEvent =
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  idleStatus(): Promise<Result<import('./idle').IdleState>>;
+  idleSettings(
+    settings: import('./idle').IdleSettings,
+  ): Promise<Result<import('./idle').IdleState>>;
+  idleStayActive(): Promise<Result<void>>;
+  idleEnd(): Promise<Result<void>>;
+  idleReturn(): Promise<Result<void>>;
   workflows(): Promise<Result<import('./workflows').Workflow[]>>;
   saveWorkflow(
     value: import('./workflows').Workflow,

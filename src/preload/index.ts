@@ -2,7 +2,20 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { channels } from '../shared/channels';
 import type { DesktopAPI, SessionEvent } from '../shared/contracts';
 
+// Keep activity reporting inside isolated preload; the page receives no activity/IPC capability.
+const activity = (event: Event) => {
+  if (!event.isTrusted || document.visibilityState !== 'visible') return;
+  ipcRenderer.send(channels.idleActivity);
+};
+for (const name of ['keydown', 'pointerdown', 'wheel'])
+  window.addEventListener(name, activity, { capture: true, passive: true });
+
 const api: DesktopAPI = {
+  idleStatus: () => ipcRenderer.invoke(channels.idleStatus),
+  idleSettings: (value) => ipcRenderer.invoke(channels.idleSettings, value),
+  idleStayActive: () => ipcRenderer.invoke(channels.idleStayActive),
+  idleEnd: () => ipcRenderer.invoke(channels.idleEnd),
+  idleReturn: () => ipcRenderer.invoke(channels.idleReturn),
   workflows: () => ipcRenderer.invoke(channels.workflows),
   saveWorkflow: (value) => ipcRenderer.invoke(channels.saveWorkflow, value),
   deleteWorkflow: (id) => ipcRenderer.invoke(channels.deleteWorkflow, id),

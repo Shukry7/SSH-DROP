@@ -2,6 +2,19 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.2.0-alpha.6] — Unreleased
+
+### Added
+
+- Opt-in idle session protection with Off/5/10/15/30/60-minute settings, a top-bar timer and a final-minute modal countdown with Stay active and End session now. Optional generic background notifications never steal focus.
+- Main-owned timing and API enforcement, connection/approval invalidation, native-dialog cancellation and renderer replacement at expiry. Return opens a blank connection form; it never restores the old session or replays commands.
+- Persisted validated settings, conservative handling of corrupt data, and regressions for warning boundaries, clocks, sleep/lock events, pending approvals/pickers and workflow interruption.
+
+### Limits
+
+- This is disconnect-and-clear protection, not an authenticated app lock. Expiry or supported screen-lock/sleep events may interrupt active transfers and workflows; remote processes can continue. Unsaved inputs are lost; saved local configuration and recovery backups remain.
+- Automatic protection defaults off. OS integration, notifications, accessibility and real-device behavior require platform validation. Existing alpha.5 installers remain unchanged; no alpha.6 release has been published.
+
 ## [0.2.0-alpha.5] — 2026-11-04
 
 ### Added

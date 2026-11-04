@@ -1,4 +1,10 @@
 export const channels = {
+  idleActivity: 'idle:activity',
+  idleStatus: 'idle:status',
+  idleSettings: 'idle:settings',
+  idleStayActive: 'idle:stay-active',
+  idleEnd: 'idle:end-session',
+  idleReturn: 'idle:return',
   workflows: 'workflow:list',
   saveWorkflow: 'workflow:save',
   deleteWorkflow: 'workflow:delete',
