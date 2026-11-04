@@ -46,7 +46,9 @@ test('run again reviews latest definitions, clears values and never bypasses con
     await page.getByRole('button', { name: 'Preview workflow', exact: true }).click();
     await expect(page.locator('.workflow-preview')).toContainText('30 minutes per command');
     await page.getByRole('button', { name: 'Confirm and run workflow' }).click();
-    await expect(page.getByRole('group', { name: 'Workflow results' })).toContainText('completed');
+    await expect(
+      page.getByRole('group', { name: 'Workflow results' }).locator('.toolbar strong'),
+    ).toHaveText('Step 1: completed');
     expect(scripts).toHaveLength(1);
     const saved = await page.evaluate(async () => {
       const r = await window.sshdrop.workflows();
@@ -79,7 +81,9 @@ test('run again reviews latest definitions, clears values and never bypasses con
     await page.getByRole('button', { name: 'Preview workflow', exact: true }).click();
     await page.getByRole('button', { name: 'Confirm and run workflow' }).click();
     await expect.poll(() => scripts.length).toBe(2);
-    await expect(page.getByRole('group', { name: 'Workflow results' })).toContainText('completed');
+    await expect(
+      page.getByRole('group', { name: 'Workflow results' }).locator('.toolbar strong'),
+    ).toHaveText('Step 1: completed');
     expect(scripts[1]).toContain("echo UPDATED 'second value'");
     expect(await readFile(join(dir, 'workflows.json'), 'utf8')).not.toContain('second value');
     await page.evaluate(async (workflow) => {
@@ -186,11 +190,15 @@ test('confirmation opt-out is explicit, persisted and respected by run again', a
     });
     await page.getByRole('button', { name: 'Preview workflow', exact: true }).click();
     await page.getByRole('button', { name: 'Run workflow', exact: true }).click();
-    await expect(page.getByRole('group', { name: 'Workflow results' })).toContainText('completed');
+    await expect(
+      page.getByRole('group', { name: 'Workflow results' }).locator('.toolbar strong'),
+    ).toHaveText('Step 1: completed');
     expect(scripts).toHaveLength(1);
     await page.getByRole('button', { name: 'Run again', exact: true }).click();
     await expect.poll(() => scripts.length).toBe(2);
-    await expect(page.getByRole('group', { name: 'Workflow results' })).toContainText('completed');
+    await expect(
+      page.getByRole('group', { name: 'Workflow results' }).locator('.toolbar strong'),
+    ).toHaveText('Step 1: completed');
     await expect(page.locator('.workflow-preview')).toHaveCount(0);
     await page.getByRole('button', { name: 'Edit workflow', exact: true }).click();
     await expect(confirmation).not.toBeChecked();
