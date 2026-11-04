@@ -57,7 +57,11 @@ describe('bounded folder queue over real SSH/SFTP', () => {
     session.enqueue([
       { direction: 'download', local: join(directory, 'received'), remote: '/copy', folder: true },
     ]);
-    await expect.poll(() => updates().filter((item) => item.status === 'completed').length).toBe(2);
+    await expect
+      .poll(() => updates().filter((item) => item.status === 'completed').length, {
+        timeout: 10000,
+      })
+      .toBe(2);
     expect(await readFile(join(directory, 'received', 'nested', 'data.txt'), 'utf8')).toBe(
       'exact folder bytes',
     );

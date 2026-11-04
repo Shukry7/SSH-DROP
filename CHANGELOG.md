@@ -2,6 +2,25 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.2.0-alpha.5] — 2026-11-04
+
+### Added
+
+- Run again reloads the latest saved workflow from step 1, clears variable inputs and uses fresh connection-bound execution tokens and the saved confirmation preference (enabled by default). Disabling confirmation requires a native safety warning when saving; variable-free Run again then starts immediately. Completed, failed and stopped runs can be reviewed for rerun; deleted definitions and disconnected results cannot be replayed. Maximum-runtime help clarifies that the timeout is not a delay.
+
+- Replace without backup for existing regular files, with a separate permanent-replacement warning, verified staging, source/destination rechecks and atomic replacement. No vault backup, recovery record or rollback is created; unsupported atomic replacement remains refused.
+- Global locally saved command/workflow definitions with add/edit/delete, typed text/integer variables, exact substituted previews, per-run native server confirmation and a generic non-destructive example. Commands run in separate SSH execution channels, step by step, with live results and failure stops.
+- Connection-bound single-use previews, stale-definition checks, bounded output and timeouts, explicit stop/following-logs mode and regression tests for execution, quoting, persistence, failure and disconnect isolation.
+
+### Fixed
+
+- Prevent the terminal panel shrinking below its contents; refit xterm after viewport and font loading changes to address clipped terminal rows seen in the macOS DMG.
+
+### Limits
+
+- Commands require a remote POSIX shell. Definitions are stored unencrypted locally; entered values and output are session-only. Stop/disconnect cannot guarantee remote process termination. No automatic replay, general command rollback, folder merging, unattended execution or secret-variable storage is added.
+- Existing alpha.4 installers are unchanged; these features require alpha.5. Signing, real-device macOS certification and independent security review remain pending.
+
 ## [Unreleased]
 
 ## [0.2.0-alpha.4] — 2026-11-03

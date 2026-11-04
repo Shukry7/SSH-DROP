@@ -15,7 +15,7 @@ export interface ReplacementIO {
   supports(path: string): Promise<boolean>;
   sibling(path: string, id: string): string;
   preserve(path: string, previous: FileSnapshot): Promise<void>;
-  replace(staged: string, destination: string, safety: string): Promise<void>;
+  replace(staged: string, destination: string, safety?: string): Promise<void>;
   remove(path: string): Promise<void>;
 }
 export function replacementIO(
@@ -322,7 +322,7 @@ export function replacementIO(
       else if (process.platform === 'win32') {
         // Fixed program only. Paths are data in environment variables, never script text.
         const script =
-          "$ErrorActionPreference='Stop'; [System.IO.File]::Replace($env:SSHDROP_STAGE,$env:SSHDROP_TARGET,$env:SSHDROP_SAFETY,$false)";
+          "$ErrorActionPreference='Stop'; $backup=[NullString]::Value; if ($env:SSHDROP_SAFETY) { $backup=$env:SSHDROP_SAFETY }; [System.IO.File]::Replace($env:SSHDROP_STAGE,$env:SSHDROP_TARGET,$backup,$false)";
         await request<void>((cb) => {
           execFile(
             join(
@@ -346,7 +346,7 @@ export function replacementIO(
                 ...process.env,
                 SSHDROP_STAGE: staged,
                 SSHDROP_TARGET: destination,
-                SSHDROP_SAFETY: safety,
+                SSHDROP_SAFETY: safety ?? '',
               },
             },
             (error) =>

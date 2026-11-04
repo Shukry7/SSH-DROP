@@ -16,6 +16,7 @@ Thumbs.db
 *.pfx
 artifacts/
 profiles.json
+workflows.json
 known-hosts.json
 vault-key.json
 recovery.json

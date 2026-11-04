@@ -123,6 +123,8 @@ describe('tracked-file secret detection', () => {
   it.each([
     'profiles.json',
     'data/known-hosts.json',
+    'workflows.json',
+    'data/workflows.json',
     'backups/vault-key.json',
     'backups/recovery.json',
     'backups/recovery.enc',

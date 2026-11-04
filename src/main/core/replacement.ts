@@ -102,12 +102,16 @@ export class Replacements {
     const supported = await io.supports(target);
     const choice = await this.approve({
       title: 'File already exists',
-      buttons: ['Cancel', 'Keep both', ...(supported ? ['Back up and replace'] : [])],
+      buttons: [
+        'Cancel',
+        'Keep both',
+        ...(supported ? ['Back up and replace', 'Replace without backup'] : []),
+      ],
       detail:
         this.describe(target) +
         `Existing file: ${previous.size} bytes; modified ${previous.modified === undefined ? 'unknown' : new Date(previous.modified).toISOString()}\nIncoming file: ${incoming.size} bytes; modified ${incoming.modified === undefined ? 'unknown' : new Date(incoming.modified).toISOString()}\nBackup requires at least ${previous.size} bytes locally plus a 50 MiB reserve and staging space.\nKeep both creates: ${alternate}\n\n` +
         (supported
-          ? 'Replace first stores an independent SHA-256 verified, encrypted copy in SSHDrop’s local backup folder. Contents and recovery metadata use authenticated encryption with an OS-protected key. An unlocked OS key store is required; there is no plaintext fallback. Backups stay until you remove them (100 records / 10 GiB limit). Losing the OS account or vault key can make backups unrecoverable. Encryption does not protect against other software running as your OS user.\n\nOnly ordinary file contents and basic permissions are verified. Remote ACLs, extended attributes and hard links cannot be preserved or fully detected. Stop other writers: SSH cannot guarantee a compare-and-swap against external edits. Replacement may affect services using this file.'
+          ? 'Back up and replace first stores an independent SHA-256 verified, encrypted copy in SSHDrop’s local backup folder. Contents and recovery metadata use authenticated encryption with an OS-protected key. An unlocked OS key store is required; there is no plaintext fallback. Backups stay until you remove them (100 records / 10 GiB limit). Losing the OS account or vault key can make backups unrecoverable. Encryption does not protect against other software running as your OS user. Replace without backup instead permanently replaces the previous contents without a recovery record or rollback and does not require the vault.\n\nOnly ordinary file contents and basic permissions are verified. Remote ACLs, extended attributes and hard links cannot be preserved or fully detected. Stop other writers: SSH cannot guarantee a compare-and-swap against external edits. Replacement may affect services using this file.'
           : 'This server does not advertise atomic replacement. Choose Keep both; the existing file will be preserved.'),
     });
     if (choice === 0) return false;
@@ -119,9 +123,69 @@ export class Replacements {
       );
       return true;
     }
+    if (choice === 3 && supported) {
+      if (
+        (await this.approve({
+          title: 'Replace without recovery backup',
+          buttons: ['Cancel', 'Replace permanently'],
+          detail:
+            this.describe(target) +
+            'The previous contents will not be recoverable through SSHDrop. No retained backup or rollback record will be created. Verified staging is still required. Stop other writers; replacement may affect running services. If the connection fails, inspect the destination before retrying.',
+        })) !== 1
+      )
+        return false;
+      await this.replaceWithoutBackup(direction, local, remote, previous, incoming);
+      return true;
+    }
     if (choice !== 2 || !supported) throw new Error('Invalid replacement choice.');
     await this.replace({ direction, local, remote, previous }, undefined, incoming);
     return true;
+  }
+  private async replaceWithoutBackup(
+    direction: 'upload' | 'download',
+    local: string,
+    remote: string,
+    previous: FileSnapshot,
+    expected: FileSnapshot,
+  ): Promise<void> {
+    const c = this.c;
+    const io = this.io(direction);
+    const target = direction === 'upload' ? remote : local;
+    const stage = io.sibling(target, randomUUID());
+    let publishing = false;
+    let owned = false;
+    try {
+      c.check();
+      await c.transfer(
+        direction,
+        direction === 'upload' ? local : stage,
+        direction === 'upload' ? stage : remote,
+      );
+      owned = true;
+      c.check();
+      await io.preserve(stage, previous);
+      const installed = await io.snapshot(stage);
+      if (!equalBytes(installed, expected))
+        throw new Error(
+          'The source changed after approval. The destination has not been replaced.',
+        );
+      if (!unchangedFile(await io.snapshot(target), previous))
+        throw new Error('Destination changed. The original has not been replaced.');
+      c.check();
+      publishing = true;
+      await io.replace(stage, target);
+      c.check();
+      if (!equalFile(await io.snapshot(target), installed))
+        throw new Error('The final destination could not be verified.');
+    } catch (error) {
+      if (!publishing && owned) await io.remove(stage).catch(() => undefined);
+      if (publishing)
+        throw new Error(
+          'Replacement outcome is uncertain and no recovery backup exists. Inspect the destination and staging files before retrying; nothing was repeated.',
+          { cause: error },
+        );
+      throw error;
+    }
   }
   private async replace(
     input: Pick<RecoveryRecord, 'direction' | 'local' | 'remote' | 'previous'> & {

@@ -7,7 +7,12 @@ export default defineConfig({
     hookTimeout: 15000,
     coverage: {
       provider: 'v8',
-      include: ['src/main/core/**/*.ts', 'src/shared/validation.ts', 'scripts/version-policy.mjs'],
+      include: [
+        'src/main/core/**/*.ts',
+        'src/shared/validation.ts',
+        'src/shared/workflows.ts',
+        'scripts/version-policy.mjs',
+      ],
       reporter: ['text', 'lcov', 'json-summary'],
       thresholds: { lines: 80, functions: 80, statements: 80, branches: 70 },
     },

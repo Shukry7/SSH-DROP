@@ -36,6 +36,8 @@ import { osKeyProtection } from './core/os-key-protection';
 import { downloadSelection } from './core/download-selection';
 import { folderName } from './core/folder-transfer';
 import metadata from '../../package.json';
+import { WorkflowStore } from './core/workflow-store';
+import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 
 let window: BrowserWindow | undefined;
 let session: Session | undefined;
@@ -100,6 +102,157 @@ function registerAPI(): void {
     }
   };
   const profiles = new ProfileStore(join(app.getPath('userData'), 'profiles.json'));
+  const workflows = new WorkflowStore(join(app.getPath('userData'), 'workflows.json'));
+  let preview:
+    | {
+        token: string;
+        expires: number;
+        definition: string;
+        id: string;
+        check: () => void;
+        server: string;
+        plan: ReturnType<typeof renderWorkflow>;
+      }
+    | undefined;
+  let confirmingWorkflow = false;
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
+  const discardPreview = () => {
+    preview = undefined;
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = undefined;
+  };
+  const workflowId = z.string().uuid();
+  handle(channels.workflows, (value) => {
+    z.undefined().parse(value);
+    return workflows.list();
+  });
+  handle(channels.saveWorkflow, async (value) => {
+    const w = workflowSchema.parse(value);
+    renderWorkflow(
+      w,
+      Object.fromEntries(w.variables.map((v) => [v.name, v.type === 'integer' ? '0' : 'example'])),
+    );
+    if (!w.confirmBeforeRun) {
+      const confirmation = await dialog.showMessageBox(window!, {
+        type: 'warning',
+        title: 'Disable workflow run confirmation',
+        message: `Allow ${JSON.stringify(w.name)} to run without a confirmation dialog?`,
+        detail:
+          'Run again can immediately repeat every step on the currently connected server when no variables are required. Commands may delete data, duplicate changes or stop services. This preference applies on every server. Variable values must still be entered again. Inspect uncertain previous outcomes before repeating commands.',
+        buttons: ['Cancel', 'Save without run confirmation'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (confirmation.response !== 1)
+        throw new Error('Workflow was not saved. Confirmation remains unchanged.');
+    }
+    const saved = await workflows.save(w);
+    discardPreview();
+    return saved;
+  });
+  handle(channels.deleteWorkflow, async (value) => {
+    const id = workflowId.parse(value);
+    const item = (await workflows.list()).find((w) => w.id === id);
+    if (!item) throw new Error('Workflow not found.');
+    const result = await dialog.showMessageBox(window!, {
+      type: 'warning',
+      title: 'Delete saved workflow',
+      message: `Delete ${JSON.stringify(item.name)}?`,
+      detail:
+        'This removes the local shortcut only. It does not stop remote work or undo commands.',
+      buttons: ['Cancel', 'Delete workflow'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (result.response === 1) {
+      await workflows.delete(id);
+      discardPreview();
+    }
+  });
+  handle(channels.previewWorkflow, async (value) => {
+    const input = z.object({ id: workflowId, values: workflowValuesSchema }).strict().parse(value);
+    const context = session!.workflowContext();
+    const w = (await workflows.list()).find((w) => w.id === input.id);
+    if (!w) throw new Error('Workflow not found.');
+    context.check();
+    const plan = renderWorkflow(w, input.values);
+    discardPreview();
+    preview = {
+      id: w.id,
+      definition: JSON.stringify(w),
+      token: randomUUID(),
+      expires: Date.now() + 300000,
+      check: context.check,
+      server: context.server,
+      plan,
+    };
+    previewTimer = setTimeout(discardPreview, 300000);
+    return { token: preview.token, server: preview.server, plan };
+  });
+  handle(channels.runWorkflow, async (value) => {
+    const token = workflowId.parse(value);
+    const approved = preview;
+    if (
+      confirmingWorkflow ||
+      !approved ||
+      approved.token !== token ||
+      Date.now() > approved.expires
+    )
+      throw new Error('Preview expired or changed. Review the workflow again.');
+    discardPreview();
+    confirmingWorkflow = true;
+    try {
+      approved.check();
+      if (
+        JSON.stringify((await workflows.list()).find((w) => w.id === approved.id)) !==
+        approved.definition
+      )
+        throw new Error('Workflow changed. Preview again.');
+      if (approved.plan.confirmBeforeRun !== false) {
+        const confirmation = await dialog.showMessageBox(window!, {
+          type: 'warning',
+          title: 'Run remote workflow',
+          message: `Run ${JSON.stringify(approved.plan.name)} on ${approved.server}?`,
+          detail: `Remote POSIX shell commands can stop services, permanently delete files or expose data. No general rollback is available. Steps run in separate shells in the shown working directory and stop on nonzero exit. Stop/disconnect cannot guarantee remote processes stop. Nothing is retried automatically.\n\n${approved.plan.scripts.map((s, i) => `STEP ${i + 1}\n${s}`).join('\n\n')}`,
+          buttons: ['Cancel', 'Run workflow'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (confirmation.response !== 1) return false;
+      }
+      approved.check();
+      if (
+        Date.now() > approved.expires ||
+        JSON.stringify((await workflows.list()).find((w) => w.id === approved.id)) !==
+          approved.definition
+      )
+        throw new Error('Workflow changed or preview expired. Review again.');
+      approved.check();
+      void session!.executeWorkflow(approved.plan, token).catch(() => {
+        try {
+          approved.check();
+          publish({
+            type: 'workflow',
+            update: {
+              id: token,
+              step: 0,
+              status: 'failed',
+              message: 'Could not start workflow. Finish active operations, then review again.',
+            },
+          });
+        } catch {
+          /* Old connection is discarded. */
+        }
+      });
+      return true;
+    } finally {
+      confirmingWorkflow = false;
+    }
+  });
+  handle(channels.stopWorkflow, (value) => session!.stopWorkflow(workflowId.parse(value)));
   handle(channels.info, () => ({
     name: 'SSHDrop',
     version: app.getVersion(),
@@ -194,6 +347,7 @@ function registerAPI(): void {
     }
   });
   handle(channels.disconnect, () => {
+    discardPreview();
     session!.disconnect();
     publish({ type: 'status', connected: false, message: 'Disconnected.' });
   });

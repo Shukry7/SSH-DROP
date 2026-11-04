@@ -13,6 +13,7 @@ import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHe
 import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
+import { Workflows } from './Workflows';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -764,6 +765,7 @@ export function App() {
               )}
             </div>
           </section>
+          <Workflows connected={connected} />
           {transfers.length > 0 && (
             <section className="transfers panel" aria-label="File transfers">
               <div className="panel-heading">
