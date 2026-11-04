@@ -19,6 +19,8 @@ import { replacementIO } from './replacement-io';
 import { type RecoveryStore, type ServerIdentity } from './recovery-store';
 import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
+import { runWorkflow } from './workflow-runner';
+import type { WorkflowPlan } from '../../shared/workflows';
 
 export class Session {
   private client?: Client;
@@ -32,6 +34,8 @@ export class Session {
   private fileAction?: AbortController;
   private identity?: ServerIdentity;
   private recoveryBusy = false;
+  private workflow?: { id: string; controller: AbortController };
+  private commandServer = '';
   private readonly queue = new TransferQueue(
     (job) => this.transfer(job.direction, job.local, job.remote, undefined, job.id, job.folder),
     (transfer) => this.emit({ type: 'transfer', transfer }),
@@ -99,6 +103,7 @@ export class Session {
           error ? reject(error) : resolve(stream),
         ),
       );
+      this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
       if (this.client !== client) {
         shell.close();
         throw new Error('Connection was cancelled.');
@@ -158,6 +163,16 @@ export class Session {
   }
 
   disconnect(): void {
+    if (this.workflow)
+      this.emit({
+        type: 'workflow-warning',
+        message:
+          'A remote workflow was interrupted. Remote work may still be running or services may remain stopped. Inspect the server before retrying; no commands were automatically replayed. This notice contains no command or server names.',
+      });
+    this.workflow?.controller.abort();
+    this.workflow = undefined;
+    this.commandServer = '';
+    this.emit({ type: 'workflow-reset' });
     this.fileAction?.abort();
     if (this.transfers.size || this.queue.size)
       this.emit({ type: 'transfer-warning', message: transferWarning });
@@ -208,6 +223,51 @@ export class Session {
     if (!this.sftp) throw new Error('SFTP is unavailable. Connect to a server with SFTP enabled.');
     return this.sftp;
   }
+  workflowContext() {
+    const client = this.client;
+    if (!client || this.connecting || !this.commandServer)
+      throw new Error('Connect to a server first.');
+    return {
+      server: this.commandServer,
+      check: () => {
+        if (this.client !== client || this.connecting)
+          throw new Error('The connection changed. Review the workflow again.');
+      },
+    };
+  }
+  async executeWorkflow(plan: WorkflowPlan, id: string): Promise<void> {
+    this.workflowContext();
+    if (
+      this.workflow ||
+      this.queue.size ||
+      this.transfers.size ||
+      this.fileAction ||
+      this.recoveryBusy
+    )
+      throw new Error(
+        'Finish active transfers, recovery or file actions before running a workflow.',
+      );
+    const client = this.client!;
+    const controller = new AbortController();
+    const active = { id, controller };
+    this.workflow = active;
+    try {
+      await runWorkflow(
+        plan,
+        id,
+        (script, cb) => client.exec(script, (error, channel) => cb(error, channel)),
+        controller.signal,
+        () => this.client === client,
+        (update) => this.emit({ type: 'workflow', update }),
+      );
+    } finally {
+      if (this.workflow === active) this.workflow = undefined;
+    }
+  }
+  stopWorkflow(id: string): void {
+    if (this.workflow?.id !== id) throw new Error('That workflow is no longer running.');
+    this.workflow.controller.abort();
+  }
 
   async list(path: string): Promise<DirectoryListing> {
     const sftp = this.files();
@@ -218,6 +278,7 @@ export class Session {
     input: FileAction,
     confirm: (warning: FileActionWarning) => Promise<boolean>,
   ): Promise<boolean> {
+    if (this.workflow) throw new Error('Stop the running workflow before changing files.');
     if (this.fileAction || this.transfers.size || this.queue.size)
       throw new Error('Wait for the active file operation or transfer to finish.');
     const sftp = this.files();
@@ -254,6 +315,7 @@ export class Session {
     controller.abort();
   }
   enqueue(files: QueuedFile[]): void {
+    if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     this.files();
     if (this.fileAction || ((this.transfers.size || this.recoveryBusy) && !this.queue.activeId))
       throw new Error('Wait for the active file or recovery operation to finish.');
@@ -301,6 +363,7 @@ export class Session {
     queueId?: string,
     folder = false,
   ): Promise<void> {
+    if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     if (
       this.queue.size &&
       (!queueId || queueId !== this.queue.activeId) &&
@@ -444,6 +507,8 @@ export class Session {
           ? 'cancelled'
           : 'failed';
       update.error = error instanceof Error ? error.message : 'Transfer failed.';
+      if (/uncertain/i.test(update.error))
+        this.emit({ type: 'transfer-warning', message: transferWarning });
       publish();
       throw error;
     } finally {

@@ -3,6 +3,12 @@ import { channels } from '../shared/channels';
 import type { DesktopAPI, SessionEvent } from '../shared/contracts';
 
 const api: DesktopAPI = {
+  workflows: () => ipcRenderer.invoke(channels.workflows),
+  saveWorkflow: (value) => ipcRenderer.invoke(channels.saveWorkflow, value),
+  deleteWorkflow: (id) => ipcRenderer.invoke(channels.deleteWorkflow, id),
+  previewWorkflow: (value) => ipcRenderer.invoke(channels.previewWorkflow, value),
+  runWorkflow: (token) => ipcRenderer.invoke(channels.runWorkflow, token),
+  stopWorkflow: (id) => ipcRenderer.invoke(channels.stopWorkflow, id),
   info: () => ipcRenderer.invoke(channels.info),
   chooseKey: () => ipcRenderer.invoke(channels.chooseKey),
   profiles: () => ipcRenderer.invoke(channels.profiles),

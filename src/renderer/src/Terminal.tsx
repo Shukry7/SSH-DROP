@@ -35,13 +35,27 @@ export function Terminal({ connected }: { connected: boolean }) {
       const subscription = view.onData((data) => {
         if (active.current) void window.sshdrop.input(data);
       });
+      let frame = 0;
+      let disposed = false;
       const resize = () => {
-        addon.fit();
-        if (active.current) void window.sshdrop.resize({ cols: view.cols, rows: view.rows });
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (disposed || !element.current?.clientHeight || !element.current.clientWidth) return;
+          addon.fit();
+          if (active.current) void window.sshdrop.resize({ cols: view.cols, rows: view.rows });
+        });
       };
       const observer = new ResizeObserver(resize);
       observer.observe(element.current!);
+      window.addEventListener('resize', resize);
+      void document.fonts.ready.then(() => {
+        if (!disposed) resize();
+      });
+      resize();
       disposeView = () => {
+        disposed = true;
+        cancelAnimationFrame(frame);
+        window.removeEventListener('resize', resize);
         subscription.dispose();
         observer.disconnect();
         view.dispose();

@@ -27,6 +27,7 @@ export async function sshFixture(
     corruptReadback?: boolean;
     atomicReplace?: boolean;
     dropAfterReplace?: boolean;
+    exec?: (command: string, stream: ServerChannel) => void;
   } = {},
 ) {
   const files = new Map<string, Buffer>([
@@ -79,6 +80,15 @@ export async function sshFixture(
           stream.on('data', (chunk: Buffer) =>
             stream.write(Buffer.concat([Buffer.from('echo:'), chunk])),
           );
+        });
+        session.on('exec', (acceptExec, _reject, info) => {
+          const stream = acceptExec();
+          if (options.exec) options.exec(info.command, stream);
+          else {
+            stream.write('fixture-command-output\n');
+            stream.exit(0);
+            stream.end();
+          }
         });
         session.on('sftp', (acceptSftp, reject) => {
           if (options.noSftp) return reject();

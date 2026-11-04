@@ -16,6 +16,8 @@ Development hardening adds terminal/transfer-history reset, bounded remote direc
 
 Transfers stage into temporary files, verify SHA-256 readback, recheck source metadata, use bounded setup/cleanup and a progress-based inactivity timeout, and retain generic interruption warnings across reconnects. Version `0.2.0-alpha.2` adds explicit conflict choices, independent local verified backups, guarded replacement/rollback, and crash-persistent recovery records with manual inspection and restore-copy. Version `0.2.0-alpha.3` encrypts new backup contents and recovery metadata with an OS-protected key, and provides explicit verified migration of legacy plaintext backups. Real-device keychain validation, signed app identity, portable encrypted export, OS key rotation handling, and migration from Electron 45's synchronous Linux provider remain pending. Byte-level pause/resume, persistent queues, automatic recovery, metadata-complete backups, and atomic compare-and-swap against other writers remain unimplemented. Earlier `0.2.0-alpha.1` installers do not include backup/rollback.
 
+Version 0.2.0-alpha.5 adds verified overwrite without retained backup, local global command/workflow definitions, typed variables, exact previews and server confirmation enabled by default, bounded sequential SSH execution, explicit Run again with fresh inputs and a saved confirmation preference, and a generic non-destructive example. These are distinct from multiple interactive terminals, unattended automation and shell-directory following, which remain planned.
+
 ## 0.3 — Remote editing
 
 Monaco, bounded text loading, unsaved changes, safe-save capability handling, encoding policy, and remote-change conflict handling.

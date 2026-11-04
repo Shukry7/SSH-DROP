@@ -1,4 +1,10 @@
 export const channels = {
+  workflows: 'workflow:list',
+  saveWorkflow: 'workflow:save',
+  deleteWorkflow: 'workflow:delete',
+  previewWorkflow: 'workflow:preview',
+  runWorkflow: 'workflow:run',
+  stopWorkflow: 'workflow:stop',
   info: 'app:info',
   chooseKey: 'ssh:choose-key',
   profiles: 'profiles:list',

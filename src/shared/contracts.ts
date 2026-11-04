@@ -95,6 +95,9 @@ export interface RecoveryAction {
   action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup' | 'encrypt-backup';
 }
 export type SessionEvent =
+  | { type: 'workflow-warning'; message: string }
+  | { type: 'workflow'; update: import('./workflows').WorkflowUpdate }
+  | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
   | { type: 'status'; connected: boolean; message: string }
@@ -104,6 +107,17 @@ export type SessionEvent =
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  workflows(): Promise<Result<import('./workflows').Workflow[]>>;
+  saveWorkflow(
+    value: import('./workflows').Workflow,
+  ): Promise<Result<import('./workflows').Workflow>>;
+  deleteWorkflow(id: string): Promise<Result<void>>;
+  previewWorkflow(value: {
+    id: string;
+    values: Record<string, string>;
+  }): Promise<Result<{ token: string; server: string; plan: import('./workflows').WorkflowPlan }>>;
+  runWorkflow(token: string): Promise<Result<boolean>>;
+  stopWorkflow(id: string): Promise<Result<void>>;
   info(): Promise<Result<AppInfo>>;
   chooseKey(): Promise<Result<KeySelection | null>>;
   profiles(): Promise<Result<ServerProfile[]>>;

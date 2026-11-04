@@ -63,6 +63,93 @@ describe('verified overwrite and persistent recovery over SFTP', () => {
     await fixture.close();
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
+  it('allows no-backup replacement when OS key protection is unavailable without opening the vault', async () => {
+    let requested = 0;
+    const protection = {
+      ...testProtection,
+      available: async () => {
+        requested++;
+        return false;
+      },
+    };
+    const root = join(directory, 'backups');
+    store = new RecoveryStore(root, new BackupVault(root, protection));
+    await connect();
+    choice = 3;
+    confirmHook = () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') choice = 1;
+    };
+    await upload();
+    expect(requested).toBe(0);
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('replacement');
+  });
+  it('reports an uncertain no-backup outcome after a lost publication acknowledgement without replay', async () => {
+    await fixture.close();
+    fixture = await sshFixture({ atomicReplace: true, dropAfterReplace: true });
+    await connect();
+    choice = 3;
+    confirmHook = () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') choice = 1;
+    };
+    await expect(upload()).rejects.toThrow('uncertain');
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('replacement');
+    await expect(readFile(join(directory, 'backups', 'recovery.enc'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+  it('refuses a no-backup replacement when the approved source changes', async () => {
+    await connect();
+    choice = 3;
+    confirmHook = async () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') {
+        await writeFile(join(directory, 'hello.txt'), 'changed after approval');
+        choice = 1;
+      }
+    };
+    await expect(upload()).rejects.toThrow('source changed');
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe(original);
+    expect(await session.recovery()).toHaveLength(0);
+  });
+  it('replaces uploads and downloads without a vault backup or recovery record after explicit permanent approval', async () => {
+    await connect();
+    choice = 3;
+    confirmHook = () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') choice = 1;
+    };
+    await upload();
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('replacement');
+    expect(await session.recovery()).toHaveLength(0);
+    const local = join(directory, 'no-backup.txt');
+    await writeFile(local, 'original local');
+    choice = 3;
+    await session.transfer('download', local, '/hello.txt');
+    expect(await readFile(local, 'utf8')).toBe('replacement');
+    expect(await session.recovery()).toHaveLength(0);
+    expect((await readdir(directory)).some((n) => n.includes('.original'))).toBe(false);
+  });
+  it('keeps the original when permanent replacement is cancelled', async () => {
+    await connect();
+    choice = 3;
+    confirmHook = () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') choice = 0;
+    };
+    await upload();
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe(original);
+    expect(await session.recovery()).toHaveLength(0);
+  });
+  it('refuses a changed destination after permanent replacement approval without making a backup', async () => {
+    await connect();
+    choice = 3;
+    confirmHook = () => {
+      if (approvals.at(-1)?.title === 'Replace without recovery backup') {
+        fixture.files.set('/hello.txt', Buffer.from('external writer'));
+        choice = 1;
+      }
+    };
+    await expect(upload()).rejects.toThrow('Destination changed');
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('external writer');
+    expect(await session.recovery()).toHaveLength(0);
+  });
   it('keeps an independent verified backup, persists across reconnect, and rolls back with another backup', async () => {
     await connect();
     await upload();
