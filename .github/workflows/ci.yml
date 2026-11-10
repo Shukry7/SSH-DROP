@@ -2,9 +2,22 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      inspect_releases:
+        description: Inspect two existing Mac releases instead of rebuilding
+        type: boolean
+        default: false
+      baseline:
+        description: Working release tag
+        type: string
+        default: v0.2.0-alpha.2
+      suspect:
+        description: Reported broken release tag
+        type: string
+        default: v0.2.0-alpha.5
 
 permissions:
   contents: read
@@ -15,6 +28,7 @@ concurrency:
 
 jobs:
   checks:
+    if: github.event_name != 'workflow_dispatch' || !inputs.inspect_releases
     name: Checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -49,11 +63,17 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:e2e
       - name: Verify native application packaging
+        env:
+          # Explicit ad-hoc identity only; no signing certificate or secret is provided.
+          CSC_FOR_PULL_REQUEST: 'true'
         run: npm exec electron-builder -- --publish never
       - name: Inspect security fuses in packaged binaries
         run: npm run security:package
-      - name: Save test diagnostics
-        if: always()
+      - name: Verify macOS signatures, DMG contents and packaged startup
+        if: runner.os == 'macOS'
+        run: npm run security:mac-package
+      - name: Save failure diagnostics
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: diagnostics-${{ matrix.os }}
@@ -64,31 +84,24 @@ jobs:
             playwright-report/
             test-results/
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
+          compression-level: 9
 
-  verify-artifacts:
-    name: Verify diagnostic artifact downloads
-    needs: checks
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+  inspect-mac-releases:
+    if: github.event_name == 'workflow_dispatch' && inputs.inspect_releases
+    name: Inspect existing Mac release integrity
+    runs-on: macos-15
+    timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: diagnostics-*
-          path: downloaded-diagnostics
-      - name: Verify coverage artifacts from all three platforms
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          import assert from 'node:assert/strict';
-          for (const os of ['ubuntu-24.04', 'windows-latest', 'macos-15']) {
-            const path = `downloaded-diagnostics/diagnostics-${os}/coverage/coverage-summary.json`;
-            const summary = JSON.parse(readFileSync(path, 'utf8'));
-            assert(summary.total.lines.total > 0, `Missing coverage data for ${os}`);
-            assert(summary.total.lines.covered > 0, `Empty coverage data for ${os}`);
-            console.log(`Verified diagnostic artifact: ${os}`);
-          }
-          NODE
+          node-version-file: .nvmrc
+      - name: Compare existing DMGs without changing them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: ${{ inputs.baseline }}
+          SUSPECT_TAG: ${{ inputs.suspect }}
+        run: node scripts/inspect-mac-releases.mjs "$BASELINE_TAG" "$SUSPECT_TAG"

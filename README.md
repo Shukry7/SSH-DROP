@@ -71,3 +71,7 @@ Use focused branches and pull requests, with regression tests for new operations
 Licensed under [MIT](LICENSE).
 
 Read the [privacy policy](PRIVACY.md) and [security review](docs/SECURITY_REVIEW.md) for local-data handling, automated checks, temporary dependency exceptions, and remaining signing/independent-review requirements. These improvements are not included in the older `0.1.0-alpha.1` installers.
+
+### macOS development package integrity
+
+The current fix branch adds explicit ad-hoc signing and DMG/signature/startup checks. Existing alpha.5 downloads are unchanged and are being investigated against the reported working alpha.2. Ad-hoc signing does not provide Apple Developer ID trust or notarization; downloaded previews may still be blocked by Gatekeeper. See [MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md) for diagnosis and validation limits. No release number is assigned to this fix until its release scope is agreed.

@@ -1,5 +1,9 @@
 # Roadmap
 
+## Immediate release-engineering work
+
+Investigate the reported alpha.5 macOS damaged-app warning against working alpha.2; validate DMG hashes, nested signatures, ASAR integrity and installed-app startup. Explicit ad-hoc development signing and artifact-retention reductions are prepared on a separate fix branch. Existing release assets are not replaced. Developer ID signing/notarization, Gatekeeper testing from browser downloads and real-device Intel/Apple Silicon validation remain pending. Idle protection remains in unmerged PR #18.
+
 ## 0.1 alpha — Core vertical slice
 
 Secure desktop foundation; validated IPC; host verification; session-only password/private-key authentication; beginner connection guide and field help; one remote terminal; SFTP browsing; single-file transfers; regression tests; cross-platform CI; desktop smoke tests; version tooling.
