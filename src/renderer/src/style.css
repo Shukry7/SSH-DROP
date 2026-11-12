@@ -451,6 +451,33 @@ input::placeholder {
   padding: 24px;
   box-shadow: 0 20px 70px #0008;
 }
+.remote-editor-dialog {
+  width: min(1100px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  color: #dce4ef;
+  background: #101720;
+  border: 1px solid #465c68;
+  border-radius: 10px;
+  padding: 24px;
+}
+.remote-editor-dialog::backdrop {
+  background: #05090dbb;
+}
+.remote-editor-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: min(45vh, 460px);
+  resize: vertical;
+  font:
+    13px/1.5 'Courier Prime',
+    monospace;
+  tab-size: 2;
+  color: #dce4ef;
+  background: #0b1119;
+  border: 1px solid #465c68;
+  padding: 12px;
+}
 .file-action-dialog::backdrop {
   background: #05090dbb;
 }

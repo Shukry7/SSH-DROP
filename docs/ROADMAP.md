@@ -12,7 +12,7 @@ The disconnect-and-clear part of priority 1 is implemented in alpha.6 developmen
 | 4        | Folder merging and conflicts                     | Development source supports upload/download merges with per-file skip, keep both and both replacement options where supported. Includes bounded scans, verified publication and partial-result counts. See [manual testing](MANUAL_TESTING.md#folder-merges-unreleased-020-alpha6). |
 | 5        | Everyday file tools                              | Development source supports file creation, cross-folder copy/move for regular files, single-item permissions, and drag-and-drop file uploads. Recursive deletion needs a separate destructive-operation design.                                                                     |
 | 6        | Workflow library improvements                    | Development source includes search, optional groups, duplicate into editor, and individual JSON import/export. Imports open for review with new IDs and confirmation enabled. Review exported commands for private details.                                                         |
-| 7        | Remote editor (0.3 series)                       | Bounded text loading, encoding policy, unsaved-change protection, remote-change conflict detection and verified safe saves before richer editing features.                                                                                                                          |
+| 7        | Remote editor (0.3 series)                       | Development source includes bounded UTF-8 loading, unsaved drafts, remote-change detection, and verified saves. Syntax highlighting, graphical merging, and multiple tabs remain planned. See [remote editing](REMOTE_EDITOR.md).                                                   |
 | 8        | Workspace integration (0.4 series)               | Multiple terminals, session tabs, dedicated terminal editors and optional directory following with explicit fallback destinations.                                                                                                                                                  |
 | 9        | Resumable transfers and persistent queues        | Identity-bound recovery, source/destination revalidation and explicit user approval after interruption. Design byte-level resume separately from retrying a whole transfer; never silently overwrite or replay uncertain work.                                                      |
 | 10       | Optional saved credentials                       | Opt-in OS-backed credential storage with lock/unlock, deletion and platform failure behavior. Session-only secrets remain the default; backup key protection is not saved SSH authentication.                                                                                       |
@@ -59,7 +59,7 @@ Version 0.2.0-alpha.5 adds verified overwrite without retained backup, local glo
 
 ## 0.3 — Remote editing
 
-Monaco, bounded text loading, unsaved changes, safe-save capability handling, encoding policy, and remote-change conflict handling.
+The `0.3.0-alpha.1` development source includes a single plain-text editor for UTF-8 files up to 1 MiB, preservation of LF/CRLF and BOM, unsaved-change protection, remote-change detection, and verified saves with optional encrypted recovery. Monaco/syntax highlighting, graphical merging, additional encodings, and editor tabs remain planned.
 
 ## 0.4 — Workspace integration
 

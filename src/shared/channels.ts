@@ -26,6 +26,8 @@ export const channels = {
   disconnect: 'ssh:disconnect',
   list: 'sftp:list',
   fileAction: 'sftp:file-action',
+  openEditor: 'editor:open',
+  saveEditor: 'editor:save',
   recovery: 'recovery:list',
   recover: 'recovery:action',
   upload: 'sftp:upload',

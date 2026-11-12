@@ -104,7 +104,13 @@ Remote changes use SFTP, not shell commands. Other server processes can change p
 - [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; permission changes involving ownership or special bits, recursive changes, or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; rich editing with syntax highlighting or graphical merging; permission changes involving ownership or special bits, recursive changes, or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates.
+
+## Remote editor (0.3.0-alpha.1 development source)
+
+Use disposable UTF-8 files. Open **Edit text**, modify a draft, and try Close editor. Keep editing must preserve the draft. Close the app while dirty and cancel the discard warning. Save first with a backup, compare bytes and permissions on the server, then test guarded rollback in Recovery. Test Save without backup by cancelling and then confirming its second warning.
+
+Change a file outside SSHDrop while its draft is open. Save must refuse and preserve the external bytes and the draft. Test LF, CRLF, BOM, invalid UTF-8, binary data, mixed endings, a file above 1 MiB, denied permissions, and a server without atomic replacement. Drop the connection while editing and saving; inspect the remote file before retrying. Check idle expiry clears the draft with the rest of the workspace. Validate close warnings and Ctrl/Cmd+S on Windows, Linux, and macOS devices.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 

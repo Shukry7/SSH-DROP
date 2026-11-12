@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.2.0-alpha.6, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.3.0-alpha.1, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
+
+**Development source `0.3.0-alpha.1`** adds a remote text editor. Select **Edit text** on a regular UTF-8 file up to 1 MiB, edit the draft, and review the save warning. Choose an encrypted recovery backup or confirm saving without a backup. The editor checks for remote changes before replacing the file and verifies the result. LF/CRLF endings and a UTF-8 BOM are preserved. See [remote editing](docs/REMOTE_EDITOR.md).
 
 **Development source `0.2.0-alpha.6`** adds optional [idle session protection](docs/IDLE_PROTECTION.md): a visible timer, final-minute countdown and disconnect-and-clear privacy screen. It defaults off. It does not keep an authenticated connection behind an app lock; expiry may interrupt active work. Existing alpha.5 installers do not contain this feature.
 
@@ -28,7 +30,7 @@ Version **0.2.0-alpha.5** adds optional **Replace without backup** (permanent, n
 - **Permissions** in unreleased `0.2.0-alpha.6` edits read, write, and execute access for owner, group, and others on one file or folder at a time. The dialog shows both modes before confirmation. The server must support a read-only SFTP open and handle-based permission changes for the selected item. Special permission bits, ownership changes, and recursive updates are outside this feature.
 - File transfer conflicts offer Cancel, Keep both, or verified backup and replacement where supported. Persistent recovery records support inspection, restore-copy, and guarded rollback; general undo for deletion or renaming is unsupported.
 
-This version includes saved profiles, remote file actions, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, editing, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
+This version includes saved profiles, remote file actions, a bounded text editor, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
 
 For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
 

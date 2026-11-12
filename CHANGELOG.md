@@ -2,6 +2,18 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.1] — Unreleased
+
+### Added
+
+- Edit remote UTF-8 text files up to 1 MiB from the explorer. Drafts have unsaved-change protection and preserve the original LF/CRLF line endings and UTF-8 BOM.
+- Verified saves with remote-change detection, basic permission preservation, encrypted recovery backup or a separately confirmed save without backup. Unsupported replacement servers, binary files, mixed line endings, special files, and stale sessions are refused.
+
+### Limits
+
+- One plain-text editor is available at a time. Drafts are held in memory and are cleared when idle protection replaces the workspace. Network loss keeps a draft visible for copying but disables saving until the file is reopened.
+- Syntax highlighting, large-file editing, automatic merging, multiple editor tabs, and saved local drafts remain planned. Stop other writers while saving because SFTP cannot provide a compare-and-swap against external edits.
+
 ## [0.2.0-alpha.6] — Unreleased
 
 ### Added

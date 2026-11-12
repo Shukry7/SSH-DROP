@@ -45,6 +45,7 @@ import { folderName } from './core/folder-transfer';
 import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
+import { openEditorSchema, saveEditorSchema } from '../shared/editor';
 import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
@@ -691,6 +692,11 @@ function registerAPI(): void {
       return result.response === 1;
     }),
   );
+  handle(channels.openEditor, async (value) => {
+    const { directory, name } = openEditorSchema.parse(value);
+    return session!.editText({ path: childPath(directory, name) });
+  });
+  handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
   handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),
@@ -919,6 +925,28 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
   session = createdSession;
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
+  let askingToDiscard = false;
+  window.webContents.on('will-prevent-unload', () => {
+    if (askingToDiscard) return;
+    askingToDiscard = true;
+    void messageBox({
+      type: 'warning',
+      title: 'Unsaved editor changes',
+      message: 'Discard the editor draft and close SSHDrop?',
+      detail: 'The draft is held in memory and has not been saved to the server.',
+      buttons: ['Keep editing', 'Discard and close'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+      .then((choice) => {
+        if (choice.response === 1 && !createdWindow.isDestroyed()) createdWindow.destroy();
+      })
+      .catch(() => {})
+      .finally(() => {
+        askingToDiscard = false;
+      });
+  });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
@@ -1030,4 +1058,3 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (!rebuildingWindow && process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => session?.disconnect());

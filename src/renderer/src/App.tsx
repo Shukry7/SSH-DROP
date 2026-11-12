@@ -15,6 +15,8 @@ import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
+import { RemoteEditor } from './RemoteEditor';
+import type { EditorDocument } from '../../shared/editor';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -64,11 +66,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const connectionEpoch = useRef(0);
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [editor, setEditor] = useState<{ document: EditorDocument; epoch: number }>();
   const [dropActive, setDropActive] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const filesReady = connected && sftpOpen;
   const dropDirectory =
-    filesReady && !loading && !actionBusy && !actionInput ? listing?.path : undefined;
+    filesReady && !loading && !actionBusy && !actionInput && !editor ? listing?.path : undefined;
   const fileBusy =
     actionBusy ||
     loading ||
@@ -793,6 +796,34 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                           )}
                           {(entry.kind === 'file' || entry.kind === 'directory') && (
                             <>
+                              {entry.kind === 'file' && (
+                                <button
+                                  className="text-button"
+                                  disabled={
+                                    !filesReady || fileBusy || !!editor || entry.size > 1048576
+                                  }
+                                  onClick={() =>
+                                    void run(async () => {
+                                      const epoch = connectionEpoch.current;
+                                      setActionBusy(true);
+                                      try {
+                                        const document = unwrap(
+                                          await window.sshdrop.openEditor({
+                                            directory: listing.path,
+                                            name: entry.name,
+                                          }),
+                                        );
+                                        if (epoch === connectionEpoch.current)
+                                          setEditor({ document, epoch });
+                                      } finally {
+                                        setActionBusy(false);
+                                      }
+                                    })
+                                  }
+                                >
+                                  Edit text
+                                </button>
+                              )}
                               <button
                                 className="text-button"
                                 disabled={!filesReady || fileBusy}
@@ -894,6 +925,16 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               close={() => {
                 setActionInput(undefined);
                 setError('');
+              }}
+            />
+          )}
+          {editor && (
+            <RemoteEditor
+              document={editor.document}
+              active={filesReady && editor.epoch === connectionEpoch.current}
+              close={() => {
+                setEditor(undefined);
+                if (filesReady && listingPath.current) void run(() => browse(listingPath.current!));
               }}
             />
           )}

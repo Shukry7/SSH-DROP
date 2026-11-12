@@ -161,6 +161,11 @@ export interface DesktopAPI {
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  openEditor(input: {
+    directory: string;
+    name: string;
+  }): Promise<Result<import('./editor').EditorDocument>>;
+  saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
   recovery(): Promise<Result<RecoveryView[]>>;
   recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;
