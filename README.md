@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.3.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.3.0-alpha.4, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.3.0-alpha.4`** adds read-only remote image previews for PNG, JPEG, WebP, and GIF (first frame only). Select **Preview image** in the explorer. Use fit, actual size, and zoom; closing, disconnecting, or idle protection removes the preview. Sources are limited to 10 MiB, 8,388,608 pixels and 8,192 pixels per side. See [image preview](docs/IMAGE_PREVIEW.md).
 
 **Development source `0.3.0-alpha.3`** adds editor line numbers and syntax highlighting for JavaScript, TypeScript, JSON, YAML, Python, and shell scripts. The filename selects the initial mode; **Highlighting** lets you change it or choose Plain text. This changes display only and never executes file contents.
 

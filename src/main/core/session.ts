@@ -26,6 +26,7 @@ import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
 import { readDroppedFileFingerprint } from './dropped-files';
 import { RemoteEditor } from './remote-editor';
+import { readImagePreview } from './image-preview';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
@@ -42,6 +43,7 @@ export class Session {
   private outputBytes = 0;
   private outputId = 0;
   private fileAction?: AbortController;
+  private imageRequest?: { id: string; controller: AbortController };
   private identity?: ServerIdentity;
   private recoveryBusy = false;
   private workflow?: { id: string; controller: AbortController };
@@ -330,6 +332,51 @@ export class Session {
   async list(path: string): Promise<DirectoryListing> {
     const sftp = this.files();
     return readDirectory(sftp, path, () => this.sftp === sftp);
+  }
+  cancelImage(requestId: string): void {
+    if (this.imageRequest?.id === requestId)
+      this.imageRequest.controller.abort(new Error('Image preview cancelled.'));
+  }
+  async previewImage(path: string, requestId: string) {
+    if (
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error('Finish the active operation before previewing an image.');
+    remotePath(path);
+    const sftp = this.files();
+    const controller = new AbortController();
+    this.fileAction = controller;
+    this.imageRequest = { id: requestId, controller };
+    const timer = setTimeout(
+      () =>
+        controller.abort(new Error('Image preview timed out. Try again on a stable connection.')),
+      60000,
+    );
+    try {
+      return await readImagePreview(path, {
+        sftp,
+        signal: controller.signal,
+        current: () => this.sftp === sftp,
+        invalidate: () => {
+          if (this.sftp !== sftp) return;
+          this.disconnect();
+          this.emit({
+            type: 'status',
+            connected: false,
+            lost: true,
+            message: 'Image preview interrupted. Reconnect to try again.',
+          });
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+      if (this.fileAction === controller) this.fileAction = undefined;
+      if (this.imageRequest?.controller === controller) this.imageRequest = undefined;
+    }
   }
   async editText(input: { path: string }): Promise<EditorDocument>;
   async editText(input: { token: string; text: string }): Promise<boolean>;

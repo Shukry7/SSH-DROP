@@ -52,6 +52,7 @@ import {
   acceptEditorReviewSchema,
 } from '../shared/editor';
 import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
+import { openImageSchema, imageRequestSchema } from '../shared/image-preview';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
 import { IdleSettingsStore } from './core/idle-settings';
@@ -701,6 +702,11 @@ function registerAPI(): void {
     const { directory, name } = openEditorSchema.parse(value);
     return session!.editText({ path: childPath(directory, name) });
   });
+  handle(channels.openImage, (value) => {
+    const { directory, name, requestId } = openImageSchema.parse(value);
+    return session!.previewImage(childPath(directory, name), requestId);
+  });
+  handle(channels.cancelImage, (value) => session!.cancelImage(imageRequestSchema.parse(value)));
   handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
   handle(channels.compareEditor, (value) =>
     session!.editText({ token: editorTokenSchema.parse(value), compare: true }),

@@ -2,6 +2,17 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.4] — Unreleased
+
+### Added
+
+- Read-only PNG/JPEG/WebP/GIF image previews with dimensions, file size, zoom, fit and actual-size controls. Animated images show a still first frame.
+- Bounded SFTP reads and image decoding, validated request IDs, cancellation, metadata-stripped PNG display copies, and cleanup on close, disconnect and idle clearing. SVG and unsupported or oversized files are refused.
+
+### Limits
+
+- Preview sources are limited to 10 MiB, 8,388,608 pixels and 8,192 pixels per side. Images remain in memory; no local preview files are created. Native decoder packages require Linux/macOS packaging and device validation. Editor tabs remain planned.
+
 ## [0.3.0-alpha.3] — Unreleased
 
 ### Added

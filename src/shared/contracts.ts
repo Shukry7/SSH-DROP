@@ -161,6 +161,12 @@ export interface DesktopAPI {
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  openImage(input: {
+    directory: string;
+    name: string;
+    requestId: string;
+  }): Promise<Result<import('./image-preview').ImagePreview>>;
+  cancelImage(requestId: string): Promise<Result<void>>;
   openEditor(input: {
     directory: string;
     name: string;

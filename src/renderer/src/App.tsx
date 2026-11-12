@@ -16,6 +16,7 @@ import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
 import { RemoteEditor } from './RemoteEditor';
+import { ImagePreview } from './ImagePreview';
 import type { EditorDocument } from '../../shared/editor';
 
 function unwrap<T>(result: Result<T>): T {
@@ -67,11 +68,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [editor, setEditor] = useState<{ document: EditorDocument; epoch: number }>();
+  const [image, setImage] = useState<{ directory: string; name: string }>();
   const [dropActive, setDropActive] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const filesReady = connected && sftpOpen;
   const dropDirectory =
-    filesReady && !loading && !actionBusy && !actionInput && !editor ? listing?.path : undefined;
+    filesReady && !loading && !actionBusy && !actionInput && !editor && !image
+      ? listing?.path
+      : undefined;
   const fileBusy =
     actionBusy ||
     loading ||
@@ -100,6 +104,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
         setSftpOpen(event.connected && event.sftp !== false);
         setMessage(event.message);
         if (!event.connected) {
+          setImage(undefined);
           connectionEpoch.current++;
           setError('');
           setActionBusy(false);
@@ -111,6 +116,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       }
       if (event.type === 'terminal-exit') setTerminalOpen(false);
       if (event.type === 'sftp-exit') {
+        setImage(undefined);
         setSftpOpen(false);
         setActionInput(undefined);
         clearListing();
@@ -796,6 +802,24 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                           )}
                           {(entry.kind === 'file' || entry.kind === 'directory') && (
                             <>
+                              {entry.kind === 'file' &&
+                                /\.(png|jpe?g|webp|gif)$/i.test(entry.name) && (
+                                  <button
+                                    className="text-button"
+                                    disabled={
+                                      !filesReady ||
+                                      fileBusy ||
+                                      !!editor ||
+                                      !!image ||
+                                      entry.size > 10485760
+                                    }
+                                    onClick={() =>
+                                      setImage({ directory: listing.path, name: entry.name })
+                                    }
+                                  >
+                                    Preview image
+                                  </button>
+                                )}
                               {entry.kind === 'file' && (
                                 <button
                                   className="text-button"
@@ -926,6 +950,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 setActionInput(undefined);
                 setError('');
               }}
+            />
+          )}
+          {image && (
+            <ImagePreview
+              directory={image.directory}
+              name={image.name}
+              close={() => setImage(undefined)}
             />
           )}
           {editor && (

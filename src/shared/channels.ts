@@ -27,6 +27,8 @@ export const channels = {
   list: 'sftp:list',
   fileAction: 'sftp:file-action',
   openEditor: 'editor:open',
+  openImage: 'image:open',
+  cancelImage: 'image:cancel',
   saveEditor: 'editor:save',
   compareEditor: 'editor:compare',
   acceptEditorReview: 'editor:accept-review',

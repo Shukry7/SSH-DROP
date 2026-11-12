@@ -190,3 +190,10 @@ Cancel a new connection during host verification and retry. A stale approval mus
 - Switch modes and Plain text while dirty. Confirm the draft and unsaved status persist. Use undo/redo, Ctrl/Cmd+F, next/previous matches and Ctrl/Cmd+S. Search should select and scroll to the matching text.
 - Check long lines and many lines at narrow window widths and when comparing with the server. Both editors must stay inside the dialog with usable scrollbars. The server comparison remains read-only.
 - Repeat conflict review, save cancellation, network loss, close/quit draft protection and idle clearing with the new surface. Check non-ASCII text, CRLF and BOM preservation. Oversized draft input is refused; oversized UTF-8 saves must not replace the remote file.
+
+## Image preview (0.3.0-alpha.4 development source)
+
+- Preview PNG/JPEG/WebP/GIF fixtures. Check dimensions and format, fit, actual size, zoom bounds, transparency and scrolling in a narrow window. Animated images must show a still first frame, never play continuously. EXIF orientation should display correctly.
+- Cancel while loading over a slow connection, then close/reopen. Drop SSH and close SFTP while an image is displayed. Pixels and paths must disappear; late results must not reopen a preview. Test idle expiry and OS lock/sleep clearing as well.
+- Verify that SVG, HTML renamed as PNG, truncated files, symlinks, aliases, special files, sources over 10 MiB and compressed images above the pixel/side limits fail safely. Changing a file during read must not produce a mixed preview.
+- Verify original remote bytes and permissions stay unchanged and no recovery/temporary preview files appear locally or remotely. Run the packaged build on each platform: native image decoder packaging is an additional requirement, and Windows validation does not certify Linux/macOS.
