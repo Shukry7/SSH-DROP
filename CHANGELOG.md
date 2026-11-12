@@ -9,6 +9,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Opt-in idle session protection with Off/5/10/15/30/60-minute settings, a top-bar timer and a final-minute modal countdown with Stay active and End session now. Optional generic background notifications never steal focus.
 - Main-owned timing and API enforcement, connection/approval invalidation, native-dialog cancellation and renderer replacement at expiry. Return opens a blank connection form; it never restores the old session or replays commands.
 - Persisted validated settings, conservative handling of corrupt data, and regressions for warning boundaries, clocks, sleep/lock events, pending approvals/pickers and workflow interruption.
+- Export individual encrypted recovery backups up to 32 MiB as passphrase-protected portable files. Open them offline into new local copies without the original OS key store. Wrong passphrases and damaged exports produce no destination file; existing files are never overwritten.
 
 ### Limits
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RecoveryAction, RecoveryView } from '../../shared/contracts';
+import { portableBackupLimit } from '../../shared/portable-backup';
+import { PortableBackup } from './PortableBackup';
 
 export function Recovery({
   connected,
@@ -78,6 +80,9 @@ export function Recovery({
             </small>
           </div>
           <div className="recovery-actions">
+            {record.encrypted && record.size <= portableBackupLimit && (
+              <PortableBackup id={record.id} disabled={busy} />
+            )}
             <button
               className="text-button"
               disabled={busy}

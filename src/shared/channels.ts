@@ -1,4 +1,6 @@
 export const channels = {
+  exportBackup: 'recovery:export-portable',
+  openBackup: 'recovery:open-portable',
   idleActivity: 'idle:activity',
   idleStatus: 'idle:status',
   idleSettings: 'idle:settings',

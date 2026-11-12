@@ -48,6 +48,9 @@ import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/
 import { IdleProtection } from './core/idle-protection';
 import { IdleSettingsStore } from './core/idle-settings';
 import { idleSettingsSchema, type IdleState } from '../shared/idle';
+import { portableBackupLimit } from '../shared/portable-backup';
+import { portableExportRequest, portablePassphrase } from '../shared/validation';
+import { openPortable, sealPortable, writePortableCopy } from './core/portable-backup';
 
 let window: BrowserWindow | undefined;
 let session: Session | undefined;
@@ -487,6 +490,110 @@ function registerAPI(): void {
     return session!.recovery();
   });
   handle(channels.recover, (value) => session!.recover(recoveryActionSchema.parse(value)));
+  // Keep the memory-hard KDF serialized even if the renderer is replaced mid-operation.
+  let portableBusy = false;
+  const portableOperation = async <T>(operation: (check: () => void) => Promise<T>) => {
+    if (portableBusy) throw new Error('Wait for the other portable backup operation to finish.');
+    portableBusy = true;
+    const deadline = performance.now() + 120000;
+    try {
+      return await operation(() => {
+        checkOperation();
+        if (performance.now() > deadline) throw new Error('Portable backup operation timed out.');
+      });
+    } finally {
+      portableBusy = false;
+    }
+  };
+  handle(channels.exportBackup, async (value) => {
+    const { id, passphrase } = portableExportRequest.parse(value);
+    const owner = window;
+    return session!.withBackupExport(id, async (record, store, connection) => {
+      if (record.previous.size > portableBackupLimit)
+        throw new Error('Portable export supports backups up to 32 MiB.');
+      return selectFiles(async () => {
+        const result = await saveDialog({
+          title: 'Save encrypted portable backup',
+          defaultPath: 'backup.sshdrop-backup',
+          filters: [{ name: 'SSHDrop portable backup', extensions: ['sshdrop-backup'] }],
+        });
+        connection();
+        if (result.canceled || !result.filePath) return false;
+        const destination = result.filePath;
+        if (!destination.toLowerCase().endsWith('.sshdrop-backup'))
+          throw new Error('Use the .sshdrop-backup extension.');
+        const approval = await messageBox({
+          type: 'warning',
+          title: 'Export encrypted backup',
+          message: 'Create a password-protected backup file?',
+          detail: `Destination: ${destination}\n\nKeep the passphrase separately. It is required on any device and cannot be recovered. The original backup stays in SSHDrop. Existing files are never replaced.`,
+          buttons: ['Cancel', 'Export backup'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        connection();
+        if (approval.response !== 1) return false;
+        return portableOperation(async (guard) => {
+          const check = () => {
+            guard();
+            connection();
+            if (window !== owner) throw new Error('The workspace changed. Export again.');
+          };
+          const bytes = await sealPortable(
+            store.contents(record, check),
+            record.previous,
+            passphrase,
+            check,
+          );
+          await writePortableCopy(destination, bytes, app.getPath('userData'), check);
+          return true;
+        });
+      });
+    });
+  });
+  handle(channels.openBackup, (value) => {
+    const passphrase = portablePassphrase.parse(value);
+    const owner = window;
+    return selectFiles(async () => {
+      const source = await openDialog({
+        title: 'Open encrypted portable backup',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop portable backup', extensions: ['sshdrop-backup'] }],
+      });
+      if (source.canceled || source.filePaths.length !== 1) return false;
+      const result = await saveDialog({
+        title: 'Choose a new file for the restored copy',
+        defaultPath: 'restored-copy',
+      });
+      if (result.canceled || !result.filePath) return false;
+      const destination = result.filePath;
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Restore an unencrypted copy',
+        message: 'Write a new local copy of this backup?',
+        detail: `Destination: ${destination}\n\nThe restored file is not encrypted. Choose a private folder. No server files or recovery records will change, and existing files are never replaced.`,
+        buttons: ['Cancel', 'Restore copy'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      return portableOperation(async (guard) => {
+        const check = () => {
+          guard();
+          if (window !== owner) throw new Error('The workspace changed. Open the backup again.');
+        };
+        const bytes = await openPortable(source.filePaths[0], passphrase, check);
+        try {
+          await writePortableCopy(destination, bytes, app.getPath('userData'), check);
+        } finally {
+          bytes.fill(0);
+        }
+        return true;
+      });
+    });
+  });
   handle(channels.fileAction, (value) =>
     session!.changeFile(fileActionSchema.parse(value), async (warning) => {
       const result = await messageBox({

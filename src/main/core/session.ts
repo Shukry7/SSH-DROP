@@ -16,7 +16,7 @@ import { changeRemoteFile, type FileActionWarning } from './file-actions';
 import { runTransfer, transferLimits, transferWarning } from './transfer';
 import { Replacements, recoveryView, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
-import { type RecoveryStore, type ServerIdentity } from './recovery-store';
+import { type RecoveryRecord, type RecoveryStore, type ServerIdentity } from './recovery-store';
 import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
 import { runWorkflow } from './workflow-runner';
@@ -353,6 +353,35 @@ export class Session {
   async recover(action: RecoveryAction): Promise<void> {
     if (!this.recoveryOptions) throw new Error('Recovery is unavailable.');
     await this.transfer('upload', 'Recovery', '/', action);
+  }
+
+  async withBackupExport<T>(
+    id: string,
+    operation: (record: RecoveryRecord, store: RecoveryStore, check: () => void) => Promise<T>,
+  ): Promise<T> {
+    const store = this.recoveryOptions?.store;
+    if (!store || !this.identity)
+      throw new Error('Connect to the verified server to export its backups.');
+    if (
+      this.recoveryBusy ||
+      this.transfers.size ||
+      this.fileAction ||
+      this.workflow ||
+      (this.queue.size && !this.queue.isPaused)
+    )
+      throw new Error(
+        'Finish active transfers, workflows or recovery operations before exporting.',
+      );
+    const check = this.lease();
+    this.recoveryBusy = true;
+    try {
+      const record = await store.load(id, this.identity);
+      check();
+      if (!record.encrypted) throw new Error('Secure this legacy backup before exporting.');
+      return await operation(record, store, check);
+    } finally {
+      this.recoveryBusy = false;
+    }
   }
 
   async transfer(
