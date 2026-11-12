@@ -152,6 +152,86 @@ describe('bounded remote UTF-8 editor', () => {
     expect(approvals).toHaveLength(0);
     expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
   });
+  it('compares without changing the save baseline and adopts reviewed changes only after confirmation', async () => {
+    const document = await open();
+    fixture.files.set('/hello.txt', Buffer.from('reviewed server update'));
+    const comparison = await session.editText({ token: document.token, compare: true });
+    expect(comparison).toMatchObject({
+      text: 'reviewed server update',
+      changed: true,
+      lineEndings: 'LF',
+    });
+    await expect(session.editText({ token: document.token, text: 'draft' })).rejects.toThrow(
+      'remote file changed',
+    );
+    choice = 0;
+    expect(
+      await session.editText({
+        token: document.token,
+        reviewToken: comparison.reviewToken,
+        keepDraft: true,
+      }),
+    ).toBeNull();
+    await expect(session.editText({ token: document.token, text: 'draft' })).rejects.toThrow(
+      'remote file changed',
+    );
+    choice = 1;
+    const next = await session.editText({
+      token: document.token,
+      reviewToken: comparison.reviewToken,
+      keepDraft: true,
+    });
+    expect(next?.text).toBe('reviewed server update');
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('reviewed server update');
+    await expect(session.editText({ token: document.token, text: 'old token' })).rejects.toThrow(
+      'old session',
+    );
+    await session.editText({ token: next!.token, text: 'manually merged draft' });
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('manually merged draft');
+    const [record] = await session.recovery();
+    expect(await backupText(testVault(join(directory, 'backups')), record.id)).toBe(
+      'reviewed server update',
+    );
+  });
+  it('rejects a stale comparison after another external change during approval', async () => {
+    const document = await open();
+    const first = await session.editText({ token: document.token, compare: true });
+    const second = await session.editText({ token: document.token, compare: true });
+    await expect(
+      session.editText({ token: document.token, reviewToken: first.reviewToken, keepDraft: false }),
+    ).rejects.toThrow('no longer current');
+    duringApproval = () => fixture.files.set('/hello.txt', Buffer.from('changed during review'));
+    await expect(
+      session.editText({
+        token: document.token,
+        reviewToken: second.reviewToken,
+        keepDraft: false,
+      }),
+    ).rejects.toThrow('server changed again');
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('changed during review');
+    await expect(session.editText({ token: document.token, text: 'draft' })).rejects.toThrow(
+      'remote file changed',
+    );
+  });
+  it('adopts the reviewed encoding for future saves and invalidates review tokens after reconnect', async () => {
+    const document = await open();
+    fixture.files.set('/hello.txt', Buffer.from('\ufeffreviewed\r\n'));
+    const comparison = await session.editText({ token: document.token, compare: true });
+    expect(comparison).toMatchObject({ lineEndings: 'CRLF', bom: true, text: 'reviewed\n' });
+    const next = await session.editText({
+      token: document.token,
+      reviewToken: comparison.reviewToken,
+      keepDraft: false,
+    });
+    await session.editText({ token: next!.token, text: 'edited\n' });
+    expect(fixture.files.get('/hello.txt')).toEqual(Buffer.from('\ufeffedited\r\n'));
+    const stale = await session.editText({ token: next!.token, compare: true });
+    session.disconnect();
+    await connect();
+    await expect(
+      session.editText({ token: next!.token, reviewToken: stale.reviewToken, keepDraft: true }),
+    ).rejects.toThrow('old session');
+  });
   it('saves at the byte limit and refuses an expanded multibyte draft above it', async () => {
     const document = await open();
     const bytes = 'a'.repeat(1024 * 1024);

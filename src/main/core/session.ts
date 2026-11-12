@@ -26,6 +26,7 @@ import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
 import { readDroppedFileFingerprint } from './dropped-files';
 import { RemoteEditor } from './remote-editor';
+import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
@@ -330,7 +331,21 @@ export class Session {
     const sftp = this.files();
     return readDirectory(sftp, path, () => this.sftp === sftp);
   }
-  async editText(input: { path: string } | { token: string; text: string }) {
+  async editText(input: { path: string }): Promise<EditorDocument>;
+  async editText(input: { token: string; text: string }): Promise<boolean>;
+  async editText(input: { token: string; compare: true }): Promise<EditorComparison>;
+  async editText(input: {
+    token: string;
+    reviewToken: string;
+    keepDraft: boolean;
+  }): Promise<EditorDocument | null>;
+  async editText(
+    input:
+      | { path: string }
+      | { token: string; text: string }
+      | { token: string; compare: true }
+      | { token: string; reviewToken: string; keepDraft: boolean },
+  ) {
     if (
       this.workflow ||
       this.fileAction ||
@@ -363,8 +378,18 @@ export class Session {
         { sftp, signal: controller.signal, current, invalidate },
         async (io, guard) => {
           if ('path' in input) return this.editor.open(input.path, io, guard);
+          if ('compare' in input) return this.editor.compare(input.token, io, guard);
           if (!this.recoveryOptions || !this.identity)
             throw new Error('Editor saving is unavailable.');
+          if ('reviewToken' in input)
+            return this.editor.accept(
+              input.token,
+              input.reviewToken,
+              input.keepDraft,
+              io,
+              guard,
+              this.recoveryOptions.confirm,
+            );
           return this.editor.save(input.token, input.text, io, guard, {
             ...this.recoveryOptions,
             identity: this.identity,

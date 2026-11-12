@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import type { EditorDocument } from '../../shared/editor';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { EditorDocument, EditorComparison } from '../../shared/editor';
+import { findEditorMatches } from '../../shared/editor-search';
 
 export function RemoteEditor({
   document,
@@ -11,11 +12,18 @@ export function RemoteEditor({
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const draft = useRef<HTMLTextAreaElement>(null);
+  const findInput = useRef<HTMLInputElement>(null);
+  const [token, setToken] = useState(document.token);
   const [text, setText] = useState(document.text);
   const [saved, setSaved] = useState(document.text);
   const [busy, setBusy] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [error, setError] = useState('');
+  const [comparison, setComparison] = useState<EditorComparison>();
+  const [query, setQuery] = useState('');
+  const [matchIndex, setMatchIndex] = useState(-1);
+  const matches = useMemo(() => findEditorMatches(text, query), [text, query]);
   const dirty = text !== saved;
   useEffect(() => {
     dialog.current?.showModal();
@@ -39,14 +47,79 @@ export function RemoteEditor({
     setBusy(true);
     setError('');
     try {
-      const result = await window.sshdrop.saveEditor({ token: document.token, text });
+      const result = await window.sshdrop.saveEditor({ token, text });
       if (!result.ok) throw new Error(result.error);
-      if (result.value) setSaved(text);
+      if (result.value) {
+        setSaved(text);
+        setComparison(undefined);
+      }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'The draft could not be saved.');
     } finally {
       setBusy(false);
     }
+  };
+  const compare = async () => {
+    if (busy || !active) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.sshdrop.compareEditor(token);
+      if (!result.ok) throw new Error(result.error);
+      setComparison(result.value);
+    } catch (failure) {
+      setError(
+        failure instanceof Error ? failure.message : 'The server version could not be read.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const accept = async (keepDraft: boolean) => {
+    if (!comparison || busy || !active) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.sshdrop.acceptEditorReview({
+        token,
+        reviewToken: comparison.reviewToken,
+        keepDraft,
+      });
+      if (!result.ok) throw new Error(result.error);
+      if (result.value) {
+        setToken(result.value.token);
+        setSaved(result.value.text);
+        if (!keepDraft) {
+          setText(result.value.text);
+          setMatchIndex(-1);
+        }
+        setComparison(undefined);
+      }
+    } catch (failure) {
+      setError(
+        failure instanceof Error ? failure.message : 'The comparison could not be accepted.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const find = (direction: 1 | -1) => {
+    const textarea = draft.current;
+    if (!textarea || !matches.length) return;
+    const index =
+      matchIndex < 0
+        ? direction === 1
+          ? 0
+          : matches.length - 1
+        : (matchIndex + direction + matches.length) % matches.length;
+    setMatchIndex(index);
+    const start = matches[index];
+    textarea.focus();
+    textarea.setSelectionRange(start, start + query.length);
+    const line = text.slice(0, start).split('\n').length - 1;
+    textarea.scrollTop =
+      line * Number.parseFloat(window.getComputedStyle(textarea).lineHeight) -
+      textarea.clientHeight / 2;
   };
   return (
     <dialog
@@ -58,6 +131,11 @@ export function RemoteEditor({
         requestClose();
       }}
       onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+          event.preventDefault();
+          findInput.current?.focus();
+          return;
+        }
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
           void save();
@@ -82,18 +160,111 @@ export function RemoteEditor({
           {error}
         </p>
       )}
-      <label>
-        File contents
-        <textarea
-          autoFocus
-          aria-label="Remote file contents"
-          value={text}
-          disabled={busy}
-          spellCheck={false}
-          maxLength={1048576}
-          onChange={(event) => setText(event.target.value)}
-        />
-      </label>
+      <div className="editor-search toolbar">
+        <label>
+          Find in draft
+          <input
+            ref={findInput}
+            type="search"
+            maxLength={200}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setMatchIndex(-1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                find(event.shiftKey ? -1 : 1);
+              }
+            }}
+          />
+        </label>
+        <button
+          className="secondary compact"
+          disabled={!matches.length || busy}
+          onClick={() => find(-1)}
+        >
+          Previous match
+        </button>
+        <button
+          className="secondary compact"
+          disabled={!matches.length || busy}
+          onClick={() => find(1)}
+        >
+          Next match
+        </button>
+        <span aria-live="polite">
+          {query
+            ? !matches.length
+              ? 'No matches'
+              : `${matchIndex < 0 ? '' : `${matchIndex + 1} of `}${matches.length}${matches.length === 1000 ? ' (first 1000)' : ''} matches`
+            : 'Case-sensitive literal search'}
+        </span>
+      </div>
+      {comparison && (
+        <p>
+          {comparison.changed
+            ? 'The server file has changed.'
+            : 'The server file matches the version used for save checks.'}{' '}
+          Review both versions, then choose how to continue.
+        </p>
+      )}
+      <div className={comparison ? 'editor-comparison' : undefined}>
+        <label>
+          File contents
+          <textarea
+            ref={draft}
+            autoFocus
+            aria-label="Remote file contents"
+            value={text}
+            disabled={busy}
+            spellCheck={false}
+            wrap="off"
+            maxLength={1048576}
+            onChange={(event) => {
+              setText(event.target.value);
+              setMatchIndex(-1);
+            }}
+          />
+        </label>
+        {comparison && (
+          <label>
+            Reviewed server version
+            <textarea
+              aria-label="Reviewed server version"
+              readOnly
+              spellCheck={false}
+              wrap="off"
+              value={comparison.text}
+            />
+            <span>
+              {comparison.lineEndings} line endings{comparison.bom ? ' · UTF-8 BOM' : ''}
+            </span>
+          </label>
+        )}
+      </div>
+      {comparison && (
+        <div className="toolbar">
+          <button
+            className="secondary"
+            disabled={busy || !active}
+            onClick={() => void accept(true)}
+          >
+            Keep my draft
+          </button>
+          <button
+            className="secondary"
+            disabled={busy || !active}
+            onClick={() => void accept(false)}
+          >
+            Use server text
+          </button>
+          <button className="secondary" disabled={busy} onClick={() => setComparison(undefined)}>
+            Close comparison
+          </button>
+        </div>
+      )}
       <p role="status">
         {busy
           ? 'Waiting for save confirmation or verification…'
@@ -113,6 +284,9 @@ export function RemoteEditor({
         </div>
       ) : (
         <div className="toolbar">
+          <button className="secondary" disabled={busy || !active} onClick={() => void compare()}>
+            {comparison ? 'Refresh comparison' : 'Compare with server'}
+          </button>
           <button
             className="primary"
             disabled={busy || !dirty || !active}
