@@ -21,6 +21,7 @@ import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
 import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
+import { TransferFailure, transferWait } from './transfer-wait';
 
 export class Session {
   private client?: Client;
@@ -28,6 +29,7 @@ export class Session {
   private shell?: ClientChannel;
   private transfers = new Map<string, AbortController>();
   private connecting = false;
+  private setup?: AbortController;
   private pendingOutput = new Map<number, number>();
   private outputBytes = 0;
   private outputId = 0;
@@ -50,64 +52,80 @@ export class Session {
       store: RecoveryStore;
       confirm: (approval: ReplacementApproval) => Promise<number>;
     },
+    private readonly setupTimeout = 30000,
   ) {}
 
-  async connect(config: ConnectConfig): Promise<void> {
+  async connect(config: ConnectConfig, signal?: AbortSignal): Promise<{ sftp: boolean }> {
     if (this.client || this.connecting)
       throw new Error('Disconnect the current session before connecting again.');
+    signal?.throwIfAborted();
     this.connecting = true;
+    const setup = new AbortController();
+    this.setup = setup;
+    const cancel = () => setup.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
     this.emit({ type: 'terminal-reset' });
     const client = new Client();
     this.client = client;
     let trustError: Error | undefined;
     let fingerprint = '';
+    client.on('error', () => {
+      /* The setup promise or transport close reports the failure. */
+    });
+    client.on('close', () => {
+      if (this.client !== client) return;
+      if (this.setup === setup) {
+        setup.abort(trustError ?? new Error('Connection closed during setup.'));
+        return;
+      }
+      this.disconnect();
+      this.emit({
+        type: 'status',
+        connected: false,
+        lost: true,
+        message: 'Connection lost. Reconnect to start a new session; nothing will be replayed.',
+      });
+    });
     try {
-      await new Promise<void>((resolve, reject) => {
-        client.once('ready', resolve);
-        client.once('error', (error) => reject(trustError ?? error));
-        client.once('close', () => reject(trustError ?? new Error('Connection closed.')));
-        client.connect({
-          ...config,
-          readyTimeout: 30000,
-          keepaliveInterval: 15000,
-          keepaliveCountMax: 3,
-          hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
-            void this.trust.verify(config.host!, config.port ?? 22, key).then(
-              (accepted) => {
-                if (accepted) fingerprint = createHash('sha256').update(key).digest('hex');
-                callback(accepted);
-              },
-              (error: Error) => {
-                trustError = error;
-                callback(false);
-              },
-            );
-          },
-        });
-      });
-      client.on('error', () => {
-        /* The close event reports the disconnected state. */
-      });
-      client.on('close', () => {
-        if (this.client === client) {
-          this.disconnect();
-          this.emit({
-            type: 'status',
-            connected: false,
-            message: 'Connection closed. Connect again to start a new shell.',
+      await transferWait<void>(
+        (done) => {
+          client.once('ready', () => done());
+          client.once('error', (error) => done(trustError ?? error));
+          client.connect({
+            ...config,
+            readyTimeout: this.setupTimeout,
+            keepaliveInterval: 15000,
+            keepaliveCountMax: 3,
+            hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
+              void this.trust.verify(config.host!, config.port ?? 22, key, setup.signal).then(
+                (accepted) => {
+                  if (setup.signal.aborted) return;
+                  if (accepted) fingerprint = createHash('sha256').update(key).digest('hex');
+                  callback(accepted);
+                },
+                (error: Error) => {
+                  if (setup.signal.aborted) return;
+                  trustError = error;
+                  callback(false);
+                },
+              );
+            },
           });
-        }
-      });
-      const shell = await new Promise<ClientChannel>((resolve, reject) =>
-        client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, (error, stream) =>
-          error ? reject(error) : resolve(stream),
-        ),
+        },
+        this.setupTimeout,
+        setup.signal,
       );
-      this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
-      if (this.client !== client) {
+      const shell = await transferWait<ClientChannel>(
+        (done) => client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, done),
+        this.setupTimeout,
+        setup.signal,
+        (late) => late.close(),
+      );
+      if (setup.signal.aborted || this.client !== client) {
         shell.close();
         throw new Error('Connection was cancelled.');
       }
+      this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
       this.shell = shell;
       const decoder = new StringDecoder('utf8');
       shell.on('data', (data: Buffer) => {
@@ -124,10 +142,13 @@ export class Session {
         this.emit({ type: 'terminal-exit' });
       });
       try {
-        const sftp = await new Promise<SFTPWrapper>((resolve, reject) =>
-          client.sftp((error, sftp) => (error ? reject(error) : resolve(sftp))),
+        const sftp = await transferWait<SFTPWrapper>(
+          (done) => client.sftp(done),
+          this.setupTimeout,
+          setup.signal,
+          (late) => late.end(),
         );
-        if (this.client !== client) {
+        if (setup.signal.aborted || this.client !== client) {
           sftp.end();
           throw new Error('Connection was cancelled.');
         }
@@ -138,31 +159,49 @@ export class Session {
           username: config.username!,
           fingerprint,
         };
-        sftp.on('error', () => {
-          if (this.sftp === sftp) this.sftp = undefined;
-        });
-        this.emit({
-          type: 'status',
-          connected: true,
-          message: 'Connected. Terminal and SFTP ready.',
-        });
+        const filesClosed = () => {
+          if (this.sftp !== sftp) return;
+          this.sftp = undefined;
+          this.identity = undefined;
+          this.emit({ type: 'sftp-exit' });
+        };
+        sftp.on('error', filesClosed);
+        sftp.on('close', filesClosed);
       } catch {
+        setup.signal.throwIfAborted();
         if (this.client !== client) throw new Error('Connection was cancelled.');
-        this.emit({
-          type: 'status',
-          connected: true,
-          message: 'Terminal connected. SFTP is unavailable on this server.',
-        });
       }
+      const terminal = !!this.shell;
+      const sftp = !!this.sftp;
+      this.emit({
+        type: 'status',
+        connected: true,
+        terminal,
+        sftp,
+        message: terminal
+          ? sftp
+            ? 'Connected. Terminal and SFTP ready.'
+            : 'Terminal connected. SFTP is unavailable on this server.'
+          : 'SSH connected, but the terminal shell closed.',
+      });
+      return { sftp };
     } catch (error) {
-      this.disconnect();
+      if (this.client === client) this.disconnect();
+      client.destroy();
+      if (error instanceof TransferFailure)
+        throw new Error('SSH connection setup timed out. Check the server and try again.', {
+          cause: error,
+        });
       throw error;
     } finally {
+      signal?.removeEventListener('abort', cancel);
+      this.setup = undefined;
       this.connecting = false;
     }
   }
 
   disconnect(): void {
+    this.setup?.abort(new Error('Connection was cancelled.'));
     if (this.workflow)
       this.emit({
         type: 'workflow-warning',
@@ -298,6 +337,7 @@ export class Session {
           this.emit({
             type: 'status',
             connected: false,
+            lost: true,
             message:
               'File operation interrupted. Reconnect and inspect the folder before retrying.',
           });
@@ -429,6 +469,7 @@ export class Session {
       this.emit({
         type: 'status',
         connected: false,
+        lost: true,
         message:
           'Transfer interrupted. Reconnect and inspect recovery and the selected folders before retrying.',
       });
@@ -523,6 +564,7 @@ export class Session {
           this.emit({
             type: 'status',
             connected: false,
+            lost: true,
             message:
               'Transfer interrupted. Reconnect and inspect the selected folders before retrying.',
           });

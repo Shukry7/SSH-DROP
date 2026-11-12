@@ -42,6 +42,7 @@ export async function sshFixture(
   const openedFiles: string[] = [];
   let lastSize = { rows: 0, cols: 0 };
   let lastShell: ServerChannel | undefined;
+  let shellRequests = 0;
   let nextDirectoryResponse: Promise<void> | undefined;
   let afterRename: ((path: string) => void) | undefined;
   const server = new Server({ hostKeys: [options.key ?? fixtureHostKey] }, (client) => {
@@ -74,6 +75,8 @@ export async function sshFixture(
           acceptChange?.();
         });
         session.on('shell', (acceptShell) => {
+          shellRequests++;
+          if (options.stall?.includes('SHELL')) return;
           const stream = acceptShell();
           lastShell = stream;
           stream.write('fixture-ready\r\n');
@@ -91,6 +94,7 @@ export async function sshFixture(
           }
         });
         session.on('sftp', (acceptSftp, reject) => {
+          if (options.stall?.includes('SFTP')) return;
           if (options.noSftp) return reject();
           const sftp = acceptSftp();
           if (options.atomicReplace) {
@@ -314,6 +318,7 @@ export async function sshFixture(
     symlinks,
     openedFiles,
     getSize: () => lastSize,
+    shellRequests: () => shellRequests,
     holdNextDirectoryResponse: () => {
       let release!: () => void;
       nextDirectoryResponse = new Promise<void>((resolve) => {

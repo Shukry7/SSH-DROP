@@ -157,3 +157,7 @@ In a disposable session, confirm the default is Off. Enable 10 minutes through t
 ## Portable backup recovery
 
 Create a small encrypted recovery backup from disposable data, then export it from the matching connected server. Cancel the native warning first; retry and verify the original backup is unchanged. Disconnect and open the export with a wrong passphrase and with altered bytes; no output file should appear. Open the original with the right passphrase into a new filename and compare its bytes. Attempt to restore onto an existing file; it must remain unchanged. Repeat with the OS key store unavailable. Test an idle timeout while a native picker is pending; the old selection must not apply after returning. See PORTABLE_BACKUPS.md for format and limitations.
+
+## Reconnect and cancel setup
+
+Cancel a new connection during host verification and retry. A stale approval must not establish a session or write a trust record. Use a disposable connection and interrupt it mid-transfer: the app should show Connection lost, retain a generic warning, clear passwords and old output, and wait for an explicit reconnect. Verify the last nonsecret fields are available, a changed key is refused, and interrupted operations are not replayed. Close only the remote shell and confirm SFTP can still browse; test a server without SFTP and confirm the shell remains usable. See RECONNECT.md.

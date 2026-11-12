@@ -69,6 +69,7 @@ const protectionControls = new Set<string>([
   channels.idleReturn,
   channels.info,
   channels.disconnect,
+  channels.cancelConnect,
   channels.acknowledge,
   channels.cancel,
   channels.stopWorkflow,
@@ -82,7 +83,11 @@ async function messageBox(options: MessageBoxOptions) {
   const controller = new AbortController();
   nativeWarnings.add(controller);
   try {
-    const result = await dialog.showMessageBox(window!, { ...options, signal: controller.signal });
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
+    const result = await dialog.showMessageBox(window!, { ...options, signal });
+    signal.throwIfAborted();
     checkOperation();
     return result;
   } finally {
@@ -242,12 +247,15 @@ function registerAPI(): void {
     | undefined;
   let confirmingWorkflow: string | undefined;
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingConnection: AbortController | undefined;
   const discardPreview = () => {
     preview = undefined;
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = undefined;
   };
   discardPendingRequests = () => {
+    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
+    pendingConnection = undefined;
     choosingFiles = undefined;
     confirmingWorkflow = undefined;
     discardPreview();
@@ -443,43 +451,63 @@ function registerAPI(): void {
   });
   handle(channels.connect, async (value) => {
     const input = connectionSchema.parse(value);
+    if (pendingConnection) throw new Error('A connection attempt is already in progress.');
+    const owner = session!;
+    const ownerWindow = window;
+    const attempt = new AbortController();
+    pendingConnection = attempt;
     let privateKey: Buffer | undefined;
-    if (input.auth === 'key') {
-      const file = keys.get(input.keyId!);
-      if (!file) throw new Error('Select your private key again.');
-      const handle = await open(file, 'r').catch(() => {
-        throw new Error('The selected private key could not be opened. Choose the key file again.');
-      });
-      try {
-        const info = await handle.stat();
-        if (!info.isFile() || info.size > 1024 * 1024)
-          throw new Error('Select a private key file smaller than 1 MB.');
-        const buffer = Buffer.alloc(1024 * 1024 + 1);
-        const { bytesRead } = await handle.read(buffer);
-        if (bytesRead > 1024 * 1024) {
-          buffer.fill(0);
-          throw new Error('The selected private key file is too large.');
-        }
-        privateKey = buffer.subarray(0, bytesRead);
-      } finally {
-        await handle.close();
-      }
-    }
     try {
+      if (input.auth === 'key') {
+        const file = keys.get(input.keyId!);
+        if (!file) throw new Error('Select your private key again.');
+        const handle = await open(file, 'r').catch(() => {
+          throw new Error(
+            'The selected private key could not be opened. Choose the key file again.',
+          );
+        });
+        try {
+          const info = await handle.stat();
+          if (!info.isFile() || info.size > 1024 * 1024)
+            throw new Error('Select a private key file smaller than 1 MB.');
+          const buffer = Buffer.alloc(1024 * 1024 + 1);
+          const { bytesRead } = await handle.read(buffer);
+          if (bytesRead > 1024 * 1024) {
+            buffer.fill(0);
+            throw new Error('The selected private key file is too large.');
+          }
+          privateKey = buffer.subarray(0, bytesRead);
+        } finally {
+          await handle.close();
+        }
+      }
       checkOperation();
-      await session!.connect({
-        host: input.host,
-        port: input.port,
-        username: input.username,
-        ...(input.auth === 'key'
-          ? { privateKey, passphrase: input.passphrase }
-          : { password: input.password }),
-      });
+      attempt.signal.throwIfAborted();
+      if (session !== owner || window !== ownerWindow || !ownerWindow || ownerWindow.isDestroyed())
+        throw new Error('The workspace changed. Connect again.');
+      return await owner.connect(
+        {
+          host: input.host,
+          port: input.port,
+          username: input.username,
+          ...(input.auth === 'key'
+            ? { privateKey, passphrase: input.passphrase }
+            : { password: input.password }),
+        },
+        attempt.signal,
+      );
     } finally {
       privateKey?.fill(0);
+      if (pendingConnection === attempt) pendingConnection = undefined;
     }
   });
+  handle(channels.cancelConnect, (value) => {
+    z.undefined().parse(value);
+    if (!pendingConnection) throw new Error('No connection attempt is in progress.');
+    pendingConnection.abort(new Error('Connection attempt cancelled.'));
+  });
   handle(channels.disconnect, () => {
+    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
     discardPreview();
     session!.disconnect();
     publish({ type: 'status', connected: false, message: 'Disconnected.' });
@@ -771,7 +799,7 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
   });
   const trust = new HostTrust(
     join(app.getPath('userData'), 'known-hosts.json'),
-    async ({ host, port, fingerprint }) => {
+    async ({ host, port, fingerprint }, signal) => {
       const result = await messageBox({
         type: 'warning',
         title: 'Verify server identity',
@@ -781,6 +809,7 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
         defaultId: 0,
         cancelId: 0,
         noLink: true,
+        signal,
       });
       return result.response === 1;
     },

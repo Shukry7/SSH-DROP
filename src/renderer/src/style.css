@@ -112,6 +112,17 @@ button {
 .status-dot.active {
   background: #58e0bb;
 }
+.connection-pill.lost,
+.reconnect-note {
+  color: #ffd88a;
+}
+.connection-pill.lost i {
+  background: #ffd88a;
+}
+.reconnect-note {
+  font-size: 12px;
+  line-height: 1.55;
+}
 .preview-badge {
   font-size: 9px;
   letter-spacing: 1.5px;

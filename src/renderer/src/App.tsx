@@ -35,6 +35,11 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const [info, setInfo] = useState<AppInfo>();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [lost, setLost] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [sftpOpen, setSftpOpen] = useState(false);
+  const connectionAttempt = useRef(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [message, setMessage] = useState('Ready when you are. Connect to a server to begin.');
   const [error, setError] = useState('');
@@ -60,6 +65,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
+  const filesReady = connected && sftpOpen;
   const fileBusy =
     actionBusy ||
     loading ||
@@ -72,9 +78,19 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       if (result.ok) setInfo(result.value);
       else setError(result.error);
     });
+    const clearListing = () => {
+      setSelected([]);
+      listingPath.current = undefined;
+      navigation.current++;
+      setListing(undefined);
+      setLoading(false);
+    };
     return window.sshdrop.onEvent((event) => {
       if (event.type === 'status') {
         setConnected(event.connected);
+        setLost(event.lost === true);
+        setTerminalOpen(event.connected && event.terminal !== false);
+        setSftpOpen(event.connected && event.sftp !== false);
         setMessage(event.message);
         if (!event.connected) {
           connectionEpoch.current++;
@@ -83,12 +99,15 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           setActionInput(undefined);
           setTransfers([]);
           setQueue({ pending: 0, active: false, paused: false });
-          setSelected([]);
-          listingPath.current = undefined;
-          navigation.current++;
-          setListing(undefined);
-          setLoading(false);
+          clearListing();
         }
+      }
+      if (event.type === 'terminal-exit') setTerminalOpen(false);
+      if (event.type === 'sftp-exit') {
+        setSftpOpen(false);
+        setActionInput(undefined);
+        clearListing();
+        setMessage('File browsing closed. The SSH connection may still be active.');
       }
       if (event.type === 'terminal-reset') setTransfers([]);
       if (event.type === 'transfer-warning') setTransferNotice(event.message);
@@ -183,30 +202,39 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
 
   function connect(event: FormEvent) {
     event.preventDefault();
+    if (connectionAttempt.current || connected || profileBusy) return;
+    connectionAttempt.current = true;
     void run(async () => {
       setConnecting(true);
-      setMessage('Connecting… verify the server fingerprint if prompted.');
+      setMessage(
+        `${lost ? 'Reconnecting' : 'Connecting'}… verify the server fingerprint if prompted.`,
+      );
       let established = false;
       try {
-        unwrap(
-          await window.sshdrop.connect({
-            host,
-            port: Number(port),
-            username,
-            auth,
-            ...(auth === 'password' ? { password } : { keyId: key?.id, passphrase }),
-          }),
-        );
+        const attempt = window.sshdrop.connect({
+          host,
+          port: Number(port),
+          username,
+          auth,
+          ...(auth === 'password' ? { password } : { keyId: key?.id, passphrase }),
+        });
+        setPassword('');
+        setPassphrase('');
+        const { sftp } = unwrap(await attempt);
         established = true;
-        await browse(path);
+        if (sftp) await browse(path);
       } catch (failure) {
+        if (failure instanceof Error && failure.message === 'Connection attempt cancelled.') {
+          setMessage('Connection attempt cancelled. Enter your credentials to try again.');
+          return;
+        }
         if (!established)
           setMessage('Connection failed. Check the connection details and try again.');
         throw failure;
       } finally {
+        connectionAttempt.current = false;
         setConnecting(false);
-        setPassword('');
-        setPassphrase('');
+        setCancelling(false);
       }
     });
   }
@@ -240,9 +268,20 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
         <div className="topbar-right">
           <PortableBackup />
           {sessionProtection}
-          <span className={`connection-pill ${connected ? 'live' : ''}`}>
+          <span
+            aria-live="polite"
+            className={`connection-pill ${connected ? 'live' : lost ? 'lost' : ''}`}
+          >
             <i />
-            {connected ? `${username}@${host}` : 'No active connection'}
+            {connected
+              ? `${username}@${host}`
+              : connecting
+                ? lost
+                  ? 'Reconnecting…'
+                  : 'Connecting…'
+                : lost
+                  ? 'Connection lost'
+                  : 'No active connection'}
           </span>
           <span className="preview-badge">EARLY PREVIEW</span>
         </div>
@@ -275,6 +314,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
             onError={setError}
             onBusy={setProfileBusy}
             onLoad={({ profile, key: savedKey }) => {
+              setLost(false);
               setHost(profile.host);
               setPort(String(profile.port));
               setUsername(profile.username);
@@ -285,6 +325,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               setPassphrase('');
             }}
             onNew={() => {
+              setLost(false);
               setHost('');
               setPort('22');
               setUsername('');
@@ -296,6 +337,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
             }}
           />
           <ConnectionGuide />
+          {lost && (
+            <p className="reconnect-note">
+              Connection lost. Check the server details and authenticate again to start a fresh
+              session. Interrupted operations will not resume.
+            </p>
+          )}
           <form onSubmit={connect} className="connection-form">
             <fieldset disabled={connected || connecting || profileBusy}>
               <ConnectionField id="connection-host" label="Host" help={connectionHelp.host}>
@@ -432,11 +479,31 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 />
               </ConnectionField>
               <button className="primary connect-button" type="submit">
-                {connecting ? 'Connecting…' : 'Connect to server'}
+                {connecting
+                  ? lost
+                    ? 'Reconnecting…'
+                    : 'Connecting…'
+                  : lost
+                    ? 'Reconnect to server'
+                    : 'Connect to server'}
                 <span aria-hidden="true">↗</span>
               </button>
             </fieldset>
           </form>
+          {connecting && !connected && (
+            <button
+              className="secondary disconnect-button"
+              disabled={cancelling}
+              onClick={() => {
+                setCancelling(true);
+                void run(async () => unwrap(await window.sshdrop.cancelConnect())).finally(() =>
+                  setCancelling(false),
+                );
+              }}
+            >
+              {cancelling ? 'Cancelling…' : 'Cancel connection attempt'}
+            </button>
+          )}
           {connected && (
             <button
               className="secondary disconnect-button"
@@ -487,7 +554,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               <div className="toolbar">
                 <button
                   className="secondary compact"
-                  disabled={!connected || fileBusy}
+                  disabled={!filesReady || fileBusy}
                   onClick={() =>
                     void run(() => browse(listing?.path.replace(/\/[^/]+\/?$/, '') || '/'))
                   }
@@ -496,14 +563,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || fileBusy}
+                  disabled={!filesReady || fileBusy}
                   onClick={() => void run(() => browse(listing?.path ?? path))}
                 >
                   ↻ Refresh
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || actionBusy || loading}
+                  disabled={!filesReady || !listing || actionBusy || loading}
                   onClick={() =>
                     void run(async () => unwrap(await window.sshdrop.upload(listing!.path)))
                   }
@@ -512,7 +579,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || actionBusy || loading}
+                  disabled={!filesReady || !listing || actionBusy || loading}
                   onClick={() =>
                     void run(async () => unwrap(await window.sshdrop.uploadFolder(listing!.path)))
                   }
@@ -521,7 +588,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || !selected.length || actionBusy || loading}
+                  disabled={!filesReady || !listing || !selected.length || actionBusy || loading}
                   onClick={() =>
                     void run(async () => {
                       unwrap(
@@ -537,7 +604,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </button>
                 <button
                   className="secondary compact"
-                  disabled={!connected || !listing || fileBusy}
+                  disabled={!filesReady || !listing || fileBusy}
                   onClick={() => {
                     setError('');
                     setActionInput({ action: 'create-folder', directory: listing!.path, name: '' });
@@ -559,9 +626,9 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 aria-label="Remote directory"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                disabled={!connected || actionBusy}
+                disabled={!filesReady || actionBusy}
               />
-              <button type="submit" disabled={!connected || fileBusy}>
+              <button type="submit" disabled={!filesReady || fileBusy}>
                 Go →
               </button>
             </form>
@@ -569,12 +636,18 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               <div className="empty-state">
                 <div className="empty-icon">▱</div>
                 <h3>
-                  {connected ? 'Your remote files belong here.' : 'Your server. A familiar view.'}
+                  {filesReady
+                    ? 'Your remote files belong here.'
+                    : connected
+                      ? 'File browsing is unavailable.'
+                      : 'Your server. A familiar view.'}
                 </h3>
                 <p>
-                  {connected
+                  {filesReady
                     ? 'Enter an accessible directory above to browse files.'
-                    : 'Connect to browse folders, move files, and get to work.'}
+                    : connected
+                      ? 'This SSH session has no active SFTP channel. Disconnect and reconnect to try again.'
+                      : 'Connect to browse folders, move files, and get to work.'}
                 </p>
                 <span className="small-label">EXPLICIT DESTINATIONS. NO GUESSWORK.</span>
               </div>
@@ -686,7 +759,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                             <>
                               <button
                                 className="text-button"
-                                disabled={!connected || fileBusy}
+                                disabled={!filesReady || fileBusy}
                                 onClick={() => {
                                   setError('');
                                   setActionInput({
@@ -702,7 +775,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                               </button>
                               <button
                                 className="text-button danger-button"
-                                disabled={!connected || fileBusy}
+                                disabled={!filesReady || fileBusy}
                                 title="Permanently delete this file or empty folder. Cannot be undone."
                                 onClick={() =>
                                   void changeFile({
@@ -756,10 +829,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 <span className="terminal-symbol">›_</span> Terminal{' '}
                 <span className="terminal-tab">shell 01</span>
               </h3>
-              <span className="small-label">{connected ? 'INTERACTIVE SSH' : 'NOT CONNECTED'}</span>
+              <span className="small-label">
+                {terminalOpen ? 'INTERACTIVE SSH' : connected ? 'SHELL CLOSED' : 'NOT CONNECTED'}
+              </span>
             </div>
             <div className="terminal-container">
-              <Terminal connected={connected} />
+              <Terminal connected={connected && terminalOpen} />
               {!connected && (
                 <div className="terminal-placeholder">
                   <span>$</span> Your next command starts here.
@@ -822,10 +897,10 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               ))}
             </section>
           )}
-          {connected && (
+          {filesReady && (
             <Recovery
               key={connectionEpoch.current}
-              connected={connected}
+              connected={filesReady}
               busy={
                 actionBusy ||
                 loading ||

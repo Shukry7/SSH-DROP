@@ -59,6 +59,8 @@ describe('SSH and SFTP over a real loopback connection', () => {
     expect(events).toContainEqual({
       type: 'status',
       connected: true,
+      terminal: true,
+      sftp: true,
       message: 'Connected. Terminal and SFTP ready.',
     });
   });
@@ -230,10 +232,46 @@ describe('SSH and SFTP over a real loopback connection', () => {
     expect(events).toContainEqual({
       type: 'status',
       connected: true,
+      terminal: true,
+      sftp: false,
       message: 'Terminal connected. SFTP is unavailable on this server.',
     });
     session.input('still works');
     await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+  });
+  it('times out a stalled terminal request and permits a fresh attempt', async () => {
+    const stall = ['SHELL'];
+    await replaceFixture({ stall });
+    session = new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      2000,
+    );
+    await expect(connect()).rejects.toThrow('setup timed out');
+    expect(fixture.shellRequests()).toBe(1);
+    expect(events.some((event) => event.type === 'status' && event.connected)).toBe(false);
+    stall.length = 0;
+    await expect(connect()).resolves.toEqual({ sftp: true });
+    expect((await session.list('/')).path).toBe('/');
+  });
+
+  it('bounds a stalled SFTP setup and leaves an available terminal', async () => {
+    await replaceFixture({ stall: ['SFTP'] });
+    session = new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      2000,
+    );
+    await expect(connect()).resolves.toEqual({ sftp: false });
+    session.input('still works');
+    await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'status', terminal: true, sftp: false }),
+    );
   });
   it('streams an upload and download without changing the bytes', async () => {
     await connect();

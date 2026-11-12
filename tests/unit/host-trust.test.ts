@@ -18,11 +18,14 @@ describe('server host trust', () => {
     const approve = vi.fn().mockResolvedValue(true);
     const trust = new HostTrust(file, approve);
     expect(await trust.verify('EXAMPLE.com', 22, Buffer.from('public-key'))).toBe(true);
-    expect(approve).toHaveBeenCalledWith({
-      host: 'EXAMPLE.com',
-      port: 22,
-      fingerprint: expect.stringMatching(/^SHA256:/),
-    });
+    expect(approve).toHaveBeenCalledWith(
+      {
+        host: 'EXAMPLE.com',
+        port: 22,
+        fingerprint: expect.stringMatching(/^SHA256:/),
+      },
+      undefined,
+    );
     expect(
       await new HostTrust(file, approve).verify('example.com', 22, Buffer.from('public-key')),
     ).toBe(true);
@@ -33,6 +36,27 @@ describe('server host trust', () => {
     expect(
       await new HostTrust(file, async () => false).verify('host', 22, Buffer.from('key')),
     ).toBe(false);
+    await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('does not persist a host approval that arrives after cancellation', async () => {
+    let approve!: (value: boolean) => void;
+    const approval = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          approve = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const attempt = new HostTrust(file, approval).verify(
+      'host',
+      22,
+      Buffer.from('key'),
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(approval).toHaveBeenCalledOnce());
+    controller.abort(new Error('Connection attempt cancelled.'));
+    approve(true);
+    await expect(attempt).rejects.toThrow('attempt cancelled');
     await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
   });
   it('blocks changed keys without offering blind replacement', async () => {

@@ -10,6 +10,8 @@ A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, 
 
 Alpha.6 development source also adds [portable encrypted backup recovery](docs/PORTABLE_BACKUPS.md): export an individual recovery backup up to 32 MiB, then recover it offline into a new local file with its export passphrase. Export and test a copy before losing access to the original OS key store.
 
+If SSH is lost, use **Reconnect to server** to authenticate and start a fresh session. SSHDrop keeps connection fields in the current workspace but clears submitted passwords and key passphrases. It never automatically retries commands, transfers or workflows. A closed shell does not by itself end SSH or file browsing. See [connection recovery](docs/RECONNECT.md).
+
 Version **0.2.0-alpha.5** adds optional **Replace without backup** (permanent, no rollback) and [saved commands/workflows](docs/WORKFLOWS.md), including variables, exact previews and server confirmation enabled by default. It also fixes terminal layout/refitting for clipped rows. Run again reviews the latest saved workflow with fresh variable inputs and the saved confirmation preference; it never resumes or automatically replays previous commands. Older alpha.4 installers do not include these additions.
 
 - Password or private-key authentication for one active SSH connection.

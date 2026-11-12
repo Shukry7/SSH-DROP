@@ -31,6 +31,7 @@ const api: DesktopAPI = {
   loadProfile: (id) => ipcRenderer.invoke(channels.loadProfile, id),
   deleteProfile: (id) => ipcRenderer.invoke(channels.deleteProfile, id),
   connect: (input) => ipcRenderer.invoke(channels.connect, input),
+  cancelConnect: () => ipcRenderer.invoke(channels.cancelConnect),
   disconnect: () => ipcRenderer.invoke(channels.disconnect),
   list: (path) => ipcRenderer.invoke(channels.list, path),
   fileAction: (input) => ipcRenderer.invoke(channels.fileAction, input),

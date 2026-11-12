@@ -20,6 +20,7 @@ export const channels = {
   loadProfile: 'profiles:load',
   deleteProfile: 'profiles:delete',
   connect: 'ssh:connect',
+  cancelConnect: 'ssh:cancel-connect',
   disconnect: 'ssh:disconnect',
   list: 'sftp:list',
   fileAction: 'sftp:file-action',
