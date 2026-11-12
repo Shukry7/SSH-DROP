@@ -1,6 +1,10 @@
 import { utils, type SFTPWrapper, type Stats } from 'ssh2';
 import type { FileAction } from '../../shared/contracts';
 import { childPath, fileActionSchema } from '../../shared/validation';
+import { replacementIO } from './replacement-io';
+
+const remoteCopyLimit = 128 * 1024 * 1024;
+const metadata = ['size', 'mtime', 'mode', 'uid', 'gid'] as const;
 
 export interface FileActionWarning {
   title: string;
@@ -21,6 +25,7 @@ export async function changeRemoteFile(
   const input = fileActionSchema.parse(value);
   const creatingFile = input.action === 'create-file';
   const creating = creatingFile || input.action === 'create-folder';
+  const relocating = 'destinationDirectory' in input;
   const createButton = creatingFile ? 'Create file' : 'Create folder';
   let sent = false;
   let invalidated = false;
@@ -104,75 +109,115 @@ export async function changeRemoteFile(
       throw error;
     }
   };
-  const parent = async () => {
+  const parent = async (directory: string) => {
     check();
-    const canonical = await request<string>((cb) => sftp.realpath(input.directory, cb));
-    const stats = await info(input.directory);
-    if (canonical !== input.directory || !stats?.isDirectory())
+    const canonical = await request<string>((cb) => sftp.realpath(directory, cb));
+    const stats = await info(directory);
+    if (canonical !== directory || !stats?.isDirectory())
       throw new Error('The directory changed or is a symbolic link. Refresh before retrying.');
   };
   const source = childPath(input.directory, input.name);
-  const destination =
-    input.action === 'rename' ? childPath(input.directory, input.newName) : source;
+  const renaming = input.action === 'rename' || input.action === 'move';
+  const destination = relocating
+    ? childPath(input.destinationDirectory, input.name)
+    : input.action === 'rename'
+      ? childPath(input.directory, input.newName)
+      : source;
   const inspect = async () => {
-    await parent();
+    await parent(input.directory);
+    if (relocating) await parent(input.destinationDirectory);
     const stats = await info(source);
     if (!creating) {
       if (!stats) throw new Error('The selected item no longer exists. Refresh the directory.');
-      if (
-        (input.kind === 'file' && !stats.isFile()) ||
-        (input.kind === 'directory' && !stats.isDirectory())
-      )
+      if (relocating || input.kind === 'file' ? !stats.isFile() : !stats.isDirectory())
         throw new Error(
           'The item type changed, or it is a symbolic link or special file. Refresh before retrying.',
         );
-      for (const field of ['size', 'mtime', 'mode', 'uid', 'gid'] as const)
+      for (const field of metadata)
         if (!Number.isSafeInteger(stats[field]) || stats[field] < 0)
           throw new Error('The server returned invalid item metadata.');
+      if (input.action === 'copy' && (stats.size > remoteCopyLimit || stats.mode & 0o7000))
+        throw new Error(
+          'Remote copy supports files up to 128 MiB without special permission bits.',
+        );
     }
-    if (creating ? stats : input.action === 'rename' && (await info(destination)))
+    if (creating ? stats : (relocating || renaming) && (await info(destination)))
       throw new Error(
         'The destination already exists. Choose a different name; existing items are not replaced.',
       );
     return stats;
   };
   const before = await inspect();
-  const approved = await confirm({
-    title:
-      input.action === 'delete'
-        ? 'Permanently delete remote item'
-        : input.action === 'rename'
-          ? 'Rename remote item'
-          : creatingFile
-            ? 'Create remote file'
-            : 'Create remote folder',
-    message:
-      input.action === 'rename'
-        ? `Rename ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`
-        : `${input.action === 'delete' ? 'Permanently delete' : createButton} ${JSON.stringify(source)}?`,
-    detail: `${input.action === 'delete' ? 'This cannot be undone. There is no trash or backup. Only files and empty folders can be deleted; folders are never removed recursively.' : input.action === 'rename' ? 'Existing destinations are refused. Other applications using this path may be affected.' : creatingFile ? 'Creates an empty file and requests owner-only read/write permissions (0600). The server controls final permissions. Existing items are preserved.' : 'The new folder requests owner-only permissions (0700); the server controls the final permissions.'} If the connection is interrupted, inspect the remote folder before retrying.`,
-    button:
-      input.action === 'delete'
-        ? 'Delete permanently'
-        : input.action === 'rename'
-          ? 'Rename'
-          : createButton,
-  });
+  const approved = await confirm(
+    relocating
+      ? {
+          title: input.action === 'copy' ? 'Copy remote file' : 'Move remote file',
+          message: `${input.action === 'copy' ? 'Copy' : 'Move'} ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`,
+          detail:
+            input.action === 'copy'
+              ? 'The source stays in place. SSHDrop verifies the copied contents before publishing and requests owner-only permissions for the copy. The destination must be empty at this path.'
+              : 'The source leaves its current folder. Other applications using that path may be affected. The destination must be empty at this path. If interrupted, inspect both folders before retrying.',
+          button: input.action === 'copy' ? 'Copy file' : 'Move file',
+        }
+      : {
+          title:
+            input.action === 'delete'
+              ? 'Permanently delete remote item'
+              : input.action === 'rename'
+                ? 'Rename remote item'
+                : creatingFile
+                  ? 'Create remote file'
+                  : 'Create remote folder',
+          message:
+            input.action === 'rename'
+              ? `Rename ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`
+              : `${input.action === 'delete' ? 'Permanently delete' : createButton} ${JSON.stringify(source)}?`,
+          detail: `${input.action === 'delete' ? 'This cannot be undone. There is no trash or backup. Only files and empty folders can be deleted; folders are never removed recursively.' : input.action === 'rename' ? 'Existing destinations are refused. Other applications using this path may be affected.' : creatingFile ? 'Creates an empty file and requests owner-only read/write permissions (0600). The server controls final permissions. Existing items are preserved.' : 'The new folder requests owner-only permissions (0700); the server controls the final permissions.'} If the connection is interrupted, inspect the remote folder before retrying.`,
+          button:
+            input.action === 'delete'
+              ? 'Delete permanently'
+              : input.action === 'rename'
+                ? 'Rename'
+                : createButton,
+        },
+  );
   if (!approved) return false;
-  deadline = Date.now() + milliseconds;
+  const recheck = async () => {
+    deadline = Date.now() + milliseconds;
+    const after = await inspect();
+    if (before && after && metadata.some((field) => before[field] !== after[field]))
+      throw new Error(
+        'The selected item changed while awaiting confirmation. Refresh and review it again.',
+      );
+  };
+  await recheck();
   check();
-  const after = await inspect();
-  if (
-    before &&
-    after &&
-    ['size', 'mtime', 'mode', 'uid', 'gid'].some(
-      (field) => before[field as keyof Stats] !== after[field as keyof Stats],
-    )
-  )
-    throw new Error(
-      'The selected item changed while awaiting confirmation. Refresh and review it again.',
-    );
-  check();
+  if (input.action === 'copy') {
+    const copySignal = AbortSignal.any([signal, AbortSignal.timeout(30 * 60_000)]);
+    const io = replacementIO(sftp, copySignal, current, stop, remoteCopyLimit);
+    try {
+      const expected = await io.snapshot(source);
+      if (
+        !expected ||
+        !before ||
+        expected.size !== before.size ||
+        expected.modified !== before.mtime * 1000
+      )
+        throw new Error('The source changed after approval. Refresh and review it again.');
+      await recheck();
+      await io.write(destination, io.read(source), expected, recheck);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('publication is uncertain')) stop();
+      if ((error as { code?: number }).code === 3)
+        throw new Error('The server denied permission to copy the file.', { cause: error });
+      if ((error as { code?: number }).code === 4)
+        throw new Error('The server refused the copy. Check the destination and available space.', {
+          cause: error,
+        });
+      throw error;
+    }
+    return true;
+  }
   sent = true;
   let fileCreated = false;
   try {
@@ -186,8 +231,8 @@ export async function changeRemoteFile(
     } else {
       await request<void>((cb) => {
         if (input.action === 'create-folder') sftp.mkdir(source, { mode: 0o700 }, cb);
-        else if (input.action === 'rename') sftp.rename(source, destination, cb);
-        else if (input.kind === 'directory') sftp.rmdir(source, cb);
+        else if (renaming) sftp.rename(source, destination, cb);
+        else if (input.action === 'delete' && input.kind === 'directory') sftp.rmdir(source, cb);
         else sftp.unlink(source, cb);
       });
     }

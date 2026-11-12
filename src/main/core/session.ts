@@ -323,7 +323,7 @@ export class Session {
     confirm: (warning: FileActionWarning) => Promise<boolean>,
   ): Promise<boolean> {
     if (this.workflow) throw new Error('Stop the running workflow before changing files.');
-    if (this.fileAction || this.transfers.size || this.queue.size)
+    if (this.fileAction || this.transfers.size || this.queue.size || this.recoveryBusy)
       throw new Error('Wait for the active file operation or transfer to finish.');
     const sftp = this.files();
     const controller = new AbortController();
@@ -339,12 +339,13 @@ export class Session {
         () => {
           if (this.client !== client) return;
           this.disconnect();
+          client?.destroy();
           this.emit({
             type: 'status',
             connected: false,
             lost: true,
             message:
-              'File operation interrupted. Reconnect and inspect the folder before retrying.',
+              'File operation interrupted. Reconnect and inspect the affected folders before retrying.',
           });
         },
       );

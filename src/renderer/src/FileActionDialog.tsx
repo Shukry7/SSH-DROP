@@ -15,12 +15,16 @@ export function FileActionDialog({
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const relocating = 'destinationDirectory' in input;
   const [name, setName] = useState(input.action === 'rename' ? input.name : '');
+  const [destinationDirectory, setDestinationDirectory] = useState('');
+  const [operation, setOperation] = useState<'copy' | 'move'>('copy');
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const title =
-    input.action === 'rename'
+  const title = relocating
+    ? 'Copy or move remote file'
+    : input.action === 'rename'
       ? 'Rename remote item'
       : input.action === 'create-file'
         ? 'Create remote file'
@@ -39,7 +43,11 @@ export function FileActionDialog({
         onSubmit={(event) => {
           event.preventDefault();
           void submit(
-            input.action === 'rename' ? { ...input, newName: name } : { ...input, name },
+            relocating
+              ? { ...input, action: operation, destinationDirectory }
+              : input.action === 'rename'
+                ? { ...input, newName: name }
+                : { ...input, name },
           ).then((done) => {
             if (done) close();
           });
@@ -54,21 +62,58 @@ export function FileActionDialog({
         <p className="muted">
           Folder: <bdi>{input.directory}</bdi>
         </p>
-        <label>
-          New name
-          <input
-            autoFocus
-            required
-            maxLength={255}
-            value={name}
-            disabled={busy}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <p className="muted">
-          Use one name without slashes. You will review the full remote path before confirming.
-          Existing items are not replaced.
-        </p>
+        {relocating ? (
+          <>
+            <p className="muted">
+              File: <bdi>{input.name}</bdi>
+            </p>
+            <label>
+              Operation
+              <select
+                value={operation}
+                disabled={busy}
+                onChange={(event) => setOperation(event.target.value === 'move' ? 'move' : 'copy')}
+              >
+                <option value="copy">Copy</option>
+                <option value="move">Move</option>
+              </select>
+            </label>
+            <label>
+              Destination folder
+              <input
+                autoFocus
+                required
+                maxLength={4096}
+                placeholder="/path/to/folder"
+                value={destinationDirectory}
+                disabled={busy}
+                onChange={(event) => setDestinationDirectory(event.target.value)}
+              />
+            </label>
+            <p className="muted">
+              Use an existing absolute folder path on this server. The filename stays the same.
+              Copies are limited to 128 MiB.
+            </p>
+          </>
+        ) : (
+          <>
+            <label>
+              New name
+              <input
+                autoFocus
+                required
+                maxLength={255}
+                value={name}
+                disabled={busy}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <p className="muted">
+              Use one name without slashes. You will review the full remote path before confirming.
+              Existing items are not replaced.
+            </p>
+          </>
+        )}
         <div className="profile-actions">
           <button type="button" className="secondary" disabled={busy} onClick={close}>
             Cancel
@@ -76,7 +121,12 @@ export function FileActionDialog({
           <button
             type="submit"
             className="secondary"
-            disabled={busy || !name || (input.action === 'rename' && name === input.name)}
+            disabled={
+              busy ||
+              (relocating
+                ? !destinationDirectory.startsWith('/') || destinationDirectory === input.directory
+                : !name || (input.action === 'rename' && name === input.name))
+            }
           >
             {busy ? 'Waiting…' : 'Review change'}
           </button>

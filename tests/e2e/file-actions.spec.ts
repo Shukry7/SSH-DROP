@@ -148,6 +148,38 @@ test('remote folder and file actions require confirmation, preserve collisions, 
     await changed.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(changed).toHaveCount(0);
     expect(fixture.files.has('/changed.txt')).toBe(false);
+    const fileRow = (name: string) =>
+      page.getByRole('row').filter({
+        has: page.getByRole('button', { name: new RegExp(name) }),
+      });
+    const relocate = page.getByRole('dialog', { name: 'Copy or move remote file' });
+    await fileRow('empty\\.txt').getByRole('button', { name: 'Copy or move' }).click();
+    await relocate.getByLabel('Destination folder').fill('/folder');
+    await relocate.getByRole('button', { name: 'Review change' }).click();
+    await expect(relocate).not.toBeVisible();
+    expect(fixture.files.has('/empty.txt')).toBe(true);
+    expect(fixture.files.get('/folder/empty.txt')).toEqual(Buffer.alloc(0));
+    await page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /folder/ }) })
+      .getByRole('button', { name: /▰ folder/ })
+      .click();
+    await fileRow('nested\\.txt').getByRole('button', { name: 'Copy or move' }).click();
+    await relocate.getByLabel('Operation').selectOption('move');
+    await relocate.getByLabel('Destination folder').fill('/');
+    await relocate.getByRole('button', { name: 'Review change' }).click();
+    await expect(relocate).not.toBeVisible();
+    await expect(fileRow('nested\\.txt')).toHaveCount(0);
+    expect(fixture.files.get('/nested.txt')?.toString()).toBe('nested\n');
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      type: 'warning',
+      defaultId: 0,
+      buttons: ['Cancel', 'Move file'],
+    });
   } finally {
     await application.close();
     await fixture.close();
