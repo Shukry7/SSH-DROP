@@ -2,6 +2,13 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.2] — Unreleased
+
+### Added
+
+- Case-sensitive literal search inside the remote editor, with next/previous navigation, Ctrl/Cmd+F, and up to 1,000 match positions.
+- Compare a draft with the current server text. Adopt the reviewed version as a new save baseline while retaining the draft, or load the reviewed text after confirmation. The server is rechecked before accepting a comparison, and saves still require separate confirmation and verification.
+
 ## [0.3.0-alpha.1] — Unreleased
 
 ### Added

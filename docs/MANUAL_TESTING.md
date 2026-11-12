@@ -112,6 +112,8 @@ Use disposable UTF-8 files. Open **Edit text**, modify a draft, and try Close ed
 
 Change a file outside SSHDrop while its draft is open. Save must refuse and preserve the external bytes and the draft. Test LF, CRLF, BOM, invalid UTF-8, binary data, mixed endings, a file above 1 MiB, denied permissions, and a server without atomic replacement. Drop the connection while editing and saving; inspect the remote file before retrying. Check idle expiry clears the draft with the rest of the workspace. Validate close warnings and Ctrl/Cmd+S on Windows, Linux, and macOS devices.
 
+For alpha.2, use Ctrl/Cmd+F and search for literal text, Unicode, and regex characters. Check next/previous matches and wraparound. After an external edit, compare the draft and server text. Cancel baseline adoption first and confirm on a second attempt; the server must stay unchanged until a separate save. Change the server again while reviewing and confirm adoption is refused until the comparison refreshes. Use server text and cancel its discard warning before confirming it. Test LF/CRLF/BOM changes between versions and stale review tokens after reconnect.
+
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 
 ## Overwrite and recovery checklist (0.2.0-alpha.2)

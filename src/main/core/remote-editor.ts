@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { SFTPWrapper } from 'ssh2';
-import { editorLimit, type EditorDocument } from '../../shared/editor';
+import { editorLimit, type EditorDocument, type EditorComparison } from '../../shared/editor';
 import { Replacements, equalFile, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
 import type { FileSnapshot, RecoveryStore, ServerIdentity } from './recovery-store';
@@ -15,8 +15,17 @@ export class RemoteEditor {
     crlf: boolean;
     bom: boolean;
   };
+  private review?: {
+    token: string;
+    document: NonNullable<RemoteEditor['document']>;
+    snapshot: FileSnapshot;
+    crlf: boolean;
+    bom: boolean;
+    text: string;
+  };
   clear() {
     this.document = undefined;
+    this.review = undefined;
   }
   async operate<T>(
     options: {
@@ -49,11 +58,11 @@ export class RemoteEditor {
     };
     return operation(io, guard);
   }
-  async open(
+  private async read(
     path: string,
     io: ReturnType<typeof replacementIO>,
     guard: (path: string) => Promise<void>,
-  ): Promise<EditorDocument> {
+  ) {
     await guard(path);
     const source = io.read(path);
     const chunks: Buffer[] = [];
@@ -83,9 +92,85 @@ export class RemoteEditor {
       throw new Error('Use a file with consistent LF or CRLF line endings.');
     const bom = text.startsWith('\ufeff');
     await guard(path);
+    return {
+      path,
+      snapshot,
+      crlf,
+      bom,
+      text: (bom ? text.slice(1) : text).replaceAll('\r\n', '\n'),
+    };
+  }
+  async open(
+    path: string,
+    io: ReturnType<typeof replacementIO>,
+    guard: (path: string) => Promise<void>,
+  ): Promise<EditorDocument> {
+    const { text, ...file } = await this.read(path, io, guard);
     const token = randomUUID();
-    this.document = { token, path, snapshot, crlf, bom };
-    return { token, path, text: (bom ? text.slice(1) : text).replaceAll('\r\n', '\n') };
+    this.document = { token, ...file };
+    this.review = undefined;
+    return { token, path, text };
+  }
+  private current(token: string) {
+    if (!this.document || this.document.token !== token)
+      throw new Error('The editor belongs to an old session. Copy the draft and reopen the file.');
+    return this.document;
+  }
+  async compare(
+    token: string,
+    io: ReturnType<typeof replacementIO>,
+    guard: (path: string) => Promise<void>,
+  ): Promise<EditorComparison> {
+    const document = this.current(token);
+    const file = await this.read(document.path, io, guard);
+    if (this.current(token) !== document) throw new Error('The editor session changed.');
+    this.review = { token: randomUUID(), document, ...file };
+    return {
+      reviewToken: this.review.token,
+      text: file.text,
+      changed:
+        !equalFile(file.snapshot, document.snapshot) ||
+        file.snapshot.modified !== document.snapshot.modified,
+      lineEndings: file.crlf ? 'CRLF' : 'LF',
+      bom: file.bom,
+    };
+  }
+  async accept(
+    token: string,
+    reviewToken: string,
+    keepDraft: boolean,
+    io: ReturnType<typeof replacementIO>,
+    guard: (path: string) => Promise<void>,
+    confirm: (approval: ReplacementApproval) => Promise<number>,
+  ): Promise<EditorDocument | null> {
+    const document = this.current(token);
+    const review = this.review;
+    if (!review || review.token !== reviewToken || review.document !== document)
+      throw new Error('This comparison is no longer current. Compare with the server again.');
+    const approval = await confirm({
+      title: 'Use reviewed remote version',
+      buttons: ['Cancel', 'Use reviewed version'],
+      detail: `${document.path}\n\n${keepDraft ? 'Keep your draft and use the reviewed server version as the baseline for your next save. Saving can replace changes made by other users.' : 'Replace your draft with the reviewed server text. Your unsaved edits will be discarded.'} This step updates the editor only. Saving still requires its own confirmation.`,
+    });
+    if (approval !== 1) return null;
+    await guard(document.path);
+    const latest = await io.snapshot(document.path);
+    if (!equalFile(latest, review.snapshot) || latest?.modified !== review.snapshot.modified)
+      throw new Error(
+        'The server changed again after the comparison. Refresh the comparison before continuing.',
+      );
+    if (this.current(token) !== document || this.review !== review)
+      throw new Error('The editor session changed.');
+    const nextToken = randomUUID();
+    this.document = {
+      token: nextToken,
+      path: document.path,
+      snapshot: review.snapshot,
+      crlf: review.crlf,
+      bom: review.bom,
+    };
+    this.review = undefined;
+    return { token: nextToken, path: document.path, text: review.text };
   }
   async save(
     token: string,
@@ -99,9 +184,7 @@ export class RemoteEditor {
       confirm: (approval: ReplacementApproval) => Promise<number>;
     },
   ): Promise<boolean> {
-    const document = this.document;
-    if (!document || document.token !== token)
-      throw new Error('The editor belongs to an old session. Copy the draft and reopen the file.');
+    const document = this.current(token);
     validateText(text);
     if (text.includes('\r')) throw new Error('Editor input must use LF line endings.');
     const encoded = `${document.bom ? '\ufeff' : ''}${document.crlf ? text.replaceAll('\n', '\r\n') : text}`;
@@ -151,6 +234,7 @@ export class RemoteEditor {
         );
       check();
       document.snapshot = snapshot!;
+      this.review = undefined;
     }
     return saved;
   }

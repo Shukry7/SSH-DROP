@@ -28,6 +28,8 @@ export const channels = {
   fileAction: 'sftp:file-action',
   openEditor: 'editor:open',
   saveEditor: 'editor:save',
+  compareEditor: 'editor:compare',
+  acceptEditorReview: 'editor:accept-review',
   recovery: 'recovery:list',
   recover: 'recovery:action',
   upload: 'sftp:upload',

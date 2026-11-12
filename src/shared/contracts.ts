@@ -166,6 +166,12 @@ export interface DesktopAPI {
     name: string;
   }): Promise<Result<import('./editor').EditorDocument>>;
   saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
+  compareEditor(token: string): Promise<Result<import('./editor').EditorComparison>>;
+  acceptEditorReview(input: {
+    token: string;
+    reviewToken: string;
+    keepDraft: boolean;
+  }): Promise<Result<import('./editor').EditorDocument | null>>;
   recovery(): Promise<Result<RecoveryView[]>>;
   recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;

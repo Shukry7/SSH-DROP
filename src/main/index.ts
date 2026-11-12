@@ -45,7 +45,12 @@ import { folderName } from './core/folder-transfer';
 import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
-import { openEditorSchema, saveEditorSchema } from '../shared/editor';
+import {
+  openEditorSchema,
+  saveEditorSchema,
+  editorTokenSchema,
+  acceptEditorReviewSchema,
+} from '../shared/editor';
 import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
@@ -697,6 +702,12 @@ function registerAPI(): void {
     return session!.editText({ path: childPath(directory, name) });
   });
   handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
+  handle(channels.compareEditor, (value) =>
+    session!.editText({ token: editorTokenSchema.parse(value), compare: true }),
+  );
+  handle(channels.acceptEditorReview, (value) =>
+    session!.editText(acceptEditorReviewSchema.parse(value)),
+  );
   handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),

@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.3.0-alpha.1, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.3.0-alpha.2, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
 
 ## Current scope
+
+**Development source `0.3.0-alpha.2`** adds in-file search and a comparison view to the remote editor. **Compare with server** shows the current server text beside the draft. After review and confirmation, keep the draft against the reviewed baseline or use the server text. A later save still checks for newer remote changes and uses the normal backup/save confirmation.
 
 **Development source `0.3.0-alpha.1`** adds a remote text editor. Select **Edit text** on a regular UTF-8 file up to 1 MiB, edit the draft, and review the save warning. Choose an encrypted recovery backup or confirm saving without a backup. The editor checks for remote changes before replacing the file and verifies the result. LF/CRLF endings and a UTF-8 BOM are preserved. See [remote editing](docs/REMOTE_EDITOR.md).
 

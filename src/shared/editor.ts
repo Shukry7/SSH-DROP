@@ -13,3 +13,14 @@ export interface EditorDocument {
   path: string;
   text: string;
 }
+export const editorTokenSchema = z.string().uuid();
+export const acceptEditorReviewSchema = z
+  .object({ token: editorTokenSchema, reviewToken: editorTokenSchema, keepDraft: z.boolean() })
+  .strict();
+export interface EditorComparison {
+  reviewToken: string;
+  text: string;
+  changed: boolean;
+  lineEndings: 'LF' | 'CRLF';
+  bom: boolean;
+}

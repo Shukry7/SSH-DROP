@@ -8,4 +8,12 @@ Save changes, or Ctrl/Cmd+S, opens a native confirmation. Back up and save keeps
 
 Before saving, SSHDrop compares the original file's contents and metadata with the current remote file. A conflict leaves the draft open. Copy it elsewhere before closing and reopening the remote file. Writes use verified temporary staging and recheck the original before publication. Stop other writers during editing; SFTP cannot make the final check and replacement atomic against an external edit. If a result is uncertain after disconnection, inspect the remote file and recovery records before retrying.
 
-Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. Syntax highlighting, a graphical diff/merge tool, multiple tabs, and large-file support remain planned.
+## Search and comparison in 0.3.0-alpha.2
+
+Use Find in draft or Ctrl/Cmd+F to search for literal, case-sensitive text. Next match and Previous match wrap through the first 1,000 matches. Enter moves forward and Shift+Enter moves backward from the search field. Selecting a result focuses the draft at that text.
+
+Compare with server reads a fresh bounded snapshot and displays it beside the draft. Read both versions and edit the draft as needed. Refresh comparison reads the latest version again. Comparing and closing the comparison leave the save baseline intact.
+
+Keep my draft asks for confirmation, rechecks the server, and uses the reviewed version for the next save checks while preserving the draft. Save changes then requires its normal confirmation and verification. Use server text asks before discarding unsaved edits and loading the reviewed text into the editor. It also rechecks the server first. If the server changes during review, refresh the comparison before accepting it. The reviewed encoding becomes the encoding used by the next save.
+
+Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. Syntax highlighting, automatic merging, multiple tabs, and large-file support remain planned.

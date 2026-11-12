@@ -90,7 +90,7 @@ export class Replacements {
     const io = this.c.remoteIO;
     if (!unchangedFile(await io.snapshot(remote), previous))
       throw new Error(
-        'The remote file changed. Your draft is still open. Reopen the remote file after copying your draft elsewhere.',
+        'The remote file changed. Your draft is still open. Compare with the server to review its current contents before saving.',
       );
     if (!(await io.supports(remote)))
       throw new Error(
