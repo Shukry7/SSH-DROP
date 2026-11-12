@@ -136,6 +136,14 @@ export async function changeRemoteFile(
       for (const field of metadata)
         if (!Number.isSafeInteger(stats[field]) || stats[field] < 0)
           throw new Error('The server returned invalid item metadata.');
+      if (input.action === 'permissions') {
+        if (stats.mode & 0o7000)
+          throw new Error(
+            'This item has special permission bits. Edit it through the server terminal.',
+          );
+        if ((stats.mode & 0o777) !== input.expectedMode)
+          throw new Error('Permissions changed since the listing. Refresh and review them again.');
+      }
       if (input.action === 'copy' && (stats.size > remoteCopyLimit || stats.mode & 0o7000))
         throw new Error(
           'Remote copy supports files up to 128 MiB without special permission bits.',
@@ -148,6 +156,78 @@ export async function changeRemoteFile(
     return stats;
   };
   const before = await inspect();
+  if (input.action === 'permissions') {
+    const mode = Number.parseInt(input.mode, 8);
+    if (mode === input.expectedMode) return false;
+    if (
+      !(await confirm({
+        title: 'Change remote permissions',
+        message: `Change permissions for ${JSON.stringify(source)}?`,
+        detail: `Current mode: ${input.expectedMode.toString(8).padStart(3, '0')}\nProposed mode: ${input.mode}\n\nChanging access can expose data or prevent users and services from reaching this item. The change applies to this item only.`,
+        button: 'Change permissions',
+      }))
+    )
+      return false;
+    deadline = Date.now() + milliseconds;
+    const unchanged = (stats: Stats | undefined) =>
+      !!before && !!stats && metadata.every((field) => stats[field] === before[field]);
+    const ensureUnchanged = (stats: Stats | undefined) => {
+      if (!unchanged(stats))
+        throw new Error('The selected item changed after review. Refresh before trying again.');
+    };
+    ensureUnchanged(await inspect());
+    const handle = await request<Buffer>((cb) => sftp.open(source, 'r', cb)).catch((error) => {
+      const code = (error as { code?: number }).code;
+      if (code === 6 || code === 7) stop();
+      if (code === 3 || code === 4 || code === 8)
+        throw new Error(
+          'The server could not open this item for handle-based permission editing.',
+          { cause: error },
+        );
+      throw error;
+    });
+    try {
+      ensureUnchanged(await request<Stats>((cb) => sftp.fstat(handle, cb)));
+      ensureUnchanged(await inspect());
+      sent = true;
+      await request<void>((cb) => sftp.fchmod(handle, mode, cb)).catch((error) => {
+        const code = (error as { code?: number }).code;
+        if (code === 2 || code === 3 || code === 4 || code === 8) {
+          sent = false;
+          throw new Error(
+            'The server refused the permission change. Check your access and server support.',
+            { cause: error },
+          );
+        }
+        throw error;
+      });
+      const actual = await request<Stats>((cb) => sftp.fstat(handle, cb));
+      const named = await info(source);
+      if (
+        !Number.isSafeInteger(actual.mode) ||
+        (actual.mode & 0o7777) !== mode ||
+        !named ||
+        metadata.some((field) => named[field] !== actual[field])
+      )
+        throw new Error(
+          'The server did not report the requested permissions at the selected path.',
+        );
+    } catch (error) {
+      if (!sent) throw error;
+      stop();
+      throw new Error(uncertain, { cause: error });
+    } finally {
+      if (!invalidated && current() && !signal.aborted)
+        await request<void>((cb) => sftp.close(handle, cb)).catch((error) => {
+          stop();
+          throw new Error(
+            sent ? uncertain : 'The file handle could not be closed. Reconnect before retrying.',
+            { cause: error },
+          );
+        });
+    }
+    return true;
+  }
   const approved = await confirm(
     relocating
       ? {

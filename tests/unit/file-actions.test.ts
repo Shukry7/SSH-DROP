@@ -331,4 +331,29 @@ describe('file action payload validation', () => {
       ).toBe(false);
     },
   );
+  it.each(['4755', '888', '0755', ' 640', 640])('rejects non-ordinary mode %j', (mode) => {
+    expect(
+      fileActionSchema.safeParse({
+        action: 'permissions',
+        directory: '/',
+        name: 'file',
+        kind: 'file',
+        expectedMode: 0o600,
+        mode,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects permission payloads that supply ownership or a special-bit expected mode', () => {
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'file',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    };
+    expect(fileActionSchema.safeParse(input).success).toBe(true);
+    expect(fileActionSchema.safeParse({ ...input, owner: 1000 }).success).toBe(false);
+    expect(fileActionSchema.safeParse({ ...input, expectedMode: 0o4600 }).success).toBe(false);
+  });
 });

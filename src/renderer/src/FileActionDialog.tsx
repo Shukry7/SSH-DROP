@@ -16,19 +16,24 @@ export function FileActionDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const relocating = 'destinationDirectory' in input;
+  const editingPermissions = input.action === 'permissions';
   const [name, setName] = useState(input.action === 'rename' ? input.name : '');
   const [destinationDirectory, setDestinationDirectory] = useState('');
   const [operation, setOperation] = useState<'copy' | 'move'>('copy');
+  const [mode, setMode] = useState(editingPermissions ? input.expectedMode : 0);
+  const proposedMode = mode.toString(8).padStart(3, '0');
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
   const title = relocating
     ? 'Copy or move remote file'
-    : input.action === 'rename'
-      ? 'Rename remote item'
-      : input.action === 'create-file'
-        ? 'Create remote file'
-        : 'Create remote folder';
+    : editingPermissions
+      ? 'Edit remote permissions'
+      : input.action === 'rename'
+        ? 'Rename remote item'
+        : input.action === 'create-file'
+          ? 'Create remote file'
+          : 'Create remote folder';
   return (
     <dialog
       ref={dialog}
@@ -45,9 +50,11 @@ export function FileActionDialog({
           void submit(
             relocating
               ? { ...input, action: operation, destinationDirectory }
-              : input.action === 'rename'
-                ? { ...input, newName: name }
-                : { ...input, name },
+              : editingPermissions
+                ? { ...input, mode: proposedMode }
+                : input.action === 'rename'
+                  ? { ...input, newName: name }
+                  : { ...input, name },
           ).then((done) => {
             if (done) close();
           });
@@ -95,6 +102,43 @@ export function FileActionDialog({
               Copies are limited to 128 MiB.
             </p>
           </>
+        ) : editingPermissions ? (
+          <>
+            <p className="muted">
+              Item: <bdi>{input.name}</bdi>
+            </p>
+            <fieldset className="permission-options" disabled={busy}>
+              <legend>Access permissions</legend>
+              {(['Owner', 'Group', 'Others'] as const).map((role, index) => (
+                <div className="permission-row" key={role}>
+                  <strong>{role}</strong>
+                  {(['Read', 'Write', 'Execute'] as const).map((label, offset) => {
+                    const bit = 1 << (8 - index * 3 - offset);
+                    return (
+                      <label key={label}>
+                        <input
+                          type="checkbox"
+                          aria-label={`${role} ${label.toLowerCase()}`}
+                          checked={(mode & bit) !== 0}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setMode((previous) => (checked ? previous | bit : previous & ~bit));
+                          }}
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
+            </fieldset>
+            <p className="muted" aria-live="polite">
+              Current mode <code>{input.mode}</code> · Proposed mode <code>{proposedMode}</code>
+            </p>
+            <p className="muted">
+              On folders, Execute allows users to enter the folder. Changes apply to this item only.
+            </p>
+          </>
         ) : (
           <>
             <label>
@@ -125,7 +169,9 @@ export function FileActionDialog({
               busy ||
               (relocating
                 ? !destinationDirectory.startsWith('/') || destinationDirectory === input.directory
-                : !name || (input.action === 'rename' && name === input.name))
+                : editingPermissions
+                  ? mode === input.expectedMode
+                  : !name || (input.action === 'rename' && name === input.name))
             }
           >
             {busy ? 'Waiting…' : 'Review change'}

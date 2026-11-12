@@ -783,6 +783,25 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                               >
                                 Rename
                               </button>
+                              {entry.mode !== undefined && entry.mode <= 0o777 && (
+                                <button
+                                  className="text-button"
+                                  disabled={!filesReady || fileBusy}
+                                  onClick={() => {
+                                    setError('');
+                                    setActionInput({
+                                      action: 'permissions',
+                                      directory: listing.path,
+                                      name: entry.name,
+                                      kind: entry.kind as 'file' | 'directory',
+                                      expectedMode: entry.mode!,
+                                      mode: entry.mode!.toString(8).padStart(3, '0'),
+                                    });
+                                  }}
+                                >
+                                  Permissions
+                                </button>
+                              )}
                               {entry.kind === 'file' && (
                                 <button
                                   className="text-button"

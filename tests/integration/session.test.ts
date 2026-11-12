@@ -221,6 +221,111 @@ describe('SSH and SFTP over a real loopback connection', () => {
     ).rejects.toThrow('denied permission');
     expect((await session.list('/')).entries.length).toBeGreaterThan(0);
   });
+  it('changes ordinary permission bits on one file or folder and refreshes the reported mode', async () => {
+    await connect();
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'hello.txt',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    } as const;
+    const source = fixture.files.get('/hello.txt');
+    expect(await session.changeFile(input, async () => false)).toBe(false);
+    expect(fixture.permissions.has('/hello.txt')).toBe(false);
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile(input, confirm)).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('/hello.txt'),
+        detail: expect.stringMatching(/Current mode: 600\nProposed mode: 640/),
+      }),
+    );
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o640);
+    expect(fixture.files.get('/hello.txt')).toEqual(source);
+    expect((await session.list('/')).entries).toContainEqual(
+      expect.objectContaining({ name: 'hello.txt', mode: 0o640 }),
+    );
+    expect(
+      await session.changeFile(
+        { ...input, name: 'folder', kind: 'directory', expectedMode: 0o755, mode: '750' },
+        confirm,
+      ),
+    ).toBe(true);
+    expect(fixture.permissions.get('/folder')).toBe(0o750);
+    expect(fixture.permissions.has('/folder/nested.txt')).toBe(false);
+  });
+  it('refuses stale previews, special bits, and symbolic links without applying permissions', async () => {
+    await connect();
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'hello.txt',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    } as const;
+    const confirm = vi.fn(async () => true);
+    await expect(
+      session.changeFile(input, async () => {
+        fixture.permissions.set('/hello.txt', 0o644);
+        return true;
+      }),
+    ).rejects.toThrow('Permissions changed');
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o644);
+    fixture.permissions.set('/hello.txt', 0o4600);
+    await expect(session.changeFile(input, confirm)).rejects.toThrow('special permission bits');
+    fixture.symlinks.add('/link');
+    await expect(session.changeFile({ ...input, name: 'link' }, confirm)).rejects.toThrow(
+      'symbolic link',
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o4600);
+  });
+  it('keeps the session usable when permission editing is denied', async () => {
+    await replaceFixture({ denyChanges: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        {
+          action: 'permissions',
+          directory: '/',
+          name: 'hello.txt',
+          kind: 'file',
+          expectedMode: 0o600,
+          mode: '640',
+        },
+        async () => true,
+      ),
+    ).rejects.toThrow('server refused');
+    expect(fixture.permissions.has('/hello.txt')).toBe(false);
+    expect((await session.list('/')).entries.length).toBeGreaterThan(0);
+  });
+  it.each([{ ignorePermissionChange: true }, { dropAfterChange: true }])(
+    'reports unverified permission changes as uncertain (%j)',
+    async (options) => {
+      await replaceFixture(options);
+      await connect();
+      await expect(
+        session.changeFile(
+          {
+            action: 'permissions',
+            directory: '/',
+            name: 'hello.txt',
+            kind: 'file',
+            expectedMode: 0o600,
+            mode: '640',
+          },
+          async () => true,
+        ),
+      ).rejects.toThrow('result is uncertain');
+      expect(fixture.permissions.get('/hello.txt')).toBe(
+        options.dropAfterChange ? 0o640 : undefined,
+      );
+      await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+    },
+  );
   it('copies and moves regular files across folders after review', async () => {
     await connect();
     const input = { directory: '/', name: 'hello.txt', destinationDirectory: '/folder' };
