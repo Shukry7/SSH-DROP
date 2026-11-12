@@ -17,6 +17,7 @@ Thumbs.db
 artifacts/
 profiles.json
 workflows.json
+idle-settings.json
 known-hosts.json
 vault-key.json
 recovery.json
