@@ -13,6 +13,7 @@ export interface RemoteEntry {
   kind: 'directory' | 'file' | 'symlink' | 'other';
   size: number;
   modified: number;
+  mode?: number;
 }
 
 export interface DirectoryListing {
@@ -20,7 +21,17 @@ export interface DirectoryListing {
   entries: RemoteEntry[];
 }
 export type FileAction =
+  | { action: 'create-file'; directory: string; name: string }
   | { action: 'create-folder'; directory: string; name: string }
+  | { action: 'copy' | 'move'; directory: string; name: string; destinationDirectory: string }
+  | {
+      action: 'permissions';
+      directory: string;
+      name: string;
+      kind: 'file' | 'directory';
+      expectedMode: number;
+      mode: string;
+    }
   | {
       action: 'rename';
       directory: string;
@@ -67,6 +78,7 @@ export interface TransferUpdate {
   total: number;
   status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
   phase?: 'preparing' | 'transferring' | 'verifying' | 'finalizing';
+  folderFiles?: { copied: number; skipped: number; total: number };
   error?: string;
 }
 export interface QueueState {
@@ -95,19 +107,39 @@ export interface RecoveryAction {
   action: 'inspect' | 'rollback' | 'restore-copy' | 'delete-backup' | 'encrypt-backup';
 }
 export type SessionEvent =
+  | { type: 'idle'; state: import('./idle').IdleState }
   | { type: 'workflow-warning'; message: string }
   | { type: 'workflow'; update: import('./workflows').WorkflowUpdate }
   | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
-  | { type: 'status'; connected: boolean; message: string }
+  | {
+      type: 'status';
+      connected: boolean;
+      message: string;
+      lost?: true;
+      terminal?: boolean;
+      sftp?: boolean;
+    }
   | { type: 'terminal'; data: string; id: number }
   | { type: 'terminal-exit' }
+  | { type: 'sftp-exit' }
   | { type: 'transfer'; transfer: TransferUpdate }
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  exportBackup(value: { id: string; passphrase: string }): Promise<Result<boolean>>;
+  openBackup(passphrase: string): Promise<Result<boolean>>;
+  idleStatus(): Promise<Result<import('./idle').IdleState>>;
+  idleSettings(
+    settings: import('./idle').IdleSettings,
+  ): Promise<Result<import('./idle').IdleState>>;
+  idleStayActive(): Promise<Result<void>>;
+  idleEnd(): Promise<Result<void>>;
+  idleReturn(): Promise<Result<void>>;
   workflows(): Promise<Result<import('./workflows').Workflow[]>>;
+  importWorkflow(): Promise<Result<import('./workflows').Workflow | null>>;
+  exportWorkflow(id: string): Promise<Result<boolean>>;
   saveWorkflow(
     value: import('./workflows').Workflow,
   ): Promise<Result<import('./workflows').Workflow>>;
@@ -124,10 +156,16 @@ export interface DesktopAPI {
   saveProfile(input: ProfileInput): Promise<Result<ServerProfile>>;
   loadProfile(id: string): Promise<Result<LoadedProfile>>;
   deleteProfile(id: string): Promise<Result<boolean>>;
-  connect(input: ConnectionInput): Promise<Result<void>>;
+  connect(input: ConnectionInput): Promise<Result<{ sftp: boolean }>>;
+  cancelConnect(): Promise<Result<void>>;
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  openEditor(input: {
+    directory: string;
+    name: string;
+  }): Promise<Result<import('./editor').EditorDocument>>;
+  saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
   recovery(): Promise<Result<RecoveryView[]>>;
   recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;
@@ -141,4 +179,5 @@ export interface DesktopAPI {
   acknowledge(id: number): Promise<Result<void>>;
   resize(size: { cols: number; rows: number }): Promise<Result<void>>;
   onEvent(listener: (event: SessionEvent) => void): () => void;
+  onDropError(listener: (error: string) => void): () => void;
 }

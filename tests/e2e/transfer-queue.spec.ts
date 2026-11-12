@@ -45,7 +45,94 @@ async function dialogs(application: ElectronApplication, paths: string[], folder
   );
 }
 
-test('folder pickers and default-Cancel warning gate verified nested copies without merging', async () => {
+test('trusted drops confirm the displayed folder and reject synthetic and directory drops', async () => {
+  test.setTimeout(60000);
+  const directory = await mkdtemp(join(tmpdir(), 'sshdrop-drop-ui-'));
+  const source = join(directory, 'drop.txt');
+  await writeFile(source, 'desktop drop bytes');
+  const fixture = await sshFixture();
+  const application = await launch(directory);
+  try {
+    await dialogs(application, [], directory);
+    const page = await application.firstWindow();
+    await connect(page, fixture.port);
+    const explorer = page.getByRole('region', { name: 'Remote file explorer' });
+    await explorer.getByRole('button', { name: /▰ folder/ }).click();
+    await expect(explorer).toHaveAttribute('data-sshdrop-upload-directory', '/folder');
+    const heading = explorer.getByRole('heading', { name: /Files/ });
+    const cdp = await page.context().newCDPSession(page);
+    const drop = async (files: string[]) => {
+      await heading.scrollIntoViewIfNeeded();
+      const box = await heading.boundingBox();
+      if (!box) throw new Error('The file explorer is outside the viewport.');
+      const data = { items: [], files, dragOperationsMask: 1 };
+      for (const type of ['dragEnter', 'dragOver', 'drop'] as const)
+        await cdp.send('Input.dispatchDragEvent', { type, data, x: box.x + 4, y: box.y + 4 });
+    };
+    const setApproval = (response: number) =>
+      application.evaluate(({ dialog }, response) => {
+        Object.assign(globalThis, { lastDropDialog: undefined });
+        dialog.showMessageBox = async (...args: unknown[]) => {
+          Object.assign(globalThis, { lastDropDialog: args.at(-1) });
+          return { response, checkboxChecked: false };
+        };
+      }, response);
+    const lastDialog = () =>
+      application.evaluate(
+        () => (globalThis as unknown as { lastDropDialog?: unknown }).lastDropDialog,
+      );
+    await setApproval(0);
+    await heading.evaluate((element) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File(['spoof'], 'synthetic.txt'));
+      element.dispatchEvent(
+        new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }),
+      );
+    });
+    expect(await lastDialog()).toBeUndefined();
+    await drop([directory]);
+    await expect(page.getByRole('alert')).toContainText('Drop regular files');
+    expect(await lastDialog()).toBeUndefined();
+    await drop([source]);
+    await expect.poll(lastDialog).toMatchObject({
+      title: 'Upload dropped files',
+      message: expect.stringContaining('/folder'),
+      detail: expect.stringContaining('drop.txt'),
+      defaultId: 0,
+      cancelId: 0,
+    });
+    expect(fixture.files.has('/folder/drop.txt')).toBe(false);
+    await setApproval(1);
+    await drop([source]);
+    await expect(page.getByRole('cell', { name: /drop\.txt/ })).toBeVisible();
+    expect(fixture.files.get('/folder/drop.txt')?.toString()).toBe('desktop drop bytes');
+    expect(fixture.files.has('/drop.txt')).toBe(false);
+    await writeFile(source, 'would replace the existing file');
+    await application.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        const options = args.at(-1) as import('electron').MessageBoxOptions;
+        Object.assign(globalThis, { lastDropDialog: options });
+        return {
+          response: options.title === 'Upload dropped files' ? 1 : 0,
+          checkboxChecked: false,
+        };
+      };
+    });
+    await drop([source]);
+    await expect.poll(lastDialog).toMatchObject({ title: 'File already exists', defaultId: 0 });
+    await expect(
+      page.getByRole('group', { name: 'Transfer drop.txt', exact: true }).first(),
+    ).toContainText('cancelled');
+    expect(fixture.files.get('/folder/drop.txt')?.toString()).toBe('desktop drop bytes');
+    await cdp.detach();
+  } finally {
+    await application.close();
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test('folder pickers and default-Cancel warnings gate verified copies and merges', async () => {
   test.setTimeout(60000);
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-folder-ui-'));
   const source = join(directory, 'tree');
@@ -64,7 +151,7 @@ test('folder pickers and default-Cancel warning gate verified nested copies with
       dialog.showMessageBox = async (...args: unknown[]) => {
         const options = args.at(-1) as import('electron').MessageBoxOptions;
         if (
-          options.title !== 'Copy folder into a new destination' ||
+          options.title !== 'Copy folder' ||
           options.defaultId !== 0 ||
           options.cancelId !== 0 ||
           !options.message.includes('/tree')
@@ -102,6 +189,31 @@ test('folder pickers and default-Cancel warning gate verified nested copies with
     expect(await page.evaluate(() => window.sshdrop.downloadFolder('/bad/../tree'))).toMatchObject({
       ok: false,
     });
+    await writeFile(join(source, 'content.txt'), 'changed bytes');
+    await writeFile(join(source, 'new.txt'), 'new bytes');
+    await application.evaluate(({ dialog }, source) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] });
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        const options = args.at(-1) as import('electron').MessageBoxOptions;
+        if (options.defaultId !== 0 || options.cancelId !== 0) throw new Error('Unsafe default');
+        if (options.title === 'File already exists') {
+          if (options.buttons?.[0] !== 'Skip file') throw new Error('Missing skip option');
+          return { response: 0, checkboxChecked: false };
+        }
+        if (
+          options.title === 'Merge into existing folder?' &&
+          !options.detail?.includes('File conflicts: 1.')
+        )
+          throw new Error('Missing merge preview');
+        return { response: 1, checkboxChecked: false };
+      };
+    }, source);
+    await page.getByRole('button', { name: 'Upload folder', exact: true }).click();
+    await expect(
+      page.getByRole('group', { name: 'Transfer tree', exact: true }).first(),
+    ).toContainText('1 of 2 files copied · 1 skipped');
+    expect(fixture.files.get('/tree/content.txt')?.toString()).toBe('folder desktop bytes');
+    expect(fixture.files.get('/tree/new.txt')?.toString()).toBe('new bytes');
     await page.screenshot({ path: 'artifacts/folder-transfers.png' });
   } finally {
     await application.close();

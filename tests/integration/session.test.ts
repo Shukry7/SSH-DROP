@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { utils } from 'ssh2';
 import { Session } from '../../src/main/core/session';
 import { HostTrust } from '../../src/main/core/host-trust';
 import type { SessionEvent, TransferUpdate } from '../../src/shared/contracts';
@@ -59,6 +60,8 @@ describe('SSH and SFTP over a real loopback connection', () => {
     expect(events).toContainEqual({
       type: 'status',
       connected: true,
+      terminal: true,
+      sftp: true,
       message: 'Connected. Terminal and SFTP ready.',
     });
   });
@@ -153,6 +156,60 @@ describe('SSH and SFTP over a real loopback connection', () => {
     ).rejects.toThrow('already exists');
     expect(fixture.files.get('/large.bin')?.length).toBe(2 * 1024 * 1024);
   });
+  it('creates only an approved empty file and requests owner-only permissions without truncation', async () => {
+    const beforeCreate = vi.fn();
+    await replaceFixture({ beforeCreate });
+    await connect();
+    const input = {
+      action: 'create-file',
+      directory: '/folder',
+      name: "new 'quoted' 日本語.txt",
+    } as const;
+    expect(await session.changeFile(input, async () => false)).toBe(false);
+    expect(beforeCreate).not.toHaveBeenCalled();
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile(input, confirm)).toBe(true);
+    const { WRITE, CREAT, EXCL } = utils.sftp.OPEN_MODE;
+    expect(beforeCreate).toHaveBeenCalledExactlyOnceWith(
+      `/folder/${input.name}`,
+      WRITE | CREAT | EXCL,
+      0o600,
+    );
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ button: 'Create file', detail: expect.stringContaining('0600') }),
+    );
+    expect(fixture.files.get(`/folder/${input.name}`)).toEqual(Buffer.alloc(0));
+    expect((await session.list('/folder')).entries).toContainEqual(
+      expect.objectContaining({ name: input.name, kind: 'file', size: 0 }),
+    );
+    await expect(session.changeFile(input, confirm)).rejects.toThrow('already exists');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+  it('preserves a file created by another writer after the final preflight', async () => {
+    await replaceFixture({ beforeCreate: (path) => fixture.files.set(path, Buffer.from('keep')) });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'create-file', directory: '/', name: 'race.txt' },
+        async () => true,
+      ),
+    ).rejects.toThrow('server refused');
+    expect(fixture.files.get('/race.txt')?.toString()).toBe('keep');
+    expect((await session.list('/')).entries.some((entry) => entry.name === 'race.txt')).toBe(true);
+  });
+  it('reports uncertain creation and invalidates SFTP if the created handle cannot be closed', async () => {
+    await replaceFixture({ failClose: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'create-file', directory: '/', name: 'closed.txt' },
+        async () => true,
+      ),
+    ).rejects.toThrow('result is uncertain');
+    expect(fixture.files.get('/closed.txt')).toEqual(Buffer.alloc(0));
+    expect(fixture.openedFiles.filter((path) => path === '/closed.txt')).toHaveLength(1);
+    await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+  });
   it('rejects permission failures while preserving the connection', async () => {
     await replaceFixture({ denyChanges: true });
     await connect();
@@ -164,6 +221,203 @@ describe('SSH and SFTP over a real loopback connection', () => {
     ).rejects.toThrow('denied permission');
     expect((await session.list('/')).entries.length).toBeGreaterThan(0);
   });
+  it('changes ordinary permission bits on one file or folder and refreshes the reported mode', async () => {
+    await connect();
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'hello.txt',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    } as const;
+    const source = fixture.files.get('/hello.txt');
+    expect(await session.changeFile(input, async () => false)).toBe(false);
+    expect(fixture.permissions.has('/hello.txt')).toBe(false);
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile(input, confirm)).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('/hello.txt'),
+        detail: expect.stringMatching(/Current mode: 600\nProposed mode: 640/),
+      }),
+    );
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o640);
+    expect(fixture.files.get('/hello.txt')).toEqual(source);
+    expect((await session.list('/')).entries).toContainEqual(
+      expect.objectContaining({ name: 'hello.txt', mode: 0o640 }),
+    );
+    expect(
+      await session.changeFile(
+        { ...input, name: 'folder', kind: 'directory', expectedMode: 0o755, mode: '750' },
+        confirm,
+      ),
+    ).toBe(true);
+    expect(fixture.permissions.get('/folder')).toBe(0o750);
+    expect(fixture.permissions.has('/folder/nested.txt')).toBe(false);
+  });
+  it('refuses stale previews, special bits, and symbolic links without applying permissions', async () => {
+    await connect();
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'hello.txt',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    } as const;
+    const confirm = vi.fn(async () => true);
+    await expect(
+      session.changeFile(input, async () => {
+        fixture.permissions.set('/hello.txt', 0o644);
+        return true;
+      }),
+    ).rejects.toThrow('Permissions changed');
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o644);
+    fixture.permissions.set('/hello.txt', 0o4600);
+    await expect(session.changeFile(input, confirm)).rejects.toThrow('special permission bits');
+    fixture.symlinks.add('/link');
+    await expect(session.changeFile({ ...input, name: 'link' }, confirm)).rejects.toThrow(
+      'symbolic link',
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fixture.permissions.get('/hello.txt')).toBe(0o4600);
+  });
+  it('keeps the session usable when permission editing is denied', async () => {
+    await replaceFixture({ denyChanges: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        {
+          action: 'permissions',
+          directory: '/',
+          name: 'hello.txt',
+          kind: 'file',
+          expectedMode: 0o600,
+          mode: '640',
+        },
+        async () => true,
+      ),
+    ).rejects.toThrow('server refused');
+    expect(fixture.permissions.has('/hello.txt')).toBe(false);
+    expect((await session.list('/')).entries.length).toBeGreaterThan(0);
+  });
+  it.each([{ ignorePermissionChange: true }, { dropAfterChange: true }])(
+    'reports unverified permission changes as uncertain (%j)',
+    async (options) => {
+      await replaceFixture(options);
+      await connect();
+      await expect(
+        session.changeFile(
+          {
+            action: 'permissions',
+            directory: '/',
+            name: 'hello.txt',
+            kind: 'file',
+            expectedMode: 0o600,
+            mode: '640',
+          },
+          async () => true,
+        ),
+      ).rejects.toThrow('result is uncertain');
+      expect(fixture.permissions.get('/hello.txt')).toBe(
+        options.dropAfterChange ? 0o640 : undefined,
+      );
+      await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+    },
+  );
+  it('copies and moves regular files across folders after review', async () => {
+    await connect();
+    const input = { directory: '/', name: 'hello.txt', destinationDirectory: '/folder' };
+    const source = fixture.files.get('/hello.txt');
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile({ ...input, action: 'copy' }, async () => false)).toBe(false);
+    expect(fixture.files.has('/folder/hello.txt')).toBe(false);
+    expect(await session.changeFile({ ...input, action: 'copy' }, confirm)).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('/folder/hello.txt') }),
+    );
+    expect(fixture.files.get('/hello.txt')).toEqual(source);
+    expect(fixture.files.get('/folder/hello.txt')).toEqual(source);
+    await expect(session.changeFile({ ...input, action: 'move' }, confirm)).rejects.toThrow(
+      'already exists',
+    );
+    fixture.files.delete('/folder/hello.txt');
+    expect(await session.changeFile({ ...input, action: 'move' }, confirm)).toBe(true);
+    expect(fixture.files.has('/hello.txt')).toBe(false);
+    expect(fixture.files.get('/folder/hello.txt')).toEqual(source);
+  });
+
+  it('refuses a directory as a copy source or a symbolic link as a move destination', async () => {
+    await connect();
+    fixture.symlinks.add('/alias');
+    const confirm = vi.fn(async () => true);
+    await expect(
+      session.changeFile(
+        { action: 'copy', directory: '/', name: 'folder', destinationDirectory: '/folder' },
+        confirm,
+      ),
+    ).rejects.toThrow('item type changed');
+    await expect(
+      session.changeFile(
+        { action: 'move', directory: '/', name: 'hello.txt', destinationDirectory: '/alias' },
+        confirm,
+      ),
+    ).rejects.toThrow('symbolic link');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+  });
+
+  it('does not publish a corrupt copy and cleans up the staging file', async () => {
+    await replaceFixture({ corruptReadback: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'copy', directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+        async () => true,
+      ),
+    ).rejects.toThrow('SHA-256');
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+    expect(fixture.files.has('/folder/hello.txt')).toBe(false);
+    expect([...fixture.files.keys()].some((path) => path.endsWith('.part'))).toBe(false);
+  });
+
+  it.each(['copy', 'move'] as const)(
+    'preserves a destination created during %s publication',
+    async (action) => {
+      await replaceFixture({
+        beforeRename: (_from, to) => fixture.files.set(to, Buffer.from('keep')),
+      });
+      await connect();
+      await expect(
+        session.changeFile(
+          { action, directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+          async () => true,
+        ),
+      ).rejects.toThrow('server refused');
+      expect(fixture.files.has('/hello.txt')).toBe(true);
+      expect(fixture.files.get('/folder/hello.txt')?.toString()).toBe('keep');
+      expect([...fixture.files.keys()].some((path) => path.endsWith('.part'))).toBe(false);
+    },
+  );
+
+  it.each(['copy', 'move'] as const)(
+    'reports uncertain %s publication without replay after losing the acknowledgment',
+    async (action) => {
+      await replaceFixture({ dropAfterChange: true });
+      await connect();
+      await expect(
+        session.changeFile(
+          { action, directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+          async () => true,
+        ),
+      ).rejects.toThrow('uncertain');
+      expect(fixture.files.has('/hello.txt')).toBe(action === 'copy');
+      expect(fixture.files.get('/folder/hello.txt')?.toString()).toContain('Hello');
+      await connect();
+      expect(fixture.files.has('/hello.txt')).toBe(action === 'copy');
+    },
+  );
   it('reports an applied change with a lost acknowledgment as uncertain without retrying', async () => {
     await replaceFixture({ dropAfterChange: true });
     await connect();
@@ -230,10 +484,46 @@ describe('SSH and SFTP over a real loopback connection', () => {
     expect(events).toContainEqual({
       type: 'status',
       connected: true,
+      terminal: true,
+      sftp: false,
       message: 'Terminal connected. SFTP is unavailable on this server.',
     });
     session.input('still works');
     await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+  });
+  it('times out a stalled terminal request and permits a fresh attempt', async () => {
+    const stall = ['SHELL'];
+    await replaceFixture({ stall });
+    session = new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      2000,
+    );
+    await expect(connect()).rejects.toThrow('setup timed out');
+    expect(fixture.shellRequests()).toBe(1);
+    expect(events.some((event) => event.type === 'status' && event.connected)).toBe(false);
+    stall.length = 0;
+    await expect(connect()).resolves.toEqual({ sftp: true });
+    expect((await session.list('/')).path).toBe('/');
+  });
+
+  it('bounds a stalled SFTP setup and leaves an available terminal', async () => {
+    await replaceFixture({ stall: ['SFTP'] });
+    session = new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      2000,
+    );
+    await expect(connect()).resolves.toEqual({ sftp: false });
+    session.input('still works');
+    await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'status', terminal: true, sftp: false }),
+    );
   });
   it('streams an upload and download without changing the bytes', async () => {
     await connect();

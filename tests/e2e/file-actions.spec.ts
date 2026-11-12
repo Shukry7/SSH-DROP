@@ -28,12 +28,12 @@ async function respond(application: ElectronApplication, response: number) {
     };
   }, response);
 }
-async function connect(page: Page, port: number) {
+async function connect(page: Page, port: number, button = 'Connect to server') {
   await page.getByLabel('Host', { exact: true }).fill('127.0.0.1');
   await page.getByLabel('Username', { exact: true }).fill('tester');
   await page.getByLabel('Port', { exact: true }).fill(String(port));
   await page.getByLabel('Password', { exact: true }).fill('test-password');
-  await page.getByRole('button', { name: 'Connect to server' }).click();
+  await page.getByRole('button', { name: button, exact: true }).click();
   await expect(page.getByRole('cell', { name: /hello.txt/ })).toBeVisible();
 }
 
@@ -47,6 +47,67 @@ test('remote folder and file actions require confirmation, preserve collisions, 
     await respond(application, 1);
     const page = await application.firstWindow();
     await connect(page, fixture.port);
+    const create = page.getByRole('button', { name: 'New file', exact: true });
+    const createFile = page.getByRole('dialog', { name: 'Create remote file', exact: true });
+    await create.click();
+    await createFile.getByLabel('New name').fill('hello.txt');
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(createFile.getByRole('alert')).toContainText('already exists');
+    await createFile.getByLabel('New name').fill('empty.txt');
+    await respond(application, 0);
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(createFile).not.toBeVisible();
+    expect(fixture.files.has('/empty.txt')).toBe(false);
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      defaultId: 0,
+      cancelId: 0,
+      buttons: ['Cancel', 'Create file'],
+      message: expect.stringContaining('/empty.txt'),
+      detail: expect.stringContaining('0600'),
+    });
+    await respond(application, 1);
+    await create.click();
+    await createFile.getByLabel('New name').fill('empty.txt');
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(page.getByRole('cell', { name: /empty\.txt/ })).toBeVisible();
+    expect(fixture.files.get('/empty.txt')).toEqual(Buffer.alloc(0));
+    const empty = page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /empty\.txt/ }) });
+    const permissionsButton = empty.getByRole('button', { name: 'Permissions', exact: true });
+    const permissionsDialog = page.getByRole('dialog', { name: 'Edit remote permissions' });
+    await permissionsButton.click();
+    await expect(permissionsDialog.getByRole('button', { name: 'Review change' })).toBeDisabled();
+    await permissionsDialog.getByRole('checkbox', { name: 'Group read' }).check();
+    await expect(permissionsDialog.getByText(/Proposed mode/)).toContainText('640');
+    await respond(application, 0);
+    await permissionsDialog.getByRole('button', { name: 'Review change' }).click();
+    await expect(permissionsDialog).not.toBeVisible();
+    expect(fixture.permissions.has('/empty.txt')).toBe(false);
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      type: 'warning',
+      defaultId: 0,
+      cancelId: 0,
+      buttons: ['Cancel', 'Change permissions'],
+      detail: expect.stringMatching(/Current mode: 600\nProposed mode: 640/),
+    });
+    await respond(application, 1);
+    await permissionsButton.click();
+    await permissionsDialog.getByRole('checkbox', { name: 'Group read' }).check();
+    await permissionsDialog.getByRole('button', { name: 'Review change' }).click();
+    await expect(permissionsDialog).not.toBeVisible();
+    expect(fixture.permissions.get('/empty.txt')).toBe(0o640);
+    await permissionsButton.click();
+    await expect(permissionsDialog.getByRole('checkbox', { name: 'Group read' })).toBeChecked();
+    await permissionsDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(
       page
         .getByRole('row')
@@ -120,6 +181,38 @@ test('remote folder and file actions require confirmation, preserve collisions, 
     await changed.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect(changed).toHaveCount(0);
     expect(fixture.files.has('/changed.txt')).toBe(false);
+    const fileRow = (name: string) =>
+      page.getByRole('row').filter({
+        has: page.getByRole('button', { name: new RegExp(name) }),
+      });
+    const relocate = page.getByRole('dialog', { name: 'Copy or move remote file' });
+    await fileRow('empty\\.txt').getByRole('button', { name: 'Copy or move' }).click();
+    await relocate.getByLabel('Destination folder').fill('/folder');
+    await relocate.getByRole('button', { name: 'Review change' }).click();
+    await expect(relocate).not.toBeVisible();
+    expect(fixture.files.has('/empty.txt')).toBe(true);
+    expect(fixture.files.get('/folder/empty.txt')).toEqual(Buffer.alloc(0));
+    await page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /folder/ }) })
+      .getByRole('button', { name: /▰ folder/ })
+      .click();
+    await fileRow('nested\\.txt').getByRole('button', { name: 'Copy or move' }).click();
+    await relocate.getByLabel('Operation').selectOption('move');
+    await relocate.getByLabel('Destination folder').fill('/');
+    await relocate.getByRole('button', { name: 'Review change' }).click();
+    await expect(relocate).not.toBeVisible();
+    await expect(fileRow('nested\\.txt')).toHaveCount(0);
+    expect(fixture.files.get('/nested.txt')?.toString()).toBe('nested\n');
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      type: 'warning',
+      defaultId: 0,
+      buttons: ['Cancel', 'Move file'],
+    });
   } finally {
     await application.close();
     await fixture.close();
@@ -158,14 +251,14 @@ test('disconnecting while a confirmation is pending never applies the old change
       .toBe('function');
     await expect(page.getByRole('button', { name: 'New folder', exact: true })).toBeDisabled();
     fixture.drop();
-    await expect(page.locator('.connection-pill')).toContainText('No active connection');
+    await expect(page.locator('.connection-pill')).toContainText('Connection lost');
     await application.evaluate(() =>
       (globalThis as unknown as { releaseFileConfirmation: () => void }).releaseFileConfirmation(),
     );
     await expect(page.getByRole('alert')).toContainText('inspect the remote folder');
     expect(fixture.files.has('/hello.txt')).toBe(true);
     await respond(application, 1);
-    await connect(page, fixture.port);
+    await connect(page, fixture.port, 'Reconnect to server');
     await expect(file).toBeVisible();
   } finally {
     await application.close();

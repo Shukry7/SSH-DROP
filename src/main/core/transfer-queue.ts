@@ -9,6 +9,7 @@ export interface QueuedFile {
   local: string;
   remote: string;
   folder?: true;
+  sourceFingerprint?: string;
 }
 export interface QueuedJob extends QueuedFile {
   id: string;
@@ -22,8 +23,14 @@ const fileSchema = z
     local: z.string().max(4096).refine(isAbsolute).refine(safeDisplayPath),
     remote: remotePathSchema.refine(safeDisplayPath),
     folder: z.literal(true).optional(),
+    sourceFingerprint: z
+      .string()
+      .max(160)
+      .regex(/^\d+:\d+:\d+:-?\d+:-?\d+$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((job) => !job.sourceFingerprint || (job.direction === 'upload' && !job.folder));
 
 // Only main owns paths. Nothing is persisted or automatically replayed after a failure.
 export class TransferQueue {

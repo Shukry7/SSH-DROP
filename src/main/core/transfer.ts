@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, type Stats as LocalStats } from 'node:fs';
+import { constants, createReadStream, type Stats as LocalStats } from 'node:fs';
 import { link, lstat, open, unlink, type FileHandle } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { transferWait, TransferFailure } from './transfer-wait';
+import { droppedFileFingerprint } from './dropped-files';
 
 export const transferLimits = { request: 30000, inactivity: 120000, cleanup: 3000 };
 export const transferWarning =
@@ -27,6 +28,8 @@ const metadata = (stats: Stats | LocalStats) => {
 };
 
 export async function runTransfer(options: {
+  beforePublish?: () => Promise<void>;
+  sourceFingerprint?: string;
   sftp: SFTPWrapper;
   direction: 'upload' | 'download';
   local: string;
@@ -221,7 +224,22 @@ export async function runTransfer(options: {
     publish();
     let initial: string;
     if (direction === 'upload') {
-      sourceLocal = await localCall(() => open(local, 'r'), closeLocalLate);
+      const fingerprint = options.sourceFingerprint;
+      sourceLocal = await localCall(
+        () =>
+          open(
+            local,
+            fingerprint
+              ? constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+              : 'r',
+          ),
+        closeLocalLate,
+      );
+      if (fingerprint) {
+        const opened = await localCall(() => sourceLocal!.stat({ bigint: true }));
+        if (droppedFileFingerprint(opened) !== fingerprint)
+          throw new TransferFailure('A dropped file changed after review. Drop it again.');
+      }
       const info = await localCall(() => sourceLocal!.stat());
       if (!info.isFile())
         throw new TransferFailure(
@@ -384,6 +402,7 @@ export async function runTransfer(options: {
     check();
     update.phase = 'finalizing';
     publish();
+    await options.beforePublish?.();
     check();
     publishing = true;
     try {

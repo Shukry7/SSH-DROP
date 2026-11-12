@@ -1,6 +1,11 @@
 import { posix } from 'node:path';
 import { z } from 'zod';
 
+export const portablePassphrase = z.string().min(16).max(256);
+export const portableExportRequest = z
+  .object({ id: z.string().uuid(), passphrase: portablePassphrase })
+  .strict();
+
 const hasControl = (value: string) =>
   Array.from(value).some(
     (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
@@ -111,7 +116,24 @@ export const downloadSelectionSchema = z
 const actionFields = { directory: actionDirectorySchema, name: actionNameSchema };
 export const fileActionSchema = z
   .discriminatedUnion('action', [
+    z.object({ action: z.literal('create-file'), ...actionFields }).strict(),
     z.object({ action: z.literal('create-folder'), ...actionFields }).strict(),
+    z
+      .object({
+        action: z.literal('permissions'),
+        ...actionFields,
+        kind: z.enum(['file', 'directory']),
+        expectedMode: z.number().int().min(0).max(0o777),
+        mode: z.string().regex(/^[0-7]{3}$/, 'Enter three octal permission digits, such as 640.'),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.enum(['copy', 'move']),
+        ...actionFields,
+        destinationDirectory: actionDirectorySchema,
+      })
+      .strict(),
     z
       .object({
         action: z.literal('rename'),
@@ -133,6 +155,12 @@ export const fileActionSchema = z
         ctx.addIssue({ code: 'custom', message: 'The remote path is too long.' });
     if (input.action === 'rename' && input.name === input.newName)
       ctx.addIssue({ code: 'custom', message: 'Choose a different name.' });
+    if ('destinationDirectory' in input) {
+      if (input.destinationDirectory === input.directory)
+        ctx.addIssue({ code: 'custom', message: 'Choose a different destination folder.' });
+      if (Buffer.byteLength(posix.join(input.destinationDirectory, input.name), 'utf8') > 4096)
+        ctx.addIssue({ code: 'custom', message: 'The destination path is too long.' });
+    }
   });
 export function childPath(directory: string, name: string): string {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))

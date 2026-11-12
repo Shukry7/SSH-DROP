@@ -2,6 +2,39 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.1] — Unreleased
+
+### Added
+
+- Edit remote UTF-8 text files up to 1 MiB from the explorer. Drafts have unsaved-change protection and preserve the original LF/CRLF line endings and UTF-8 BOM.
+- Verified saves with remote-change detection, basic permission preservation, encrypted recovery backup or a separately confirmed save without backup. Unsupported replacement servers, binary files, mixed line endings, special files, and stale sessions are refused.
+
+### Limits
+
+- One plain-text editor is available at a time. Drafts are held in memory and are cleared when idle protection replaces the workspace. Network loss keeps a draft visible for copying but disables saving until the file is reopened.
+- Syntax highlighting, large-file editing, automatic merging, multiple editor tabs, and saved local drafts remain planned. Stop other writers while saving because SFTP cannot provide a compare-and-swap against external edits.
+
+## [0.2.0-alpha.6] — Unreleased
+
+### Added
+
+- Opt-in idle session protection with Off/5/10/15/30/60-minute settings, a top-bar timer and a final-minute modal countdown with Stay active and End session now. Optional generic background notifications never steal focus.
+- Main-owned timing and API enforcement, connection/approval invalidation, native-dialog cancellation and renderer replacement at expiry. Return opens a blank connection form; it never restores the old session or replays commands.
+- Persisted validated settings, conservative handling of corrupt data, and regressions for warning boundaries, clocks, sleep/lock events, pending approvals/pickers and workflow interruption.
+- Export individual encrypted recovery backups up to 32 MiB as passphrase-protected portable files. Open them offline into new local copies without the original OS key store. Wrong passphrases and damaged exports produce no destination file; existing files are never overwritten.
+- Explicit Reconnect to server and Cancel connection attempt controls. Keep nonsecret connection fields in the current workspace, clear submitted credentials, and distinguish a lost SSH connection from a closed terminal or unavailable SFTP. Connection setup is bounded, and a late host approval cannot authorize a cancelled attempt. Interrupted operations are never replayed.
+- Merge folder uploads and downloads after a bounded destination scan and separate approval. Each conflicting file can be skipped, copied under a new name, or replaced with or without a recovery backup where supported. Transfer rows show how many files were copied or skipped. A failed merge stops and leaves completed changes available for inspection.
+- Create an empty remote file from the explorer after confirmation. SSHDrop requests owner-only access and uses exclusive SFTP creation to preserve existing paths.
+- Copy or move regular files to another folder on the connected server after confirmation. Copies are limited to 128 MiB and verified before publication. Moves use SFTP rename and preserve the source if the server refuses the move. Existing destinations are refused.
+- Edit ordinary read, write, and execute permissions on one remote file or folder. Review both modes before confirming, and verify the requested mode through SFTP after the change.
+- Drop local files onto the remote explorer to review the destination and queue uploads. The queue rejects files changed since review and applies the usual transfer verification and overwrite choices.
+- Search and group saved workflows, duplicate definitions into the editor, and export/import individual workflow JSON files. Imports open for review with new IDs and run confirmation enabled. Existing definitions and entered variable values are preserved separately.
+
+### Limits
+
+- This is disconnect-and-clear protection, not an authenticated app lock. Expiry or supported screen-lock/sleep events may interrupt active transfers and workflows; remote processes can continue. Unsaved inputs are lost; saved local configuration and recovery backups remain.
+- Automatic protection defaults off. OS integration, notifications, accessibility and real-device behavior require platform validation. Existing alpha.5 installers remain unchanged; no alpha.6 release has been published.
+
 ## [0.2.0-alpha.5] — 2026-11-04
 
 ### Added

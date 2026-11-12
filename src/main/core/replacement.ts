@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, extname, join, posix } from 'node:path';
+import { basename, dirname, extname, join, posix, resolve } from 'node:path';
 import type { RecoveryAction, RecoveryView } from '../../shared/contracts';
 import {
   RecoveryStore,
@@ -24,6 +24,7 @@ export interface ReplacementContext {
   localIO: ReplacementIO;
   remoteIO: ReplacementIO;
   check(): void;
+  beforePublish?: () => Promise<void>;
   transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void>;
   confirm(approval: ReplacementApproval): Promise<number>;
 }
@@ -78,10 +79,54 @@ export class Replacements {
     const i = this.c.identity;
     return `Server: ${i.username}@${i.host}:${i.port}\nDestination: ${path}\n\n`;
   }
+  async saveEditedFile(
+    remote: string,
+    previous: FileSnapshot,
+    incoming: FileSnapshot,
+  ): Promise<boolean> {
+    identitySchema.parse(this.c.identity);
+    const local = resolve('Edited in SSHDrop');
+    recoveryPathsSchema.parse({ local, remote });
+    const io = this.c.remoteIO;
+    if (!unchangedFile(await io.snapshot(remote), previous))
+      throw new Error(
+        'The remote file changed. Your draft is still open. Reopen the remote file after copying your draft elsewhere.',
+      );
+    if (!(await io.supports(remote)))
+      throw new Error(
+        'This server does not support atomic replacement. The draft has not been saved.',
+      );
+    const choice = await this.approve({
+      title: 'Save edited remote file',
+      buttons: ['Cancel', 'Back up and save', 'Save without backup'],
+      detail:
+        this.describe(remote) +
+        'Saving replaces the remote file contents. Back up and save keeps an encrypted recovery copy on this computer and requires its OS key store. Save without backup has no rollback. Stop other writers while saving. Basic permissions are preserved; ACLs and extended metadata may change.',
+    });
+    if (choice === 0) return false;
+    await this.c.beforePublish?.();
+    if (choice === 1) {
+      await this.replace({ direction: 'upload', local, remote, previous }, undefined, incoming);
+    } else if (choice === 2) {
+      if (
+        (await this.approve({
+          title: 'Save without recovery backup',
+          buttons: ['Cancel', 'Save permanently'],
+          detail:
+            this.describe(remote) +
+            'The previous contents will have no SSHDrop backup or rollback. Inspect the remote file if the connection fails.',
+        })) !== 1
+      )
+        return false;
+      await this.replaceWithoutBackup('upload', local, remote, previous, incoming);
+    } else throw new Error('Invalid editor save choice.');
+    return true;
+  }
   async transfer(
     direction: 'upload' | 'download',
     local: string,
     remote: string,
+    skipLabel = 'Cancel',
   ): Promise<boolean> {
     // Reject control/bidirectional characters before displaying a native warning,
     // rather than waiting until a recovery record is written after approval.
@@ -103,7 +148,7 @@ export class Replacements {
     const choice = await this.approve({
       title: 'File already exists',
       buttons: [
-        'Cancel',
+        skipLabel,
         'Keep both',
         ...(supported ? ['Back up and replace', 'Replace without backup'] : []),
       ],
@@ -171,6 +216,7 @@ export class Replacements {
         );
       if (!unchangedFile(await io.snapshot(target), previous))
         throw new Error('Destination changed. The original has not been replaced.');
+      await c.beforePublish?.();
       c.check();
       publishing = true;
       await io.replace(stage, target);
@@ -259,6 +305,7 @@ export class Replacements {
         );
       c.check();
       await c.store.update(record.id, c.identity, { state: 'publishing', installed });
+      await c.beforePublish?.();
       c.check();
       publishing = true;
       await io.replace(stage, target, safety);

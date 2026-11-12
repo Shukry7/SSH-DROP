@@ -70,8 +70,12 @@ export function Terminal({ connected }: { connected: boolean }) {
         terminal.current?.write(event.data, () => {
           void window.sshdrop.acknowledge(event.id);
         });
-      if (event.type === 'terminal-exit')
-        terminal.current?.writeln('\r\n[Shell closed. Reconnect to start another shell.]');
+      if (event.type === 'terminal-exit') {
+        active.current = false;
+        terminal.current?.writeln(
+          '\r\n[Shell closed. Disconnect and reconnect for a fresh terminal.]',
+        );
+      }
     });
     return () => {
       unsubscribe();

@@ -14,13 +14,21 @@ import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
 import { changeRemoteFile, type FileActionWarning } from './file-actions';
 import { runTransfer, transferLimits, transferWarning } from './transfer';
-import { Replacements, recoveryView, type ReplacementApproval } from './replacement';
+import {
+  Replacements,
+  recoveryView,
+  type ReplacementApproval,
+  type ReplacementContext,
+} from './replacement';
 import { replacementIO } from './replacement-io';
-import { type RecoveryStore, type ServerIdentity } from './recovery-store';
+import { type RecoveryRecord, type RecoveryStore, type ServerIdentity } from './recovery-store';
 import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
+import { readDroppedFileFingerprint } from './dropped-files';
+import { RemoteEditor } from './remote-editor';
 import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
+import { TransferFailure, transferWait } from './transfer-wait';
 
 export class Session {
   private client?: Client;
@@ -28,6 +36,7 @@ export class Session {
   private shell?: ClientChannel;
   private transfers = new Map<string, AbortController>();
   private connecting = false;
+  private setup?: AbortController;
   private pendingOutput = new Map<number, number>();
   private outputBytes = 0;
   private outputId = 0;
@@ -36,8 +45,18 @@ export class Session {
   private recoveryBusy = false;
   private workflow?: { id: string; controller: AbortController };
   private commandServer = '';
+  private readonly editor = new RemoteEditor();
   private readonly queue = new TransferQueue(
-    (job) => this.transfer(job.direction, job.local, job.remote, undefined, job.id, job.folder),
+    (job) =>
+      this.transfer(
+        job.direction,
+        job.local,
+        job.remote,
+        undefined,
+        job.id,
+        job.folder,
+        job.sourceFingerprint,
+      ),
     (transfer) => this.emit({ type: 'transfer', transfer }),
     (queue) => this.emit({ type: 'queue', queue }),
   );
@@ -50,64 +69,80 @@ export class Session {
       store: RecoveryStore;
       confirm: (approval: ReplacementApproval) => Promise<number>;
     },
+    private readonly setupTimeout = 30000,
   ) {}
 
-  async connect(config: ConnectConfig): Promise<void> {
+  async connect(config: ConnectConfig, signal?: AbortSignal): Promise<{ sftp: boolean }> {
     if (this.client || this.connecting)
       throw new Error('Disconnect the current session before connecting again.');
+    signal?.throwIfAborted();
     this.connecting = true;
+    const setup = new AbortController();
+    this.setup = setup;
+    const cancel = () => setup.abort(signal?.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
     this.emit({ type: 'terminal-reset' });
     const client = new Client();
     this.client = client;
     let trustError: Error | undefined;
     let fingerprint = '';
+    client.on('error', () => {
+      /* The setup promise or transport close reports the failure. */
+    });
+    client.on('close', () => {
+      if (this.client !== client) return;
+      if (this.setup === setup) {
+        setup.abort(trustError ?? new Error('Connection closed during setup.'));
+        return;
+      }
+      this.disconnect();
+      this.emit({
+        type: 'status',
+        connected: false,
+        lost: true,
+        message: 'Connection lost. Reconnect to start a new session; nothing will be replayed.',
+      });
+    });
     try {
-      await new Promise<void>((resolve, reject) => {
-        client.once('ready', resolve);
-        client.once('error', (error) => reject(trustError ?? error));
-        client.once('close', () => reject(trustError ?? new Error('Connection closed.')));
-        client.connect({
-          ...config,
-          readyTimeout: 30000,
-          keepaliveInterval: 15000,
-          keepaliveCountMax: 3,
-          hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
-            void this.trust.verify(config.host!, config.port ?? 22, key).then(
-              (accepted) => {
-                if (accepted) fingerprint = createHash('sha256').update(key).digest('hex');
-                callback(accepted);
-              },
-              (error: Error) => {
-                trustError = error;
-                callback(false);
-              },
-            );
-          },
-        });
-      });
-      client.on('error', () => {
-        /* The close event reports the disconnected state. */
-      });
-      client.on('close', () => {
-        if (this.client === client) {
-          this.disconnect();
-          this.emit({
-            type: 'status',
-            connected: false,
-            message: 'Connection closed. Connect again to start a new shell.',
+      await transferWait<void>(
+        (done) => {
+          client.once('ready', () => done());
+          client.once('error', (error) => done(trustError ?? error));
+          client.connect({
+            ...config,
+            readyTimeout: this.setupTimeout,
+            keepaliveInterval: 15000,
+            keepaliveCountMax: 3,
+            hostVerifier: (key: Buffer, callback: (accepted: boolean) => void) => {
+              void this.trust.verify(config.host!, config.port ?? 22, key, setup.signal).then(
+                (accepted) => {
+                  if (setup.signal.aborted) return;
+                  if (accepted) fingerprint = createHash('sha256').update(key).digest('hex');
+                  callback(accepted);
+                },
+                (error: Error) => {
+                  if (setup.signal.aborted) return;
+                  trustError = error;
+                  callback(false);
+                },
+              );
+            },
           });
-        }
-      });
-      const shell = await new Promise<ClientChannel>((resolve, reject) =>
-        client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, (error, stream) =>
-          error ? reject(error) : resolve(stream),
-        ),
+        },
+        this.setupTimeout,
+        setup.signal,
       );
-      this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
-      if (this.client !== client) {
+      const shell = await transferWait<ClientChannel>(
+        (done) => client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, done),
+        this.setupTimeout,
+        setup.signal,
+        (late) => late.close(),
+      );
+      if (setup.signal.aborted || this.client !== client) {
         shell.close();
         throw new Error('Connection was cancelled.');
       }
+      this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
       this.shell = shell;
       const decoder = new StringDecoder('utf8');
       shell.on('data', (data: Buffer) => {
@@ -124,10 +159,13 @@ export class Session {
         this.emit({ type: 'terminal-exit' });
       });
       try {
-        const sftp = await new Promise<SFTPWrapper>((resolve, reject) =>
-          client.sftp((error, sftp) => (error ? reject(error) : resolve(sftp))),
+        const sftp = await transferWait<SFTPWrapper>(
+          (done) => client.sftp(done),
+          this.setupTimeout,
+          setup.signal,
+          (late) => late.end(),
         );
-        if (this.client !== client) {
+        if (setup.signal.aborted || this.client !== client) {
           sftp.end();
           throw new Error('Connection was cancelled.');
         }
@@ -138,31 +176,50 @@ export class Session {
           username: config.username!,
           fingerprint,
         };
-        sftp.on('error', () => {
-          if (this.sftp === sftp) this.sftp = undefined;
-        });
-        this.emit({
-          type: 'status',
-          connected: true,
-          message: 'Connected. Terminal and SFTP ready.',
-        });
+        const filesClosed = () => {
+          if (this.sftp !== sftp) return;
+          this.sftp = undefined;
+          this.identity = undefined;
+          this.emit({ type: 'sftp-exit' });
+        };
+        sftp.on('error', filesClosed);
+        sftp.on('close', filesClosed);
       } catch {
+        setup.signal.throwIfAborted();
         if (this.client !== client) throw new Error('Connection was cancelled.');
-        this.emit({
-          type: 'status',
-          connected: true,
-          message: 'Terminal connected. SFTP is unavailable on this server.',
-        });
       }
+      const terminal = !!this.shell;
+      const sftp = !!this.sftp;
+      this.emit({
+        type: 'status',
+        connected: true,
+        terminal,
+        sftp,
+        message: terminal
+          ? sftp
+            ? 'Connected. Terminal and SFTP ready.'
+            : 'Terminal connected. SFTP is unavailable on this server.'
+          : 'SSH connected, but the terminal shell closed.',
+      });
+      return { sftp };
     } catch (error) {
-      this.disconnect();
+      if (this.client === client) this.disconnect();
+      client.destroy();
+      if (error instanceof TransferFailure)
+        throw new Error('SSH connection setup timed out. Check the server and try again.', {
+          cause: error,
+        });
       throw error;
     } finally {
+      signal?.removeEventListener('abort', cancel);
+      this.setup = undefined;
       this.connecting = false;
     }
   }
 
   disconnect(): void {
+    this.editor.clear();
+    this.setup?.abort(new Error('Connection was cancelled.'));
     if (this.workflow)
       this.emit({
         type: 'workflow-warning',
@@ -273,13 +330,63 @@ export class Session {
     const sftp = this.files();
     return readDirectory(sftp, path, () => this.sftp === sftp);
   }
+  async editText(input: { path: string } | { token: string; text: string }) {
+    if (
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error('Finish the active operation before opening or saving an editor file.');
+    const sftp = this.files();
+    const controller = new AbortController();
+    this.fileAction = controller;
+    const current = () => this.sftp === sftp;
+    const check = () => {
+      controller.signal.throwIfAborted();
+      if (!current()) throw new Error('The connection changed. Reopen the editor file.');
+    };
+    const invalidate = () => {
+      if (!current()) return;
+      this.disconnect();
+      this.emit({
+        type: 'status',
+        connected: false,
+        lost: true,
+        message:
+          'Editor operation interrupted. Inspect the remote file and recovery before retrying.',
+      });
+    };
+    try {
+      return await this.editor.operate(
+        { sftp, signal: controller.signal, current, invalidate },
+        async (io, guard) => {
+          if ('path' in input) return this.editor.open(input.path, io, guard);
+          if (!this.recoveryOptions || !this.identity)
+            throw new Error('Editor saving is unavailable.');
+          return this.editor.save(input.token, input.text, io, guard, {
+            ...this.recoveryOptions,
+            identity: this.identity,
+            check,
+          });
+        },
+      );
+    } catch (error) {
+      if (error instanceof Error && /uncertain/i.test(error.message))
+        this.emit({ type: 'transfer-warning', message: transferWarning });
+      throw error;
+    } finally {
+      if (this.fileAction === controller) this.fileAction = undefined;
+    }
+  }
 
   async changeFile(
     input: FileAction,
     confirm: (warning: FileActionWarning) => Promise<boolean>,
   ): Promise<boolean> {
     if (this.workflow) throw new Error('Stop the running workflow before changing files.');
-    if (this.fileAction || this.transfers.size || this.queue.size)
+    if (this.fileAction || this.transfers.size || this.queue.size || this.recoveryBusy)
       throw new Error('Wait for the active file operation or transfer to finish.');
     const sftp = this.files();
     const controller = new AbortController();
@@ -295,11 +402,13 @@ export class Session {
         () => {
           if (this.client !== client) return;
           this.disconnect();
+          client?.destroy();
           this.emit({
             type: 'status',
             connected: false,
+            lost: true,
             message:
-              'File operation interrupted. Reconnect and inspect the folder before retrying.',
+              'File operation interrupted. Reconnect and inspect the affected folders before retrying.',
           });
         },
       );
@@ -355,6 +464,35 @@ export class Session {
     await this.transfer('upload', 'Recovery', '/', action);
   }
 
+  async withBackupExport<T>(
+    id: string,
+    operation: (record: RecoveryRecord, store: RecoveryStore, check: () => void) => Promise<T>,
+  ): Promise<T> {
+    const store = this.recoveryOptions?.store;
+    if (!store || !this.identity)
+      throw new Error('Connect to the verified server to export its backups.');
+    if (
+      this.recoveryBusy ||
+      this.transfers.size ||
+      this.fileAction ||
+      this.workflow ||
+      (this.queue.size && !this.queue.isPaused)
+    )
+      throw new Error(
+        'Finish active transfers, workflows or recovery operations before exporting.',
+      );
+    const check = this.lease();
+    this.recoveryBusy = true;
+    try {
+      const record = await store.load(id, this.identity);
+      check();
+      if (!record.encrypted) throw new Error('Secure this legacy backup before exporting.');
+      return await operation(record, store, check);
+    } finally {
+      this.recoveryBusy = false;
+    }
+  }
+
   async transfer(
     direction: 'upload' | 'download',
     local: string,
@@ -362,6 +500,7 @@ export class Session {
     recoveryAction?: RecoveryAction,
     queueId?: string,
     folder = false,
+    sourceFingerprint?: string,
   ): Promise<void> {
     if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     if (
@@ -400,13 +539,56 @@ export class Session {
       this.emit({
         type: 'status',
         connected: false,
+        lost: true,
         message:
           'Transfer interrupted. Reconnect and inspect recovery and the selected folders before retrying.',
       });
     };
+    const warn = () => this.emit({ type: 'transfer-warning', message: transferWarning });
+    const verifyDroppedSource = async () => {
+      if (!sourceFingerprint) return;
+      const latest = await transferWait<string>(
+        (done) => {
+          void readDroppedFileFingerprint(local).then(
+            (value) => done(undefined, value),
+            (error: Error) => done(error),
+          );
+        },
+        this.transferTiming.request,
+        controller.signal,
+      );
+      if (latest !== sourceFingerprint)
+        throw new Error('A dropped file changed after review. Drop it again.');
+    };
+    const recovery = this.recoveryOptions;
+    const identity = this.identity;
+    const replacements =
+      recovery && identity
+        ? (transfer: ReplacementContext['transfer'], guard?: () => Promise<void>) =>
+            new Replacements({
+              store: recovery.store,
+              identity,
+              localIO: replacementIO(undefined, controller.signal, current, invalidate),
+              remoteIO: replacementIO(sftp, controller.signal, current, invalidate),
+              check: () => {
+                controller.signal.throwIfAborted();
+                if (!current()) throw new Error('Connection changed.');
+              },
+              confirm: async (approval) => {
+                await guard?.();
+                const choice = await recovery.confirm(approval);
+                await guard?.();
+                return choice;
+              },
+              beforePublish: guard,
+              transfer,
+            })
+        : undefined;
     publish();
     try {
+      if (sourceFingerprint) await verifyDroppedSource();
       if (folder) {
+        this.recoveryBusy = !!replacements;
         await runFolderTransfer({
           sftp,
           direction,
@@ -418,24 +600,26 @@ export class Session {
           publish,
           limits: this.transferTiming,
           invalidate,
-          warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
+          warn,
+          merge:
+            recovery && replacements
+              ? {
+                  confirm: recovery.confirm,
+                  conflict: (local, remote, transfer, guard) =>
+                    replacements(transfer, guard).transfer(direction, local, remote, 'Skip file'),
+                }
+              : undefined,
         });
         return;
       }
-      if (this.recoveryOptions && this.identity) {
+      if (replacements) {
         this.recoveryBusy = true;
         const check = () => {
           controller.signal.throwIfAborted();
           if (!current()) throw new Error('Connection changed.');
         };
-        const replacements = new Replacements({
-          store: this.recoveryOptions.store,
-          identity: this.identity,
-          localIO: replacementIO(undefined, controller.signal, current, invalidate),
-          remoteIO: replacementIO(sftp, controller.signal, current, invalidate),
-          check,
-          confirm: this.recoveryOptions.confirm,
-          transfer: async (d, l, r) => {
+        const replacement = replacements(
+          async (d, l, r) => {
             check();
             const nested: TransferUpdate = {
               ...update,
@@ -449,6 +633,7 @@ export class Session {
               direction: d,
               local: l,
               remote: r,
+              sourceFingerprint: d === 'upload' && l === local ? sourceFingerprint : undefined,
               signal: controller.signal,
               current,
               update: nested,
@@ -461,17 +646,18 @@ export class Session {
                 publish();
               },
               limits: this.transferTiming,
-              warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
+              warn,
               invalidate,
             });
             check();
             if (nested.status !== 'completed')
               throw new Error(nested.error ?? 'Transfer cancelled.');
           },
-        });
+          sourceFingerprint ? verifyDroppedSource : undefined,
+        );
         const completed = recoveryAction
-          ? await replacements.recover(recoveryAction.id, recoveryAction.action)
-          : await replacements.transfer(direction, local, path);
+          ? await replacement.recover(recoveryAction.id, recoveryAction.action)
+          : await replacement.transfer(direction, local, path);
         update.status = completed ? 'completed' : 'cancelled';
         publish();
         return;
@@ -481,23 +667,14 @@ export class Session {
         direction,
         local,
         remote: path,
+        sourceFingerprint,
         signal: controller.signal,
         current: () => this.sftp === sftp,
         update,
         publish,
         limits: this.transferTiming,
-        warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
-        invalidate: () => {
-          if (this.client !== client) return;
-          this.disconnect();
-          client?.destroy();
-          this.emit({
-            type: 'status',
-            connected: false,
-            message:
-              'Transfer interrupted. Reconnect and inspect the selected folders before retrying.',
-          });
-        },
+        warn,
+        invalidate,
       });
     } catch (error) {
       update.status =

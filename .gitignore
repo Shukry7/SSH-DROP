@@ -17,6 +17,9 @@ Thumbs.db
 artifacts/
 profiles.json
 workflows.json
+*.sshdrop-backup
+.sshdrop-portable-*.part
+idle-settings.json
 known-hosts.json
 vault-key.json
 recovery.json

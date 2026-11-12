@@ -4,9 +4,16 @@ import {
   dialog,
   ipcMain,
   Menu,
+  Notification,
+  powerMonitor,
   safeStorage,
   type IpcMainInvokeEvent,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+  type Rectangle,
 } from 'electron';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -35,13 +42,79 @@ import { BackupVault } from './core/backup-vault';
 import { osKeyProtection } from './core/os-key-protection';
 import { downloadSelection } from './core/download-selection';
 import { folderName } from './core/folder-transfer';
+import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
+import { openEditorSchema, saveEditorSchema } from '../shared/editor';
+import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
+import { IdleProtection } from './core/idle-protection';
+import { IdleSettingsStore } from './core/idle-settings';
+import { idleSettingsSchema, type IdleState } from '../shared/idle';
+import { portableBackupLimit } from '../shared/portable-backup';
+import { portableExportRequest, portablePassphrase } from '../shared/validation';
+import { openPortable, sealPortable, writePortableCopy } from './core/portable-backup';
 
 let window: BrowserWindow | undefined;
 let session: Session | undefined;
 const keys = new Map<string, string>();
+let protection: IdleProtection;
+let idleStore: IdleSettingsStore;
+let idleSettingsError: string | undefined;
+let rebuildingWindow = false;
+let discardPendingRequests = () => {};
+const operationLease = new AsyncLocalStorage<() => void>();
+const nativeWarnings = new Set<AbortController>();
+const protectionControls = new Set<string>([
+  channels.idleStatus,
+  channels.idleStayActive,
+  channels.idleEnd,
+  channels.idleReturn,
+  channels.info,
+  channels.disconnect,
+  channels.cancelConnect,
+  channels.acknowledge,
+  channels.cancel,
+  channels.stopWorkflow,
+]);
+function checkOperation(): void {
+  operationLease.getStore()?.();
+  protection.assertActive();
+}
+async function messageBox(options: MessageBoxOptions) {
+  checkOperation();
+  const controller = new AbortController();
+  nativeWarnings.add(controller);
+  try {
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
+    const result = await dialog.showMessageBox(window!, { ...options, signal });
+    signal.throwIfAborted();
+    checkOperation();
+    return result;
+  } finally {
+    nativeWarnings.delete(controller);
+  }
+}
+async function openDialog(options: OpenDialogOptions) {
+  checkOperation();
+  const result = await dialog.showOpenDialog(window!, options);
+  checkOperation();
+  return result;
+}
+async function saveDialog(options: SaveDialogOptions) {
+  checkOperation();
+  const result = await dialog.showSaveDialog(window!, options);
+  checkOperation();
+  return result;
+}
+function idleState(): IdleState {
+  return {
+    ...protection.snapshot(),
+    ...(idleSettingsError ? { settingsError: idleSettingsError } : {}),
+  };
+}
 
 if (!app.isPackaged && process.env.SSHDROP_USER_DATA_DIR)
   app.setPath('userData', process.env.SSHDROP_USER_DATA_DIR);
@@ -49,10 +122,11 @@ const ownsInstance = app.requestSingleInstanceLock();
 if (!ownsInstance) app.quit();
 app.on('second-instance', () => {
   if (window?.isMinimized()) window.restore();
+  window?.show();
   window?.focus();
 });
 
-function trustedSender(event: IpcMainInvokeEvent): void {
+function trustedSender(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): void {
   if (
     !window ||
     event.sender !== window.webContents ||
@@ -71,7 +145,12 @@ function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | 
   ipcMain.handle(channel, async (event, value): Promise<Result<T>> => {
     try {
       trustedSender(event);
-      return { ok: true, value: await operation(value) };
+      const lease = protectionControls.has(channel) ? undefined : protection.lease();
+      return await operationLease.run(lease ?? (() => undefined), async () => {
+        const result = await operation(value);
+        lease?.();
+        return { ok: true, value: result };
+      });
     } catch (error) {
       return {
         ok: false,
@@ -87,18 +166,73 @@ function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | 
 }
 
 function publish(event: SessionEvent): void {
-  if (window && !window.isDestroyed()) window.webContents.send(channels.event, event);
+  if (event.type !== 'idle' && protection?.snapshot().phase === 'shielded') return;
+  if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+    try {
+      window.webContents.send(channels.event, event);
+    } catch {
+      /* Closing a renderer must not prevent session cleanup. */
+    }
+  }
 }
 
 function registerAPI(): void {
-  let choosingFiles = false;
+  ipcMain.on(channels.idleActivity, (event, value) => {
+    try {
+      trustedSender(event);
+      z.undefined().parse(value);
+      protection.activity();
+    } catch {
+      /* Ignore activity from untrusted frames or malformed messages. */
+    }
+  });
+  handle(channels.idleStatus, (value) => {
+    z.undefined().parse(value);
+    return idleState();
+  });
+  handle(channels.idleStayActive, (value) => {
+    z.undefined().parse(value);
+    protection.stayActive();
+  });
+  handle(channels.idleEnd, (value) => {
+    z.undefined().parse(value);
+    protection.end('manual');
+  });
+  handle(channels.idleReturn, (value) => {
+    z.undefined().parse(value);
+    protection.returnToConnection();
+  });
+  handle(channels.idleSettings, async (value) => {
+    const settings = idleSettingsSchema.parse(value);
+    const result = await messageBox({
+      type: 'warning',
+      title: 'Change idle session protection',
+      message: settings.minutes
+        ? `End the session after ${settings.minutes} minutes of inactivity?`
+        : 'Turn off automatic idle session protection?',
+      detail:
+        'When enabled, the final minute shows a countdown. Expiry, OS screen locking (where supported) or sleep disconnects SSH and clears the workspace, including unsaved inputs. Active transfers and workflows may be interrupted; remote processes may continue. This is session protection, not an authenticated vault for saved local profiles or workflow definitions. It supplements the operating system screen lock.',
+      buttons: ['Cancel', 'Apply settings'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (result.response !== 1) return idleState();
+    const saved = await idleStore.save(settings, checkOperation);
+    checkOperation();
+    idleSettingsError = undefined;
+    protection.configure(saved);
+    return idleState();
+  });
+  let choosingFiles: string | undefined;
   const selectFiles = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (choosingFiles) throw new Error('Finish the open file selection first.');
-    choosingFiles = true;
+    const selection = randomUUID();
+    choosingFiles = selection;
     try {
       return await operation();
     } finally {
-      choosingFiles = false;
+      if (choosingFiles === selection) choosingFiles = undefined;
     }
   };
   const profiles = new ProfileStore(join(app.getPath('userData'), 'profiles.json'));
@@ -114,18 +248,73 @@ function registerAPI(): void {
         plan: ReturnType<typeof renderWorkflow>;
       }
     | undefined;
-  let confirmingWorkflow = false;
+  let confirmingWorkflow: string | undefined;
   let previewTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingConnection: AbortController | undefined;
   const discardPreview = () => {
     preview = undefined;
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = undefined;
+  };
+  discardPendingRequests = () => {
+    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
+    pendingConnection = undefined;
+    choosingFiles = undefined;
+    confirmingWorkflow = undefined;
+    discardPreview();
   };
   const workflowId = z.string().uuid();
   handle(channels.workflows, (value) => {
     z.undefined().parse(value);
     return workflows.list();
   });
+  handle(channels.importWorkflow, (value) =>
+    selectFiles(async () => {
+      z.undefined().parse(value);
+      const selection = await openDialog({
+        title: 'Import workflow for review',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (selection.canceled || !selection.filePaths[0]) return null;
+      const workflow = await readWorkflowImport(selection.filePaths[0]).catch(() => {
+        throw new Error(
+          'The workflow file is invalid, unsupported, or exceeds 128 KiB. Nothing was imported.',
+        );
+      });
+      checkOperation();
+      return workflow;
+    }),
+  );
+  handle(channels.exportWorkflow, (value) =>
+    selectFiles(async () => {
+      const id = workflowId.parse(value);
+      const workflow = (await workflows.list()).find((item) => item.id === id);
+      if (!workflow) throw new Error('Workflow not found.');
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Export workflow definition',
+        message: `Export ${JSON.stringify(workflow.name)}?`,
+        detail:
+          'The file contains the saved commands, description, working directory, variable definitions, group, and execution settings as readable text. Check for secrets and private server details before sharing. Entered variable values and command results are excluded.',
+        buttons: ['Cancel', 'Choose export location'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      const destination = await saveDialog({
+        title: 'Export workflow definition',
+        defaultPath: 'workflow-export.json',
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (destination.canceled || !destination.filePath) return false;
+      await writeWorkflowExport(destination.filePath, workflow, checkOperation).catch(() => {
+        throw new Error('Could not export the workflow. Choose a new writable filename.');
+      });
+      return true;
+    }),
+  );
   handle(channels.saveWorkflow, async (value) => {
     const w = workflowSchema.parse(value);
     renderWorkflow(
@@ -133,7 +322,7 @@ function registerAPI(): void {
       Object.fromEntries(w.variables.map((v) => [v.name, v.type === 'integer' ? '0' : 'example'])),
     );
     if (!w.confirmBeforeRun) {
-      const confirmation = await dialog.showMessageBox(window!, {
+      const confirmation = await messageBox({
         type: 'warning',
         title: 'Disable workflow run confirmation',
         message: `Allow ${JSON.stringify(w.name)} to run without a confirmation dialog?`,
@@ -155,7 +344,7 @@ function registerAPI(): void {
     const id = workflowId.parse(value);
     const item = (await workflows.list()).find((w) => w.id === id);
     if (!item) throw new Error('Workflow not found.');
-    const result = await dialog.showMessageBox(window!, {
+    const result = await messageBox({
       type: 'warning',
       title: 'Delete saved workflow',
       message: `Delete ${JSON.stringify(item.name)}?`,
@@ -202,7 +391,7 @@ function registerAPI(): void {
     )
       throw new Error('Preview expired or changed. Review the workflow again.');
     discardPreview();
-    confirmingWorkflow = true;
+    confirmingWorkflow = token;
     try {
       approved.check();
       if (
@@ -211,7 +400,7 @@ function registerAPI(): void {
       )
         throw new Error('Workflow changed. Preview again.');
       if (approved.plan.confirmBeforeRun !== false) {
-        const confirmation = await dialog.showMessageBox(window!, {
+        const confirmation = await messageBox({
           type: 'warning',
           title: 'Run remote workflow',
           message: `Run ${JSON.stringify(approved.plan.name)} on ${approved.server}?`,
@@ -249,7 +438,7 @@ function registerAPI(): void {
       });
       return true;
     } finally {
-      confirmingWorkflow = false;
+      if (confirmingWorkflow === token) confirmingWorkflow = undefined;
     }
   });
   handle(channels.stopWorkflow, (value) => session!.stopWorkflow(workflowId.parse(value)));
@@ -260,7 +449,7 @@ function registerAPI(): void {
     platform: process.platform,
   }));
   handle(channels.chooseKey, async () => {
-    const result = await dialog.showOpenDialog(window!, {
+    const result = await openDialog({
       title: 'Select SSH private key',
       properties: ['openFile'],
     });
@@ -282,6 +471,7 @@ function registerAPI(): void {
   });
   handle(channels.loadProfile, async (value) => {
     const { profile, keyPath } = await profiles.load(z.string().uuid().parse(value));
+    checkOperation();
     let key = null;
     if (keyPath) {
       const id = randomUUID();
@@ -294,7 +484,7 @@ function registerAPI(): void {
   handle(channels.deleteProfile, async (value) => {
     const id = z.string().uuid().parse(value);
     const { profile } = await profiles.load(id);
-    const result = await dialog.showMessageBox(window!, {
+    const result = await messageBox({
       type: 'question',
       title: 'Delete saved profile',
       message: `Delete the saved profile "${profile.name}"?`,
@@ -311,42 +501,63 @@ function registerAPI(): void {
   });
   handle(channels.connect, async (value) => {
     const input = connectionSchema.parse(value);
+    if (pendingConnection) throw new Error('A connection attempt is already in progress.');
+    const owner = session!;
+    const ownerWindow = window;
+    const attempt = new AbortController();
+    pendingConnection = attempt;
     let privateKey: Buffer | undefined;
-    if (input.auth === 'key') {
-      const file = keys.get(input.keyId!);
-      if (!file) throw new Error('Select your private key again.');
-      const handle = await open(file, 'r').catch(() => {
-        throw new Error('The selected private key could not be opened. Choose the key file again.');
-      });
-      try {
-        const info = await handle.stat();
-        if (!info.isFile() || info.size > 1024 * 1024)
-          throw new Error('Select a private key file smaller than 1 MB.');
-        const buffer = Buffer.alloc(1024 * 1024 + 1);
-        const { bytesRead } = await handle.read(buffer);
-        if (bytesRead > 1024 * 1024) {
-          buffer.fill(0);
-          throw new Error('The selected private key file is too large.');
-        }
-        privateKey = buffer.subarray(0, bytesRead);
-      } finally {
-        await handle.close();
-      }
-    }
     try {
-      await session!.connect({
-        host: input.host,
-        port: input.port,
-        username: input.username,
-        ...(input.auth === 'key'
-          ? { privateKey, passphrase: input.passphrase }
-          : { password: input.password }),
-      });
+      if (input.auth === 'key') {
+        const file = keys.get(input.keyId!);
+        if (!file) throw new Error('Select your private key again.');
+        const handle = await open(file, 'r').catch(() => {
+          throw new Error(
+            'The selected private key could not be opened. Choose the key file again.',
+          );
+        });
+        try {
+          const info = await handle.stat();
+          if (!info.isFile() || info.size > 1024 * 1024)
+            throw new Error('Select a private key file smaller than 1 MB.');
+          const buffer = Buffer.alloc(1024 * 1024 + 1);
+          const { bytesRead } = await handle.read(buffer);
+          if (bytesRead > 1024 * 1024) {
+            buffer.fill(0);
+            throw new Error('The selected private key file is too large.');
+          }
+          privateKey = buffer.subarray(0, bytesRead);
+        } finally {
+          await handle.close();
+        }
+      }
+      checkOperation();
+      attempt.signal.throwIfAborted();
+      if (session !== owner || window !== ownerWindow || !ownerWindow || ownerWindow.isDestroyed())
+        throw new Error('The workspace changed. Connect again.');
+      return await owner.connect(
+        {
+          host: input.host,
+          port: input.port,
+          username: input.username,
+          ...(input.auth === 'key'
+            ? { privateKey, passphrase: input.passphrase }
+            : { password: input.password }),
+        },
+        attempt.signal,
+      );
     } finally {
       privateKey?.fill(0);
+      if (pendingConnection === attempt) pendingConnection = undefined;
     }
   });
+  handle(channels.cancelConnect, (value) => {
+    z.undefined().parse(value);
+    if (!pendingConnection) throw new Error('No connection attempt is in progress.');
+    pendingConnection.abort(new Error('Connection attempt cancelled.'));
+  });
   handle(channels.disconnect, () => {
+    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
     discardPreview();
     session!.disconnect();
     publish({ type: 'status', connected: false, message: 'Disconnected.' });
@@ -357,10 +568,119 @@ function registerAPI(): void {
     return session!.recovery();
   });
   handle(channels.recover, (value) => session!.recover(recoveryActionSchema.parse(value)));
+  // Keep the memory-hard KDF serialized even if the renderer is replaced mid-operation.
+  let portableBusy = false;
+  const portableOperation = async <T>(operation: (check: () => void) => Promise<T>) => {
+    if (portableBusy) throw new Error('Wait for the other portable backup operation to finish.');
+    portableBusy = true;
+    const deadline = performance.now() + 120000;
+    try {
+      return await operation(() => {
+        checkOperation();
+        if (performance.now() > deadline) throw new Error('Portable backup operation timed out.');
+      });
+    } finally {
+      portableBusy = false;
+    }
+  };
+  handle(channels.exportBackup, async (value) => {
+    const { id, passphrase } = portableExportRequest.parse(value);
+    const owner = window;
+    return session!.withBackupExport(id, async (record, store, connection) => {
+      if (record.previous.size > portableBackupLimit)
+        throw new Error('Portable export supports backups up to 32 MiB.');
+      return selectFiles(async () => {
+        const result = await saveDialog({
+          title: 'Save encrypted portable backup',
+          defaultPath: 'backup.sshdrop-backup',
+          filters: [{ name: 'SSHDrop portable backup', extensions: ['sshdrop-backup'] }],
+        });
+        connection();
+        if (result.canceled || !result.filePath) return false;
+        const destination = result.filePath;
+        if (!destination.toLowerCase().endsWith('.sshdrop-backup'))
+          throw new Error('Use the .sshdrop-backup extension.');
+        const approval = await messageBox({
+          type: 'warning',
+          title: 'Export encrypted backup',
+          message: 'Create a password-protected backup file?',
+          detail: `Destination: ${destination}\n\nKeep the passphrase separately. It is required on any device and cannot be recovered. The original backup stays in SSHDrop. Existing files are never replaced.`,
+          buttons: ['Cancel', 'Export backup'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        connection();
+        if (approval.response !== 1) return false;
+        return portableOperation(async (guard) => {
+          const check = () => {
+            guard();
+            connection();
+            if (window !== owner) throw new Error('The workspace changed. Export again.');
+          };
+          const bytes = await sealPortable(
+            store.contents(record, check),
+            record.previous,
+            passphrase,
+            check,
+          );
+          await writePortableCopy(destination, bytes, app.getPath('userData'), check);
+          return true;
+        });
+      });
+    });
+  });
+  handle(channels.openBackup, (value) => {
+    const passphrase = portablePassphrase.parse(value);
+    const owner = window;
+    return selectFiles(async () => {
+      const source = await openDialog({
+        title: 'Open encrypted portable backup',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop portable backup', extensions: ['sshdrop-backup'] }],
+      });
+      if (source.canceled || source.filePaths.length !== 1) return false;
+      const result = await saveDialog({
+        title: 'Choose a new file for the restored copy',
+        defaultPath: 'restored-copy',
+      });
+      if (result.canceled || !result.filePath) return false;
+      const destination = result.filePath;
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Restore an unencrypted copy',
+        message: 'Write a new local copy of this backup?',
+        detail: `Destination: ${destination}\n\nThe restored file is not encrypted. Choose a private folder. No server files or recovery records will change, and existing files are never replaced.`,
+        buttons: ['Cancel', 'Restore copy'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      return portableOperation(async (guard) => {
+        const check = () => {
+          guard();
+          if (window !== owner) throw new Error('The workspace changed. Open the backup again.');
+        };
+        const bytes = await openPortable(source.filePaths[0], passphrase, check);
+        try {
+          await writePortableCopy(destination, bytes, app.getPath('userData'), check);
+        } finally {
+          bytes.fill(0);
+        }
+        return true;
+      });
+    });
+  });
   handle(channels.fileAction, (value) =>
     session!.changeFile(fileActionSchema.parse(value), async (warning) => {
-      const result = await dialog.showMessageBox(window!, {
-        type: warning.button === 'Delete permanently' ? 'warning' : 'question',
+      const result = await messageBox({
+        type:
+          warning.button === 'Delete permanently' ||
+          warning.button === 'Move file' ||
+          warning.button === 'Change permissions'
+            ? 'warning'
+            : 'question',
         title: warning.title,
         message: warning.message,
         detail: warning.detail,
@@ -372,6 +692,11 @@ function registerAPI(): void {
       return result.response === 1;
     }),
   );
+  handle(channels.openEditor, async (value) => {
+    const { directory, name } = openEditorSchema.parse(value);
+    return session!.editText({ path: childPath(directory, name) });
+  });
+  handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
   handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),
@@ -386,7 +711,7 @@ function registerAPI(): void {
     await session!.resumeQueue(
       async () =>
         (
-          await dialog.showMessageBox(window!, {
+          await messageBox({
             type: 'warning',
             title: 'Continue transfer queue',
             message: 'Continue the remaining queued files?',
@@ -404,7 +729,7 @@ function registerAPI(): void {
     selectFiles(async () => {
       const directory = remotePathSchema.parse(value);
       const lease = session!.lease();
-      const result = await dialog.showOpenDialog(window!, {
+      const result = await openDialog({
         title: 'Upload file',
         properties: ['openFile', 'multiSelections'],
       });
@@ -421,14 +746,36 @@ function registerAPI(): void {
         );
     }),
   );
+  handle(channels.dropUpload, (value) =>
+    selectFiles(async () => {
+      const owner = session!;
+      const lease = owner.lease();
+      const { directory, jobs } = await inspectDroppedFiles(value);
+      lease();
+      const names = jobs.slice(0, 8).map(({ local }) => basename(local));
+      const more = jobs.length - names.length;
+      const approval = await messageBox({
+        type: 'question',
+        title: 'Upload dropped files',
+        message: `Queue ${jobs.length} ${jobs.length === 1 ? 'file' : 'files'} for upload to ${JSON.stringify(directory)}?`,
+        detail: `${names.map((name) => JSON.stringify(name)).join('\n')}${more ? `\n… and ${more} more` : ''}\n\nExisting files require a separate conflict decision.`,
+        buttons: ['Cancel', 'Queue uploads'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      lease();
+      if (approval.response === 1) owner.enqueue(jobs);
+    }),
+  );
   const confirmFolder = async (source: string, destination: string) =>
     (
-      await dialog.showMessageBox(window!, {
+      await messageBox({
         type: 'warning',
-        title: 'Copy folder into a new destination',
-        message: `Copy ${JSON.stringify(source)} into new folder ${JSON.stringify(destination)}?`,
+        title: 'Copy folder',
+        message: `Copy ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`,
         detail:
-          'Up to 100 items (including folders), 16 levels and 10 GiB. Links and special files are refused. Existing destination folders are refused; files are never merged or overwritten. New folders request owner-only permissions. Cancellation or connection failure can leave a partial copy. Inspect it before retrying; completed files are not automatically removed or resumed. Sources and destination folders must stay unchanged during the copy.',
+          'Up to 100 items (including folders), 16 levels and 10 GiB. Links and special files are refused. An existing destination needs separate merge approval and a decision for each conflicting file. New folders request owner-only permissions. Cancellation or connection failure can leave a partial copy. Inspect it before retrying. Stop other writers during the copy.',
         buttons: ['Cancel', 'Copy folder'],
         defaultId: 0,
         cancelId: 0,
@@ -439,7 +786,7 @@ function registerAPI(): void {
     selectFiles(async () => {
       const directory = actionDirectorySchema.parse(value);
       const lease = session!.lease();
-      const result = await dialog.showOpenDialog(window!, {
+      const result = await openDialog({
         title: 'Choose upload folder',
         properties: ['openDirectory'],
       });
@@ -456,7 +803,7 @@ function registerAPI(): void {
     selectFiles(async () => {
       const remote = downloadSelectionSchema.parse([value])[0];
       const lease = session!.lease();
-      const result = await dialog.showOpenDialog(window!, {
+      const result = await openDialog({
         title: 'Choose parent folder for download',
         properties: ['openDirectory'],
       });
@@ -473,7 +820,7 @@ function registerAPI(): void {
     selectFiles(async () => {
       const remote = remotePathSchema.parse(value);
       const lease = session!.lease();
-      const result = await dialog.showSaveDialog(window!, {
+      const result = await saveDialog({
         title: 'Download file',
         defaultPath: remote.split('/').pop(),
         buttonLabel: 'Download',
@@ -487,7 +834,7 @@ function registerAPI(): void {
     selectFiles(async () => {
       const paths = downloadSelectionSchema.parse(value);
       const lease = session!.lease();
-      const result = await dialog.showOpenDialog(window!, {
+      const result = await openDialog({
         title: 'Choose download folder',
         properties: ['openDirectory'],
       });
@@ -498,13 +845,14 @@ function registerAPI(): void {
   );
 }
 
-function createWindow(): void {
+function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: boolean }): void {
   Menu.setApplicationMenu(null);
   window = new BrowserWindow({
     width: 1440,
     height: 940,
     minWidth: 960,
     minHeight: 700,
+    ...(reset ? { ...reset.bounds, show: false } : {}),
     title: `SSHDrop ${app.getVersion()}`,
     backgroundColor: '#0b1017',
     webPreferences: {
@@ -518,10 +866,23 @@ function createWindow(): void {
       devTools: !app.isPackaged,
     },
   });
+  const createdWindow = window;
+  if (reset)
+    createdWindow.once('ready-to-show', () => {
+      if (createdWindow.isDestroyed() || (!reset.visible && !reset.minimized)) return;
+      createdWindow.showInactive();
+      if (reset.minimized) createdWindow.minimize();
+    });
+  createdWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown') protection.activity();
+  });
+  createdWindow.webContents.on('before-mouse-event', (_event, input) => {
+    if (['mouseDown', 'mouseWheel'].includes(input.type)) protection.activity();
+  });
   const trust = new HostTrust(
     join(app.getPath('userData'), 'known-hosts.json'),
-    async ({ host, port, fingerprint }) => {
-      const result = await dialog.showMessageBox(window!, {
+    async ({ host, port, fingerprint }, signal) => {
+      const result = await messageBox({
         type: 'warning',
         title: 'Verify server identity',
         message: `Trust ${host}:${port}?`,
@@ -530,46 +891,77 @@ function createWindow(): void {
         defaultId: 0,
         cancelId: 0,
         noLink: true,
+        signal,
       });
       return result.response === 1;
     },
   );
-  session = new Session(trust, publish, undefined, {
-    store: new RecoveryStore(
-      join(app.getPath('userData'), 'backups'),
-      new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
-    ),
-    confirm: async (approval) => {
-      const result = await dialog.showMessageBox(window!, {
-        type: 'warning',
-        title: approval.title,
-        message: approval.title,
-        detail: approval.detail,
-        buttons: approval.buttons,
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      });
-      return result.response;
+  const createdSession = new Session(
+    trust,
+    (event) => {
+      if (session === createdSession) publish(event);
     },
-  });
+    undefined,
+    {
+      store: new RecoveryStore(
+        join(app.getPath('userData'), 'backups'),
+        new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
+      ),
+      confirm: async (approval) => {
+        const result = await messageBox({
+          type: 'warning',
+          title: approval.title,
+          message: approval.title,
+          detail: approval.detail,
+          buttons: approval.buttons,
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        return result.response;
+      },
+    },
+  );
+  session = createdSession;
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
+  let askingToDiscard = false;
+  window.webContents.on('will-prevent-unload', () => {
+    if (askingToDiscard) return;
+    askingToDiscard = true;
+    void messageBox({
+      type: 'warning',
+      title: 'Unsaved editor changes',
+      message: 'Discard the editor draft and close SSHDrop?',
+      detail: 'The draft is held in memory and has not been saved to the server.',
+      buttons: ['Keep editing', 'Discard and close'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+      .then((choice) => {
+        if (choice.response === 1 && !createdWindow.isDestroyed()) createdWindow.destroy();
+      })
+      .catch(() => {})
+      .finally(() => {
+        askingToDiscard = false;
+      });
+  });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
   window.webContents.session.setPermissionCheckHandler(() => false);
   window.on('closed', () => {
-    session?.disconnect();
+    createdSession.disconnect();
     keys.clear();
-    window = undefined;
+    if (window === createdWindow) window = undefined;
   });
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL)
     void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void window.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if (!ownsInstance) return;
   app.setAppUserModelId('io.github.shukry7.sshdrop');
   app.setAboutPanelOptions({
@@ -577,13 +969,92 @@ void app.whenReady().then(() => {
     applicationVersion: app.getVersion(),
     copyright: '© 2026 SSHDrop contributors',
   });
+  idleStore = new IdleSettingsStore(join(app.getPath('userData'), 'idle-settings.json'));
+  const settings = await idleStore.read().catch(() => {
+    idleSettingsError =
+      'Idle settings could not be loaded. A 10-minute safety policy is active; the existing file is preserved. Repair idle-settings.json before changing settings.';
+    return { minutes: 10 as const, notifications: false };
+  });
+  let lastPhase: IdleState['phase'] = 'active';
+  let idleNotice: Notification | undefined;
+  protection = new IdleProtection(
+    settings,
+    () => ({ wall: Date.now(), monotonic: Number(process.hrtime.bigint() / 1000000n) }),
+    (state) => {
+      if (state.phase !== 'warning') {
+        try {
+          idleNotice?.close();
+        } catch {
+          /* Notification failure must not delay disconnection. */
+        }
+        idleNotice = undefined;
+      }
+      publish({
+        type: 'idle',
+        state: { ...state, ...(idleSettingsError ? { settingsError: idleSettingsError } : {}) },
+      });
+      if (
+        state.phase === 'warning' &&
+        lastPhase !== 'warning' &&
+        state.settings.notifications &&
+        !window?.isFocused() &&
+        Notification.isSupported()
+      ) {
+        try {
+          const notice = new Notification({
+            title: 'SSHDrop inactivity warning',
+            body: `The session ends in ${state.seconds} seconds. Active operations may be interrupted.`,
+            silent: true,
+          });
+          idleNotice = notice;
+          notice.once('click', () => {
+            window?.show();
+            window?.focus();
+          });
+          notice.show();
+        } catch {
+          /* The in-app countdown remains authoritative. */
+        }
+      }
+      lastPhase = state.phase;
+    },
+    () => {
+      discardPendingRequests();
+      for (const controller of nativeWarnings) controller.abort();
+      session?.disconnect();
+      keys.clear();
+      const old = window;
+      if (!old || old.isDestroyed()) return;
+      const reset = {
+        bounds: old.getBounds(),
+        visible: old.isVisible(),
+        minimized: old.isMinimized(),
+      };
+      rebuildingWindow = true;
+      try {
+        // Destroy the old renderer and native pickers, rather than leaving secrets hidden behind CSS.
+        old.destroy();
+        createWindow(reset);
+      } finally {
+        rebuildingWindow = false;
+      }
+    },
+  );
+  const timer = setInterval(() => protection.tick(), 1000);
+  timer.unref();
+  powerMonitor.on('lock-screen', () => protection.systemEvent('os-lock'));
+  powerMonitor.on('suspend', () => protection.systemEvent('sleep'));
+  powerMonitor.on('resume', () => protection.tick());
   registerAPI();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else {
+      window?.show();
+      window?.focus();
+    }
   });
 });
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (!rebuildingWindow && process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => session?.disconnect());

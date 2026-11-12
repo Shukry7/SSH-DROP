@@ -89,6 +89,10 @@ button {
   gap: 22px;
   align-items: center;
 }
+.portable-notice {
+  color: #58e0bb;
+  font-size: 12px;
+}
 .connection-pill {
   font-size: 12px;
   color: #8795a6;
@@ -107,6 +111,17 @@ button {
 .connection-pill.live i,
 .status-dot.active {
   background: #58e0bb;
+}
+.connection-pill.lost,
+.reconnect-note {
+  color: #ffd88a;
+}
+.connection-pill.lost i {
+  background: #ffd88a;
+}
+.reconnect-note {
+  font-size: 12px;
+  line-height: 1.55;
 }
 .preview-badge {
   font-size: 9px;
@@ -421,6 +436,10 @@ input::placeholder {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.upload-drop-active {
+  outline: 2px solid #58e0bb;
+  outline-offset: -2px;
+}
 .file-action-dialog {
   width: min(440px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
@@ -432,12 +451,59 @@ input::placeholder {
   padding: 24px;
   box-shadow: 0 20px 70px #0008;
 }
+.remote-editor-dialog {
+  width: min(1100px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  color: #dce4ef;
+  background: #101720;
+  border: 1px solid #465c68;
+  border-radius: 10px;
+  padding: 24px;
+}
+.remote-editor-dialog::backdrop {
+  background: #05090dbb;
+}
+.remote-editor-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: min(45vh, 460px);
+  resize: vertical;
+  font:
+    13px/1.5 'Courier Prime',
+    monospace;
+  tab-size: 2;
+  color: #dce4ef;
+  background: #0b1119;
+  border: 1px solid #465c68;
+  padding: 12px;
+}
 .file-action-dialog::backdrop {
   background: #05090dbb;
 }
 .file-action-dialog p {
   overflow-wrap: anywhere;
   margin: 12px 0;
+}
+.permission-options legend {
+  margin-bottom: 10px;
+}
+.permission-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.permission-row label {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+.permission-row input[type='checkbox'] {
+  flex-shrink: 0;
+  margin: 0;
 }
 .text-button.danger-button {
   color: #ffaba7;
@@ -888,4 +954,83 @@ progress {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 8px;
+}
+.idle-dialog {
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  color: #dce4ef;
+  background: #101720;
+  border: 1px solid #465c68;
+  border-radius: 14px;
+  padding: 28px;
+  box-shadow: 0 24px 90px #000b;
+}
+.idle-dialog::backdrop {
+  background: #05090ee6;
+}
+.idle-dialog p,
+.privacy-card p {
+  line-height: 1.6;
+  color: #aab9c8;
+}
+.idle-dialog label {
+  display: block;
+  margin: 16px 0;
+}
+.idle-dialog .workflow-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.idle-dialog .workflow-check input {
+  width: auto;
+  flex: 0 0 auto;
+}
+.idle-countdown {
+  font-size: clamp(48px, 8vw, 76px);
+  color: #ffd88a;
+  font-variant-numeric: tabular-nums;
+  margin: 18px 0;
+}
+.idle-indicator {
+  white-space: nowrap;
+  font-size: 11px;
+}
+.idle-indicator span {
+  font-variant-numeric: tabular-nums;
+}
+.privacy-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: #0b1017;
+}
+.privacy-card {
+  width: min(620px, 100%);
+  padding: 32px;
+  border: 1px solid #2b3440;
+  border-radius: 16px;
+  background: #101720;
+}
+.idle-settings-error {
+  position: fixed;
+  bottom: 36px;
+  right: 24px;
+  max-width: 520px;
+  padding: 16px;
+  background: #38261c;
+  border: 1px solid #d8ab72;
+  z-index: 20;
+}
+@media (max-width: 1150px) {
+  .topbar-right {
+    gap: 10px;
+  }
+  .preview-badge {
+    display: none;
+  }
 }

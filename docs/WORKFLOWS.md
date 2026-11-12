@@ -31,4 +31,12 @@ Stop requests an interrupt and closes the current command channel. SSH channel c
 
 Definitions are stored in a versioned `workflows.json` in the application's user-data directory. They are **unencrypted**, like ordinary configuration; never save passwords, private keys or tokens in command text, defaults or descriptions. Entered variable values, approvals and output are not written to this file. Native dialogs and remote programs can still expose command arguments; server logging and remote process lifetimes are not controlled by SSHDrop. This is not an appropriate channel for sensitive secrets.
 
-Writes are serialized and replace the configuration atomically. Invalid or oversized data blocks changes and is preserved. No import/export, command risk classifier, secret-variable vault, automatic scheduling or unattended execution is included. Desktop Windows/macOS/Linux support does not imply support for Windows PowerShell/cmd remote shells; this initial workflow mode requires a POSIX remote shell.
+Writes are serialized and replace the configuration atomically. Invalid or oversized data blocks changes and is preserved. Command risk classification, a secret-variable vault, automatic scheduling, and unattended execution remain planned. This workflow mode requires a POSIX remote shell.
+
+## Library tools in unreleased alpha.6
+
+Search workflows by name, description, or group. Use the group filter to narrow the selection; existing definitions without groups stay available under All groups. Assign a group in the editor. Duplicate workflow opens a new definition for editing with confirmation enabled. Save explicitly to add the copy.
+
+Export workflow writes one definition in a versioned JSON document, with a 128 KiB file limit. Commands, working directory, description, variable definitions, group, and execution settings are readable. Entered variable values and command results are excluded. Check the definition for private text before sharing. Export requires a new filename and requests owner-only permissions on supported local filesystems.
+
+Import workflow accepts that document through a native file picker. Imported commands open in the editor for review with a new ID and confirmation enabled. Review every step and save explicitly. The original workflow stays in the library. Malformed files, unsupported formats, invalid placeholders, extra fields, and files above the limit are refused. Importing and duplicating do not execute commands.

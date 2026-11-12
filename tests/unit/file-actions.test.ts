@@ -106,6 +106,16 @@ describe('bounded confirmed remote file changes', () => {
     });
     expect(f.sftp.rename).toHaveBeenCalledWith('/file', '/new', expect.any(Function));
   });
+  it('refuses oversized copies before asking for confirmation', async () => {
+    const f = setup();
+    f.entries.set('/dest', stats('directory'));
+    f.entries.set('/file', stats('file', 128 * 1024 * 1024 + 1));
+    await expect(
+      f.change({ action: 'copy', directory: '/', name: 'file', destinationDirectory: '/dest' }),
+    ).rejects.toThrow('128 MiB');
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.sftp.rename).not.toHaveBeenCalled();
+  });
   it('refuses existing destinations before prompting', async () => {
     const f = setup();
     f.entries.set('/new folder', stats());
@@ -307,5 +317,43 @@ describe('file action payload validation', () => {
     expect(
       fileActionSchema.safeParse({ ...remove, action: 'rename', newName: 'file' }).success,
     ).toBe(false);
+  });
+  it.each(['/', '/a/../b', 'relative', '/' + 'a'.repeat(4091)])(
+    'rejects unsafe move destination %j',
+    (destinationDirectory) => {
+      expect(
+        fileActionSchema.safeParse({
+          action: 'move',
+          directory: '/',
+          name: 'file',
+          destinationDirectory,
+        }).success,
+      ).toBe(false);
+    },
+  );
+  it.each(['4755', '888', '0755', ' 640', 640])('rejects non-ordinary mode %j', (mode) => {
+    expect(
+      fileActionSchema.safeParse({
+        action: 'permissions',
+        directory: '/',
+        name: 'file',
+        kind: 'file',
+        expectedMode: 0o600,
+        mode,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects permission payloads that supply ownership or a special-bit expected mode', () => {
+    const input = {
+      action: 'permissions',
+      directory: '/',
+      name: 'file',
+      kind: 'file',
+      expectedMode: 0o600,
+      mode: '640',
+    };
+    expect(fileActionSchema.safeParse(input).success).toBe(true);
+    expect(fileActionSchema.safeParse({ ...input, owner: 1000 }).success).toBe(false);
+    expect(fileActionSchema.safeParse({ ...input, expectedMode: 0o4600 }).success).toBe(false);
   });
 });

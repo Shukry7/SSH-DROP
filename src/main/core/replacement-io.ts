@@ -10,7 +10,12 @@ import type { FileSnapshot } from './recovery-store';
 type Reply<T = void> = (error?: Error | null, value?: T) => void;
 export interface ReplacementIO {
   read(path: string): AsyncGenerator<Buffer, FileSnapshot | undefined>;
-  write(path: string, source: AsyncIterable<Buffer>, expected: FileSnapshot): Promise<void>;
+  write(
+    path: string,
+    source: AsyncIterable<Buffer>,
+    expected: FileSnapshot,
+    beforePublish?: () => Promise<void>,
+  ): Promise<void>;
   snapshot(path: string): Promise<FileSnapshot | undefined>;
   supports(path: string): Promise<boolean>;
   sibling(path: string, id: string): string;
@@ -23,6 +28,7 @@ export function replacementIO(
   signal: AbortSignal,
   current: () => boolean,
   invalidate: () => void,
+  maxReadBytes = Infinity,
 ): ReplacementIO {
   const check = () => {
     signal.throwIfAborted();
@@ -60,6 +66,8 @@ export function replacementIO(
       );
     if (!Number.isSafeInteger(before.size) || before.size < 0)
       throw new Error('Invalid file size.');
+    if (before.size > maxReadBytes)
+      throw new Error('The file exceeds the size limit for this operation.');
     const remoteHandle = sftp
       ? await transferWait<Buffer>(
           (cb) => {
@@ -177,7 +185,7 @@ export function replacementIO(
   };
   return {
     read,
-    write: async (path, source, expected) => {
+    write: async (path, source, expected, beforePublish) => {
       const temporary = sftp
         ? posix.join(posix.dirname(path), `.sshdrop-${randomUUID()}.part`)
         : join(dirname(path), `.sshdrop-${randomUUID()}.part`);
@@ -253,7 +261,12 @@ export function replacementIO(
         }
         const verified = await snapshot(temporary);
         if (verified?.hash !== expected.hash || verified.size !== expected.size)
-          throw new Error('Recovery staging verification failed.');
+          throw new Error(
+            beforePublish
+              ? 'Staged file SHA-256 verification failed.'
+              : 'Recovery staging verification failed.',
+          );
+        await beforePublish?.();
         check();
         publishing = true;
         if (sftp) await request<void>((cb) => sftp.rename(temporary, path, cb));
@@ -264,9 +277,12 @@ export function replacementIO(
         owned = false;
         check();
       } catch (error) {
+        const code = (error as { code?: number }).code;
+        if (beforePublish && sftp && code !== undefined && [1, 2, 3, 4, 5, 8].includes(code))
+          publishing = false;
         if (publishing)
           throw new Error(
-            'Recovery publication is uncertain. Inspect the destination and temporary files before retrying; no automatic retry was attempted.',
+            `${beforePublish ? 'File' : 'Recovery'} publication is uncertain. Inspect the destination and temporary files before retrying; no automatic retry was attempted.`,
             { cause: error },
           );
         throw error;

@@ -9,7 +9,7 @@ export interface HostIdentity {
   port: number;
   fingerprint: string;
 }
-export type ApproveHost = (identity: HostIdentity) => Promise<boolean>;
+export type ApproveHost = (identity: HostIdentity, signal?: AbortSignal) => Promise<boolean>;
 const storeSchema = z.record(z.string(), z.string().regex(/^SHA256:[A-Za-z0-9+/]+$/));
 
 export class HostTrust {
@@ -18,7 +18,8 @@ export class HostTrust {
     private readonly approve: ApproveHost,
   ) {}
 
-  async verify(host: string, port: number, key: Buffer): Promise<boolean> {
+  async verify(host: string, port: number, key: Buffer, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
     const fingerprint = `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
     const identity = JSON.stringify([host.toLowerCase(), port]);
     let records: Record<string, string>;
@@ -31,6 +32,7 @@ export class HostTrust {
         });
       records = {};
     }
+    signal?.throwIfAborted();
     if (Object.hasOwn(records, identity)) {
       if (records[identity] !== fingerprint)
         throw new Error(
@@ -38,7 +40,8 @@ export class HostTrust {
         );
       return true;
     }
-    if (!(await this.approve({ host, port, fingerprint }))) return false;
+    if (!(await this.approve({ host, port, fingerprint }, signal))) return false;
+    signal?.throwIfAborted();
     records[identity] = fingerprint;
     const contents = JSON.stringify(records, null, 2) + '\n';
     if (Buffer.byteLength(contents) > 1024 * 1024)
@@ -50,6 +53,7 @@ export class HostTrust {
         flag: 'wx',
         mode: 0o600,
       });
+      signal?.throwIfAborted();
       await rename(temporary, this.file);
     } finally {
       await unlink(temporary).catch(() => undefined);

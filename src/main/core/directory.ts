@@ -114,6 +114,7 @@ export async function readDirectory(
                 : 'other',
           size: attrs.size,
           modified: attrs.mtime * 1000,
+          mode: Number.isInteger(attrs.mode) && attrs.mode >= 0 ? attrs.mode & 0o7777 : undefined,
         });
       }
     }

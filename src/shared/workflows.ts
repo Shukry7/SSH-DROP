@@ -14,6 +14,7 @@ export const workflowSchema = z
     id: z.string().uuid(),
     name: text(80).min(1),
     description: text(400),
+    group: text(60).optional(),
     directory: text(1024)
       .min(1)
       .refine((s) => s.startsWith('/') || s === '~' || s.startsWith('~/')),
