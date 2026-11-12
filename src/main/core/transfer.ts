@@ -27,6 +27,7 @@ const metadata = (stats: Stats | LocalStats) => {
 };
 
 export async function runTransfer(options: {
+  beforePublish?: () => Promise<void>;
   sftp: SFTPWrapper;
   direction: 'upload' | 'download';
   local: string;
@@ -384,6 +385,7 @@ export async function runTransfer(options: {
     check();
     update.phase = 'finalizing';
     publish();
+    await options.beforePublish?.();
     check();
     publishing = true;
     try {

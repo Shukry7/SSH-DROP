@@ -67,6 +67,7 @@ export interface TransferUpdate {
   total: number;
   status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed';
   phase?: 'preparing' | 'transferring' | 'verifying' | 'finalizing';
+  folderFiles?: { copied: number; skipped: number; total: number };
   error?: string;
 }
 export interface QueueState {

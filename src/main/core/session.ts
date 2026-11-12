@@ -14,7 +14,12 @@ import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
 import { changeRemoteFile, type FileActionWarning } from './file-actions';
 import { runTransfer, transferLimits, transferWarning } from './transfer';
-import { Replacements, recoveryView, type ReplacementApproval } from './replacement';
+import {
+  Replacements,
+  recoveryView,
+  type ReplacementApproval,
+  type ReplacementContext,
+} from './replacement';
 import { replacementIO } from './replacement-io';
 import { type RecoveryRecord, type RecoveryStore, type ServerIdentity } from './recovery-store';
 import { TransferQueue, type QueuedFile } from './transfer-queue';
@@ -474,9 +479,35 @@ export class Session {
           'Transfer interrupted. Reconnect and inspect recovery and the selected folders before retrying.',
       });
     };
+    const warn = () => this.emit({ type: 'transfer-warning', message: transferWarning });
+    const recovery = this.recoveryOptions;
+    const identity = this.identity;
+    const replacements =
+      recovery && identity
+        ? (transfer: ReplacementContext['transfer'], guard?: () => Promise<void>) =>
+            new Replacements({
+              store: recovery.store,
+              identity,
+              localIO: replacementIO(undefined, controller.signal, current, invalidate),
+              remoteIO: replacementIO(sftp, controller.signal, current, invalidate),
+              check: () => {
+                controller.signal.throwIfAborted();
+                if (!current()) throw new Error('Connection changed.');
+              },
+              confirm: async (approval) => {
+                await guard?.();
+                const choice = await recovery.confirm(approval);
+                await guard?.();
+                return choice;
+              },
+              beforePublish: guard,
+              transfer,
+            })
+        : undefined;
     publish();
     try {
       if (folder) {
+        this.recoveryBusy = !!replacements;
         await runFolderTransfer({
           sftp,
           direction,
@@ -488,60 +519,59 @@ export class Session {
           publish,
           limits: this.transferTiming,
           invalidate,
-          warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
+          warn,
+          merge:
+            recovery && replacements
+              ? {
+                  confirm: recovery.confirm,
+                  conflict: (local, remote, transfer, guard) =>
+                    replacements(transfer, guard).transfer(direction, local, remote, 'Skip file'),
+                }
+              : undefined,
         });
         return;
       }
-      if (this.recoveryOptions && this.identity) {
+      if (replacements) {
         this.recoveryBusy = true;
         const check = () => {
           controller.signal.throwIfAborted();
           if (!current()) throw new Error('Connection changed.');
         };
-        const replacements = new Replacements({
-          store: this.recoveryOptions.store,
-          identity: this.identity,
-          localIO: replacementIO(undefined, controller.signal, current, invalidate),
-          remoteIO: replacementIO(sftp, controller.signal, current, invalidate),
-          check,
-          confirm: this.recoveryOptions.confirm,
-          transfer: async (d, l, r) => {
-            check();
-            const nested: TransferUpdate = {
-              ...update,
-              direction: d,
-              status: 'running',
-              total: 0,
-              transferred: 0,
-            };
-            await runTransfer({
-              sftp,
-              direction: d,
-              local: l,
-              remote: r,
-              signal: controller.signal,
-              current,
-              update: nested,
-              publish: () => {
-                Object.assign(update, {
-                  total: nested.total,
-                  transferred: nested.transferred,
-                  phase: nested.phase,
-                });
-                publish();
-              },
-              limits: this.transferTiming,
-              warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
-              invalidate,
-            });
-            check();
-            if (nested.status !== 'completed')
-              throw new Error(nested.error ?? 'Transfer cancelled.');
-          },
+        const replacement = replacements(async (d, l, r) => {
+          check();
+          const nested: TransferUpdate = {
+            ...update,
+            direction: d,
+            status: 'running',
+            total: 0,
+            transferred: 0,
+          };
+          await runTransfer({
+            sftp,
+            direction: d,
+            local: l,
+            remote: r,
+            signal: controller.signal,
+            current,
+            update: nested,
+            publish: () => {
+              Object.assign(update, {
+                total: nested.total,
+                transferred: nested.transferred,
+                phase: nested.phase,
+              });
+              publish();
+            },
+            limits: this.transferTiming,
+            warn,
+            invalidate,
+          });
+          check();
+          if (nested.status !== 'completed') throw new Error(nested.error ?? 'Transfer cancelled.');
         });
         const completed = recoveryAction
-          ? await replacements.recover(recoveryAction.id, recoveryAction.action)
-          : await replacements.transfer(direction, local, path);
+          ? await replacement.recover(recoveryAction.id, recoveryAction.action)
+          : await replacement.transfer(direction, local, path);
         update.status = completed ? 'completed' : 'cancelled';
         publish();
         return;
@@ -556,19 +586,8 @@ export class Session {
         update,
         publish,
         limits: this.transferTiming,
-        warn: () => this.emit({ type: 'transfer-warning', message: transferWarning }),
-        invalidate: () => {
-          if (this.client !== client) return;
-          this.disconnect();
-          client?.destroy();
-          this.emit({
-            type: 'status',
-            connected: false,
-            lost: true,
-            message:
-              'Transfer interrupted. Reconnect and inspect the selected folders before retrying.',
-          });
-        },
+        warn,
+        invalidate,
       });
     } catch (error) {
       update.status =

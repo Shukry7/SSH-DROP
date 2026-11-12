@@ -690,10 +690,10 @@ function registerAPI(): void {
     (
       await messageBox({
         type: 'warning',
-        title: 'Copy folder into a new destination',
-        message: `Copy ${JSON.stringify(source)} into new folder ${JSON.stringify(destination)}?`,
+        title: 'Copy folder',
+        message: `Copy ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`,
         detail:
-          'Up to 100 items (including folders), 16 levels and 10 GiB. Links and special files are refused. Existing destination folders are refused; files are never merged or overwritten. New folders request owner-only permissions. Cancellation or connection failure can leave a partial copy. Inspect it before retrying; completed files are not automatically removed or resumed. Sources and destination folders must stay unchanged during the copy.',
+          'Up to 100 items (including folders), 16 levels and 10 GiB. Links and special files are refused. An existing destination needs separate merge approval and a decision for each conflicting file. New folders request owner-only permissions. Cancellation or connection failure can leave a partial copy. Inspect it before retrying. Stop other writers during the copy.',
         buttons: ['Cancel', 'Copy folder'],
         defaultId: 0,
         cancelId: 0,
