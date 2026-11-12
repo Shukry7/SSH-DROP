@@ -13,6 +13,7 @@ export interface RemoteEntry {
   kind: 'directory' | 'file' | 'symlink' | 'other';
   size: number;
   modified: number;
+  mode?: number;
 }
 
 export interface DirectoryListing {
@@ -23,6 +24,14 @@ export type FileAction =
   | { action: 'create-file'; directory: string; name: string }
   | { action: 'create-folder'; directory: string; name: string }
   | { action: 'copy' | 'move'; directory: string; name: string; destinationDirectory: string }
+  | {
+      action: 'permissions';
+      directory: string;
+      name: string;
+      kind: 'file' | 'directory';
+      expectedMode: number;
+      mode: string;
+    }
   | {
       action: 'rename';
       directory: string;

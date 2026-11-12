@@ -75,6 +75,39 @@ test('remote folder and file actions require confirmation, preserve collisions, 
     await createFile.getByRole('button', { name: 'Review change' }).click();
     await expect(page.getByRole('cell', { name: /empty\.txt/ })).toBeVisible();
     expect(fixture.files.get('/empty.txt')).toEqual(Buffer.alloc(0));
+    const empty = page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: /empty\.txt/ }) });
+    const permissionsButton = empty.getByRole('button', { name: 'Permissions', exact: true });
+    const permissionsDialog = page.getByRole('dialog', { name: 'Edit remote permissions' });
+    await permissionsButton.click();
+    await expect(permissionsDialog.getByRole('button', { name: 'Review change' })).toBeDisabled();
+    await permissionsDialog.getByRole('checkbox', { name: 'Group read' }).check();
+    await expect(permissionsDialog.getByText(/Proposed mode/)).toContainText('640');
+    await respond(application, 0);
+    await permissionsDialog.getByRole('button', { name: 'Review change' }).click();
+    await expect(permissionsDialog).not.toBeVisible();
+    expect(fixture.permissions.has('/empty.txt')).toBe(false);
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      type: 'warning',
+      defaultId: 0,
+      cancelId: 0,
+      buttons: ['Cancel', 'Change permissions'],
+      detail: expect.stringMatching(/Current mode: 600\nProposed mode: 640/),
+    });
+    await respond(application, 1);
+    await permissionsButton.click();
+    await permissionsDialog.getByRole('checkbox', { name: 'Group read' }).check();
+    await permissionsDialog.getByRole('button', { name: 'Review change' }).click();
+    await expect(permissionsDialog).not.toBeVisible();
+    expect(fixture.permissions.get('/empty.txt')).toBe(0o640);
+    await permissionsButton.click();
+    await expect(permissionsDialog.getByRole('checkbox', { name: 'Group read' })).toBeChecked();
+    await permissionsDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(
       page
         .getByRole('row')

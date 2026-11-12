@@ -120,6 +120,15 @@ export const fileActionSchema = z
     z.object({ action: z.literal('create-folder'), ...actionFields }).strict(),
     z
       .object({
+        action: z.literal('permissions'),
+        ...actionFields,
+        kind: z.enum(['file', 'directory']),
+        expectedMode: z.number().int().min(0).max(0o777),
+        mode: z.string().regex(/^[0-7]{3}$/, 'Enter three octal permission digits, such as 640.'),
+      })
+      .strict(),
+    z
+      .object({
         action: z.enum(['copy', 'move']),
         ...actionFields,
         destinationDirectory: actionDirectorySchema,

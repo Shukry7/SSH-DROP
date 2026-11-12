@@ -29,6 +29,7 @@ export async function sshFixture(
     dropAfterReplace?: boolean;
     beforeCreate?: (path: string, flags: number, mode?: number) => void;
     beforeRename?: (from: string, to: string) => void;
+    ignorePermissionChange?: boolean;
     exec?: (command: string, stream: ServerChannel) => void;
   } = {},
 ) {
@@ -41,6 +42,7 @@ export async function sshFixture(
   const connections = new Set<Connection>();
   const directories = new Set(['/', '/folder']);
   const symlinks = new Set<string>();
+  const permissions = new Map<string, number>();
   const openedFiles: string[] = [];
   let lastSize = { rows: 0, cols: 0 };
   let lastShell: ServerChannel | undefined;
@@ -135,7 +137,11 @@ export async function sshFixture(
             return value;
           };
           const attrs = (path: string) => ({
-            mode: directories.has(path) ? 0o040755 : symlinks.has(path) ? 0o120777 : 0o100600,
+            mode: directories.has(path)
+              ? 0o040000 | (permissions.get(path) ?? 0o755)
+              : symlinks.has(path)
+                ? 0o120777
+                : 0o100000 | (permissions.get(path) ?? 0o600),
             uid: 1000,
             gid: 1000,
             size: files.get(path)?.length ?? 0,
@@ -162,6 +168,14 @@ export async function sshFixture(
             else sftp.status(id, status.NO_SUCH_FILE);
           });
           sftp.on('SETSTAT', (id) => sftp.status(id, status.OK));
+          sftp.on('FSETSTAT', (id, raw, values) => {
+            const entry = handles.get(raw.toString());
+            if (!entry || !exists(entry.path) || values.mode === undefined)
+              return sftp.status(id, status.FAILURE);
+            if (options.denyChanges) return sftp.status(id, status.PERMISSION_DENIED);
+            if (!options.ignorePermissionChange) permissions.set(entry.path, values.mode & 0o7777);
+            changed(id);
+          });
           sftp.on('EXTENDED', (id, name, data: Buffer) => {
             if (!options.atomicReplace || name !== 'posix-rename@openssh.com')
               return sftp.status(id, status.OP_UNSUPPORTED);
@@ -211,7 +225,7 @@ export async function sshFixture(
             if (path.startsWith('/blocked/')) return sftp.status(id, status.PERMISSION_DENIED);
             if (flags & modes.CREAT) options.beforeCreate?.(path, flags, attrs.mode);
             if (flags & modes.EXCL && exists(path)) return sftp.status(id, status.FAILURE);
-            if (!(flags & modes.CREAT) && !files.has(path))
+            if (!(flags & modes.CREAT) && !files.has(path) && !directories.has(path))
               return sftp.status(id, status.NO_SUCH_FILE);
             if ((flags & modes.CREAT && !files.has(path)) || flags & modes.TRUNC)
               files.set(path, Buffer.alloc(0));
@@ -320,6 +334,7 @@ export async function sshFixture(
     files,
     directories,
     symlinks,
+    permissions,
     openedFiles,
     getSize: () => lastSize,
     shellRequests: () => shellRequests,

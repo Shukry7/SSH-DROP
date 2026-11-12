@@ -626,7 +626,9 @@ function registerAPI(): void {
     session!.changeFile(fileActionSchema.parse(value), async (warning) => {
       const result = await messageBox({
         type:
-          warning.button === 'Delete permanently' || warning.button === 'Move file'
+          warning.button === 'Delete permanently' ||
+          warning.button === 'Move file' ||
+          warning.button === 'Change permissions'
             ? 'warning'
             : 'question',
         title: warning.title,
