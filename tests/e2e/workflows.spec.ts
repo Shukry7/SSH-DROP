@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from '@playwright/test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sshFixture } from '../fixtures/ssh-server';
@@ -29,6 +29,93 @@ const dialogs = async (app: ElectronApplication) =>
   app.evaluate(({ dialog }) => {
     dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
   });
+test('workflow library filters, duplicates and imports reviewed definitions without executing them', async () => {
+  test.setTimeout(60000);
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-library-ui-'));
+  const exportPath = join(dir, 'export.json');
+  let app = await launch(dir);
+  try {
+    let page = await app.firstWindow();
+    await dialogs(app);
+    await page.getByRole('button', { name: 'New workflow', exact: true }).click();
+    await page.getByLabel('Workflow name', { exact: true }).fill('Service status');
+    await page.getByLabel('Workflow group name', { exact: true }).fill('Operations');
+    await page.getByRole('button', { name: 'Save workflow', exact: true }).click();
+    await page.getByRole('button', { name: 'Duplicate workflow', exact: true }).click();
+    await expect(page.getByLabel('Workflow name', { exact: true })).toHaveValue(
+      'Service status (copy)',
+    );
+    await expect(
+      page.getByRole('checkbox', {
+        name: 'Ask for confirmation before running (recommended)',
+        exact: true,
+      }),
+    ).toBeChecked();
+    await page.getByLabel('Workflow group name', { exact: true }).fill('Examples');
+    await page.getByRole('button', { name: 'Save workflow', exact: true }).click();
+    const select = page.getByLabel('Saved workflow', { exact: true });
+    await expect(select.locator('option')).toHaveCount(3);
+    await page.getByLabel('Search workflows', { exact: true }).fill('(copy)');
+    await expect(select.locator('option')).toHaveCount(2);
+    await page.getByLabel('Search workflows', { exact: true }).fill('');
+    await page.getByLabel('Workflow group', { exact: true }).selectOption('Operations');
+    await expect(select.locator('option')).toHaveCount(2);
+    await select.selectOption({ label: 'Service status' });
+    await app.evaluate(({ dialog }, exportPath) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: exportPath });
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [exportPath] });
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        Object.assign(globalThis, { libraryWarning: args.at(-1) });
+        return { response: 1, checkboxChecked: false };
+      };
+    }, exportPath);
+    await page.getByRole('button', { name: 'Export workflow', exact: true }).click();
+    await expect
+      .poll(() => readFile(exportPath, 'utf8').catch(() => ''))
+      .toContain('sshdrop-workflow');
+    expect(
+      await app.evaluate(
+        () => (globalThis as unknown as { libraryWarning: unknown }).libraryWarning,
+      ),
+    ).toMatchObject({
+      defaultId: 0,
+      cancelId: 0,
+      detail: expect.stringContaining('readable text'),
+    });
+    const exported = JSON.parse(await readFile(exportPath, 'utf8'));
+    exported.workflow.confirmBeforeRun = false;
+    await writeFile(exportPath, JSON.stringify(exported));
+    const before = await readFile(join(dir, 'workflows.json'), 'utf8');
+    await page.getByRole('button', { name: 'Import workflow', exact: true }).click();
+    await expect(page.getByText(/Review every imported command/)).toBeVisible();
+    await expect(
+      page.getByRole('checkbox', {
+        name: 'Ask for confirmation before running (recommended)',
+        exact: true,
+      }),
+    ).toBeChecked();
+    expect(await readFile(join(dir, 'workflows.json'), 'utf8')).toBe(before);
+    await page.getByLabel('Workflow name', { exact: true }).fill('Reviewed import');
+    await page.getByRole('button', { name: 'Save workflow', exact: true }).click();
+    await expect(select.locator('option')).toHaveCount(4);
+    const stored = JSON.parse(await readFile(join(dir, 'workflows.json'), 'utf8')).workflows;
+    expect(new Set(stored.map((item: { id: string }) => item.id)).size).toBe(3);
+    expect(
+      stored.find((item: { name: string }) => item.name === 'Reviewed import').confirmBeforeRun,
+    ).toBe(true);
+    await app.close();
+    app = await launch(dir);
+    page = await app.firstWindow();
+    await page.getByLabel('Workflow group', { exact: true }).selectOption('Examples');
+    await expect(page.getByLabel('Saved workflow', { exact: true }).locator('option')).toHaveCount(
+      2,
+    );
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test('saved workflows preview literal variables, require confirmation, fail-stop, persist globally and delete', async () => {
   test.setTimeout(90000);
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-workflow-ui-'));

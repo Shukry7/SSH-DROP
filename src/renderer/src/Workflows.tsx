@@ -43,6 +43,19 @@ export function Workflows({ connected }: { connected: boolean }) {
   const [rerunReview, setRerunReview] = useState(false);
   const [output, setOutput] = useState('');
   const [notice, setNotice] = useState('');
+  const [search, setSearch] = useState('');
+  const [group, setGroup] = useState('');
+  const [importReview, setImportReview] = useState(false);
+  const groups = [
+    ...new Set(items.map((item) => item.group).filter((value): value is string => !!value)),
+  ].sort();
+  const visible = items.filter(
+    (item) =>
+      (!group || item.group === group) &&
+      `${item.name} ${item.description} ${item.group ?? ''}`
+        .toLocaleLowerCase()
+        .includes(search.trim().toLocaleLowerCase()),
+  );
   const refresh = async () => setItems(unwrap(await window.sshdrop.workflows()));
   useEffect(() => {
     let alive = true;
@@ -85,11 +98,12 @@ export function Workflows({ connected }: { connected: boolean }) {
       setBusy(false);
     }
   };
-  const edit = (w: Workflow) => {
+  const edit = (w: Workflow, imported = false) => {
     setEditor(w);
     setSteps(w.steps.join('\n'));
     setVariables(w.variables.map((v) => `${v.name}:${v.type}:${v.label}`).join('\n'));
     setPreview(undefined);
+    setImportReview(imported);
   };
   const current = items.find((w) => w.id === selected);
   const running = run?.status === 'running';
@@ -127,6 +141,42 @@ export function Workflows({ connected }: { connected: boolean }) {
         </p>
         <div className="toolbar">
           <label>
+            Search workflows
+            <input
+              type="search"
+              value={search}
+              maxLength={400}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setSelected('');
+                setValues({});
+                setPreview(undefined);
+                setRerunReview(false);
+              }}
+            />
+          </label>
+          <label>
+            Workflow group
+            <select
+              aria-label="Workflow group"
+              value={group}
+              onChange={(event) => {
+                setGroup(event.target.value);
+                setSelected('');
+                setValues({});
+                setPreview(undefined);
+                setRerunReview(false);
+              }}
+            >
+              <option value="">All groups</option>
+              {groups.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Saved workflow
             <select
               aria-label="Saved workflow"
@@ -139,7 +189,7 @@ export function Workflows({ connected }: { connected: boolean }) {
               }}
             >
               <option value="">Choose a workflow</option>
-              {items.map((w) => (
+              {visible.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
                 </option>
@@ -164,6 +214,43 @@ export function Workflows({ connected }: { connected: boolean }) {
             Edit workflow
           </button>
           <button
+            className="secondary compact"
+            disabled={!current || busy || !!editor}
+            onClick={() =>
+              edit({
+                ...current!,
+                id: crypto.randomUUID(),
+                name: `${current!.name.slice(0, 73)} (copy)`,
+                confirmBeforeRun: true,
+              })
+            }
+          >
+            Duplicate workflow
+          </button>
+          <button
+            className="secondary compact"
+            disabled={busy || !!editor}
+            onClick={() =>
+              void perform(async () => {
+                const imported = unwrap(await window.sshdrop.importWorkflow());
+                if (imported) edit(imported, true);
+              })
+            }
+          >
+            Import workflow
+          </button>
+          <button
+            className="secondary compact"
+            disabled={!current || busy}
+            onClick={() =>
+              void perform(async () => {
+                unwrap(await window.sshdrop.exportWorkflow(current!.id));
+              })
+            }
+          >
+            Export workflow
+          </button>
+          <button
             className="text-button danger-button"
             disabled={!current || busy}
             onClick={() =>
@@ -171,6 +258,8 @@ export function Workflows({ connected }: { connected: boolean }) {
                 unwrap(await window.sshdrop.deleteWorkflow(selected));
                 setPreview(undefined);
                 await refresh();
+                setSearch('');
+                setGroup('');
               })
             }
           >
@@ -206,13 +295,22 @@ export function Workflows({ connected }: { connected: boolean }) {
                   }),
                 );
                 await refresh();
+                setSearch('');
+                setGroup('');
                 setSelected(saved.id);
                 setValues({});
                 setEditor(undefined);
+                setImportReview(false);
                 setPreview(undefined);
               });
             }}
           >
+            {importReview && (
+              <p role="status">
+                Review every imported command and its working directory before saving. Commands can
+                delete data or affect services. Run confirmation starts enabled.
+              </p>
+            )}
             <label>
               Name
               <input
@@ -230,6 +328,15 @@ export function Workflows({ connected }: { connected: boolean }) {
                 value={editor.description}
                 maxLength={400}
                 onChange={(e) => setEditor({ ...editor, description: e.target.value })}
+              />
+            </label>
+            <label>
+              Group
+              <input
+                aria-label="Workflow group name"
+                maxLength={60}
+                value={editor.group ?? ''}
+                onChange={(event) => setEditor({ ...editor, group: event.target.value })}
               />
             </label>
             <label>

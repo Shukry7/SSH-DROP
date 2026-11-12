@@ -38,6 +38,8 @@ Queued source contents are read/checked when the job starts, rather than frozen 
 
 **Unreleased 0.2.0-alpha.6:** Drop up to 100 local files from your file manager onto the remote explorer. Review the displayed destination and confirm to queue the upload. The queue refuses dropped directories, symbolic links, hard-linked files, duplicate names, and files that change after review. Use **Upload folder** for folders and **Upload files** to open the native file picker.
 
+**Workflow library in unreleased 0.2.0-alpha.6:** Search names, descriptions, and groups; assign an optional group; or duplicate a workflow into the editor. Export selected definitions as readable JSON after reviewing the sharing warning. Import opens a definition for review with a new ID and run confirmation enabled. Save it explicitly before running. Exports include saved commands and settings, so review them for private details before sharing.
+
 **Unreleased 0.2.0-alpha.6:** Folder uploads and downloads can also merge into an existing folder after separate confirmation. Each conflicting file offers **Skip file**, **Keep both**, and, where supported, **Back up and replace** or **Replace without backup**. The last option requires another confirmation. A bounded scan checks the destination before writing, and the transfer row shows copied and skipped counts. A merge keeps completed changes after interruption. Stop other writers and inspect partial results before retrying. See the [folder merge checklist](docs/MANUAL_TESTING.md#folder-merges-unreleased-020-alpha6).
 
 ## Overwrite and recovery (0.2.0-alpha.2)

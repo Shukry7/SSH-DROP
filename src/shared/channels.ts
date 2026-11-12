@@ -8,6 +8,8 @@ export const channels = {
   idleEnd: 'idle:end-session',
   idleReturn: 'idle:return',
   workflows: 'workflow:list',
+  importWorkflow: 'workflow:import',
+  exportWorkflow: 'workflow:export',
   saveWorkflow: 'workflow:save',
   deleteWorkflow: 'workflow:delete',
   previewWorkflow: 'workflow:preview',

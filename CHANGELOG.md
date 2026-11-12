@@ -16,6 +16,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Copy or move regular files to another folder on the connected server after confirmation. Copies are limited to 128 MiB and verified before publication. Moves use SFTP rename and preserve the source if the server refuses the move. Existing destinations are refused.
 - Edit ordinary read, write, and execute permissions on one remote file or folder. Review both modes before confirming, and verify the requested mode through SFTP after the change.
 - Drop local files onto the remote explorer to review the destination and queue uploads. The queue rejects files changed since review and applies the usual transfer verification and overwrite choices.
+- Search and group saved workflows, duplicate definitions into the editor, and export/import individual workflow JSON files. Imports open for review with new IDs and run confirmation enabled. Existing definitions and entered variable values are preserved separately.
 
 ### Limits
 

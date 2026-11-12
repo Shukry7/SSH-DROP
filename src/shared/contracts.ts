@@ -138,6 +138,8 @@ export interface DesktopAPI {
   idleEnd(): Promise<Result<void>>;
   idleReturn(): Promise<Result<void>>;
   workflows(): Promise<Result<import('./workflows').Workflow[]>>;
+  importWorkflow(): Promise<Result<import('./workflows').Workflow | null>>;
+  exportWorkflow(id: string): Promise<Result<boolean>>;
   saveWorkflow(
     value: import('./workflows').Workflow,
   ): Promise<Result<import('./workflows').Workflow>>;

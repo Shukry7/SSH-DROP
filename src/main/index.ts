@@ -45,6 +45,7 @@ import { folderName } from './core/folder-transfer';
 import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
+import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
 import { IdleSettingsStore } from './core/idle-settings';
@@ -266,6 +267,53 @@ function registerAPI(): void {
     z.undefined().parse(value);
     return workflows.list();
   });
+  handle(channels.importWorkflow, (value) =>
+    selectFiles(async () => {
+      z.undefined().parse(value);
+      const selection = await openDialog({
+        title: 'Import workflow for review',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (selection.canceled || !selection.filePaths[0]) return null;
+      const workflow = await readWorkflowImport(selection.filePaths[0]).catch(() => {
+        throw new Error(
+          'The workflow file is invalid, unsupported, or exceeds 128 KiB. Nothing was imported.',
+        );
+      });
+      checkOperation();
+      return workflow;
+    }),
+  );
+  handle(channels.exportWorkflow, (value) =>
+    selectFiles(async () => {
+      const id = workflowId.parse(value);
+      const workflow = (await workflows.list()).find((item) => item.id === id);
+      if (!workflow) throw new Error('Workflow not found.');
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Export workflow definition',
+        message: `Export ${JSON.stringify(workflow.name)}?`,
+        detail:
+          'The file contains the saved commands, description, working directory, variable definitions, group, and execution settings as readable text. Check for secrets and private server details before sharing. Entered variable values and command results are excluded.',
+        buttons: ['Cancel', 'Choose export location'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      const destination = await saveDialog({
+        title: 'Export workflow definition',
+        defaultPath: 'workflow-export.json',
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (destination.canceled || !destination.filePath) return false;
+      await writeWorkflowExport(destination.filePath, workflow, checkOperation).catch(() => {
+        throw new Error('Could not export the workflow. Choose a new writable filename.');
+      });
+      return true;
+    }),
+  );
   handle(channels.saveWorkflow, async (value) => {
     const w = workflowSchema.parse(value);
     renderWorkflow(
