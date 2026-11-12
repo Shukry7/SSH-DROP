@@ -1,8 +1,14 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect, _electron as electron, type Locator } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sshFixture } from '../fixtures/ssh-server';
+
+async function expectDraft(contents: Locator, text: string) {
+  await expect
+    .poll(async () => (await contents.locator('.cm-line').allTextContents()).join('\n'))
+    .toBe(text);
+}
 
 test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
   test.setTimeout(60000);
@@ -44,23 +50,35 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await row.getByRole('button', { name: 'Edit text', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Edit remote text file' });
     const contents = editor.getByRole('textbox', { name: 'Remote file contents' });
-    await expect(contents).toHaveValue('Hello from the remote server.\n');
+    await expectDraft(contents, 'Hello from the remote server.\n');
+    await expect(editor.getByRole('combobox', { name: 'Highlighting' })).toHaveValue('plain');
+    await contents.fill('x'.repeat(1048577));
+    await expectDraft(contents, 'Hello from the remote server.\n');
+    await expect(editor.getByRole('status')).toHaveText('No unsaved changes');
+    await expect(editor.locator('.cm-lineNumbers')).toContainText('1');
+    await editor.getByRole('combobox', { name: 'Highlighting' }).selectOption('javascript');
+    await contents.fill('const greeting = "hello";\nconsole.log(greeting);');
+    await expect(editor.locator('.cm-content .cm-line span').first()).toHaveCSS(
+      'color',
+      'rgb(196, 167, 255)',
+    );
+    await expect(editor.locator('.cm-lineNumbers')).toContainText('2');
+    await contents.press('ControlOrMeta+z');
+    await expectDraft(contents, 'Hello from the remote server.\n');
+    await contents.press('ControlOrMeta+Shift+z');
+    await expectDraft(contents, 'const greeting = "hello";\nconsole.log(greeting);');
+    await page.screenshot({ path: 'artifacts/editor-highlighting.png' });
+    await editor.getByRole('combobox', { name: 'Highlighting' }).selectOption('plain');
+    await expectDraft(contents, 'const greeting = "hello";\nconsole.log(greeting);');
+    await expect(editor.locator('.cm-content .cm-line span')).toHaveCount(0);
     await contents.fill('edited through the desktop\n');
     await contents.press('ControlOrMeta+f');
     await expect(editor.getByRole('searchbox', { name: 'Find in draft' })).toBeFocused();
     await editor.getByRole('searchbox', { name: 'Find in draft' }).fill('desktop');
     await editor.getByRole('button', { name: 'Next match' }).click();
-    expect(
-      await contents.evaluate((element: HTMLTextAreaElement) =>
-        element.value.slice(element.selectionStart, element.selectionEnd),
-      ),
-    ).toBe('desktop');
+    expect(await contents.evaluate(() => window.getSelection()?.toString())).toBe('desktop');
     await editor.getByRole('button', { name: 'Previous match' }).click();
-    expect(
-      await contents.evaluate((element: HTMLTextAreaElement) =>
-        element.value.slice(element.selectionStart, element.selectionEnd),
-      ),
-    ).toBe('desktop');
+    expect(await contents.evaluate(() => window.getSelection()?.toString())).toBe('desktop');
     await editor.getByRole('button', { name: 'Close editor' }).click();
     await expect(editor.getByText('Discard this unsaved draft?')).toBeVisible();
     await editor.getByRole('button', { name: 'Keep editing' }).click();
@@ -72,7 +90,7 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
         ),
       )
       .toBe('Unsaved editor changes');
-    await expect(contents).toHaveValue('edited through the desktop\n');
+    await expectDraft(contents, 'edited through the desktop\n');
     await editor.getByRole('button', { name: 'Save changes' }).click();
     await expect(editor.getByRole('status')).toHaveText('No unsaved changes');
     expect(fixture.files.get('/hello.txt')?.toString()).toBe('edited through the desktop\n');
@@ -90,12 +108,12 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await editor.getByRole('button', { name: 'Save changes' }).click();
     await expect(editor.getByRole('alert')).toContainText('remote file changed');
     expect(fixture.files.get('/hello.txt')?.toString()).toBe('external update');
-    await expect(contents).toHaveValue('second draft');
+    await expectDraft(contents, 'second draft');
     await editor.getByRole('button', { name: 'Compare with server' }).click();
     await expect(editor.getByRole('textbox', { name: 'Reviewed server version' })).toHaveValue(
       'external update',
     );
-    await expect(contents).toHaveValue('second draft');
+    await expectDraft(contents, 'second draft');
     await page.screenshot({ path: 'artifacts/editor-comparison.png' });
     fixture.files.set('/hello.txt', Buffer.from('newer external update'));
     await editor.getByRole('button', { name: 'Keep my draft' }).click();
@@ -107,7 +125,7 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await editor.getByRole('button', { name: 'Keep my draft' }).click();
     await expect(editor.getByRole('textbox', { name: 'Reviewed server version' })).toHaveCount(0);
     expect(fixture.files.get('/hello.txt')?.toString()).toBe('newer external update');
-    await expect(contents).toHaveValue('second draft');
+    await expectDraft(contents, 'second draft');
     await editor.getByRole('button', { name: 'Save changes' }).click();
     await expect(editor.getByRole('status')).toHaveText('No unsaved changes');
     expect(fixture.files.get('/hello.txt')?.toString()).toBe('second draft');
@@ -115,7 +133,7 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     fixture.files.set('/hello.txt', Buffer.from('reload from server'));
     await editor.getByRole('button', { name: 'Compare with server' }).click();
     await editor.getByRole('button', { name: 'Use server text' }).click();
-    await expect(contents).toHaveValue('reload from server');
+    await expectDraft(contents, 'reload from server');
     await expect(editor.getByRole('status')).toHaveText('No unsaved changes');
     await contents.fill('draft retained after network loss');
     fixture.drop();

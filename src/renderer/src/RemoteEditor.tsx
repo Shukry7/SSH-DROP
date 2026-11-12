@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { findEditorMatches } from '../../shared/editor-search';
+import { EditorSurface, type EditorSurfaceHandle } from './EditorSurface';
+import { detectEditorLanguage, editorLanguages, type EditorLanguage } from './editor-language';
 
 export function RemoteEditor({
   document,
@@ -12,8 +14,9 @@ export function RemoteEditor({
   close: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const draft = useRef<HTMLTextAreaElement>(null);
+  const draft = useRef<EditorSurfaceHandle>(null);
   const findInput = useRef<HTMLInputElement>(null);
+  const [language, setLanguage] = useState(() => detectEditorLanguage(document.path));
   const [token, setToken] = useState(document.token);
   const [text, setText] = useState(document.text);
   const [saved, setSaved] = useState(document.text);
@@ -114,12 +117,7 @@ export function RemoteEditor({
         : (matchIndex + direction + matches.length) % matches.length;
     setMatchIndex(index);
     const start = matches[index];
-    textarea.focus();
-    textarea.setSelectionRange(start, start + query.length);
-    const line = text.slice(0, start).split('\n').length - 1;
-    textarea.scrollTop =
-      line * Number.parseFloat(window.getComputedStyle(textarea).lineHeight) -
-      textarea.clientHeight / 2;
+    textarea.select(start, start + query.length);
   };
   return (
     <dialog
@@ -160,6 +158,22 @@ export function RemoteEditor({
           {error}
         </p>
       )}
+      <label className="editor-language">
+        Highlighting
+        <select
+          value={language}
+          onChange={(event) => setLanguage(event.target.value as EditorLanguage)}
+        >
+          {Object.entries(editorLanguages).map(([value, name]) => (
+            <option key={value} value={value}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <span className="muted">
+          Detected from the filename. Changes affect display only; files are never executed.
+        </span>
+      </label>
       <div className="editor-search toolbar">
         <label>
           Find in draft
@@ -213,17 +227,13 @@ export function RemoteEditor({
       <div className={comparison ? 'editor-comparison' : undefined}>
         <label>
           File contents
-          <textarea
+          <EditorSurface
             ref={draft}
-            autoFocus
-            aria-label="Remote file contents"
-            value={text}
-            disabled={busy}
-            spellCheck={false}
-            wrap="off"
-            maxLength={1048576}
-            onChange={(event) => {
-              setText(event.target.value);
+            text={text}
+            language={language}
+            busy={busy}
+            onChange={(value) => {
+              setText(value);
               setMatchIndex(-1);
             }}
           />

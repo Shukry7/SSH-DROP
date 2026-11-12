@@ -2,6 +2,13 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.3] — Unreleased
+
+### Added
+
+- Remote editor line numbers, filename-based syntax highlighting for JavaScript, TypeScript, JSON, YAML, Python and shell scripts, plus a manual language/plain-text selector. Unknown extensions use plain text.
+- Bounded scrolling and keyboard undo/redo in the draft editor. Existing literal search, unsaved-change protection, reviewed conflict handling, encoding preservation and verified saves remain in place.
+
 ## [0.3.0-alpha.2] — Unreleased
 
 ### Added
