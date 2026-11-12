@@ -5,10 +5,14 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { actionNameSchema } from '../../shared/validation';
 import { readDirectory } from './directory';
+import type { ReplacementApproval } from './replacement';
+import { recoveryPathsSchema } from './recovery-store';
 import { runTransfer, transferLimits } from './transfer';
 import { transferWait } from './transfer-wait';
 
 export const folderLimits = { entries: 100, depth: 16, bytes: 10 * 1024 ** 3, scan: 30000 };
+const mergeDirectoryLimit = 1000;
+const foldedName = (name: string) => name.normalize('NFC').toLowerCase();
 
 // Use portable names even on Unix so a folder cannot introduce ambiguous Windows targets.
 export function folderName(value: string): string {
@@ -58,6 +62,15 @@ export async function runFolderTransfer(options: {
   update: TransferUpdate;
   publish: () => void;
   warn: () => void;
+  merge?: {
+    confirm: (approval: ReplacementApproval) => Promise<number>;
+    conflict: (
+      local: string,
+      remote: string,
+      transfer: (direction: 'upload' | 'download', local: string, remote: string) => Promise<void>,
+      guard: () => Promise<void>,
+    ) => Promise<boolean>;
+  };
   limits?: typeof transferLimits;
 }): Promise<void> {
   const { signal, current, sftp, update, publish } = options;
@@ -66,7 +79,7 @@ export async function runFolderTransfer(options: {
     signal.throwIfAborted();
     if (!current()) throw new Error('The connection changed during the folder transfer.');
     if (Date.now() > scanDeadline)
-      throw new Error('Folder scan timed out. No destination was created.');
+      throw new Error('Folder scan timed out before writing to the destination.');
   };
   const wait = <T>(start: (cb: (error?: Error | null, value?: T) => void) => void) => {
     check();
@@ -86,7 +99,7 @@ export async function runFolderTransfer(options: {
       );
     });
   const io = (remote: boolean) => {
-    const paths = remote ? posix : { join, dirname };
+    const paths = remote ? posix : { join, dirname, basename };
     const stat = async (path: string): Promise<Info | undefined> => {
       try {
         return remote
@@ -113,11 +126,13 @@ export async function runFolderTransfer(options: {
       check();
       return { info, key };
     };
-    const list = async (path: string) => {
-      if (remote)
-        return (await local(() => readDirectory(sftp, path, current))).entries.map(
-          (entry) => entry.name,
-        );
+    const list = async (path: string, limit: number) => {
+      const tooMany = () => new Error(`Folder listing exceeds the ${limit}-item limit.`);
+      if (remote) {
+        const listing = await local(() => readDirectory(sftp, path, current));
+        if (listing.entries.length > limit) throw tooMany();
+        return listing.entries.map((entry) => entry.name);
+      }
       check();
       const handle = await transferWait<Awaited<ReturnType<typeof opendir>>>(
         (cb) => {
@@ -140,8 +155,7 @@ export async function runFolderTransfer(options: {
           if (!entry) break;
           check();
           names.push(entry.name);
-          if (names.length > folderLimits.entries)
-            throw new Error('Folder item limit exceeded (100 items including folders).');
+          if (names.length > limit) throw tooMany();
         }
       } finally {
         await transferWait<void>((cb) => {
@@ -171,7 +185,13 @@ export async function runFolderTransfer(options: {
   );
   const sourceRoot = options.direction === 'upload' ? localRoot : options.remote;
   const targetRoot = options.direction === 'upload' ? options.remote : localRoot;
-  const entries: { parts: string[]; directory: boolean; key: string; size: number }[] = [];
+  const entries: {
+    parts: string[];
+    directory: boolean;
+    key: string;
+    size: number;
+    targetKey?: string;
+  }[] = [];
   const deadline = Date.now() + folderLimits.scan;
   scanDeadline = deadline;
   let bytes = 0;
@@ -202,20 +222,19 @@ export async function runFolderTransfer(options: {
       size: info.isFile() ? info.size : 0,
     });
     if (info.isDirectory()) {
-      const names = await source.list(path);
+      const names = await source.list(path, folderLimits.entries);
       const seen = new Set<string>();
-      for (const raw of names) {
+      for (const raw of names.sort()) {
         const name = folderName(raw);
-        const folded = name.normalize('NFC').toLowerCase();
+        const folded = foldedName(name);
         if (seen.has(folded)) throw new Error('Folder contains colliding filenames.');
         seen.add(folded);
         await scan([...parts, name]);
       }
     }
-    if (Date.now() > deadline)
-      throw new Error('Folder scan timed out. No destination was created.');
+    check();
   };
-  // Full bounded preflight before the first write; no merge or recursive deletion.
+  // Full bounded preflight before the first write.
   folderName(
     options.direction === 'upload' ? basename(options.local) : posix.basename(options.remote),
   );
@@ -223,15 +242,50 @@ export async function runFolderTransfer(options: {
     options.direction === 'upload' ? posix.basename(options.remote) : basename(options.local),
   );
   await scan([]);
-  scanDeadline = Infinity;
   const parent = target.dirname(targetRoot);
   const parentInfo = await target.inspect(parent);
   if (!parentInfo.info.isDirectory()) throw new Error('Choose a destination folder.');
-  if (await target.stat(targetRoot))
-    throw new Error(
-      'The destination folder already exists. Choose another location or rename the source; folder merging is not supported.',
-    );
+  const rootExists = !!(await target.stat(targetRoot));
+  const merge = rootExists ? options.merge : undefined;
+  if (rootExists && !merge) throw new Error('The destination folder already exists.');
   const directories = new Map<string, string>([[parent, parentInfo.key]]);
+  const existingDirectories = new Set<string>();
+  const checkName = (path: string, names: string[]) => {
+    const name = target.basename(path);
+    if (names.some((other) => other !== name && foldedName(other) === foldedName(name)))
+      throw new Error('The destination contains a case or Unicode filename collision.');
+  };
+  if (merge) {
+    recoveryPathsSchema.parse({ local: localRoot, remote: options.remote });
+    const listings = new Map<string, string[]>();
+    let existingBytes = 0;
+    for (const entry of entries) {
+      const path = target.join(targetRoot, ...entry.parts);
+      const containing = target.dirname(path);
+      if (entry.parts.length && !existingDirectories.has(containing)) continue;
+      const names =
+        listings.get(containing) ?? (await target.list(containing, mergeDirectoryLimit));
+      listings.set(containing, names);
+      checkName(path, names);
+      if (!(await target.stat(path))) continue;
+      const { info, key } = await target.inspect(path);
+      if (entry.directory !== info.isDirectory())
+        throw new Error(
+          'A destination file and folder have the same name. Resolve it before merging.',
+        );
+      if (!entry.directory) {
+        if (!Number.isSafeInteger(info.size) || info.size < 0)
+          throw new Error('Invalid destination file size.');
+        existingBytes += info.size;
+        if (existingBytes > folderLimits.bytes)
+          throw new Error('Existing conflicting files exceed the 10 GiB limit.');
+      }
+      entry.targetKey = key;
+      if (entry.directory) existingDirectories.add(path);
+    }
+    if (!entries[0].targetKey) throw new Error('The destination folder changed before merging.');
+  }
+  scanDeadline = Infinity;
   const sourceDirectories = new Map(
     entries
       .filter((entry) => entry.directory)
@@ -253,50 +307,102 @@ export async function runFolderTransfer(options: {
       path = side.dirname(path);
     }
   };
+  const total = entries.filter((entry) => !entry.directory).length;
+  let copied = 0;
+  let skipped = 0;
+  const report = () => {
+    update.folderFiles = { copied, skipped, total };
+    publish();
+  };
   update.total = bytes;
-  publish();
+  report();
+  if (merge) {
+    const conflicts = entries.filter((entry) => !entry.directory && entry.targetKey).length;
+    const choice = await merge.confirm({
+      title: 'Merge into existing folder?',
+      buttons: ['Cancel', 'Review file conflicts and merge'],
+      detail: `Source: ${sourceRoot}\nDestination: ${targetRoot}\n\nIncoming files: ${total}. File conflicts: ${conflicts}. Each conflict requires its own decision. Unrelated files stay in place. Stop other writers while merging. Cancellation or connection loss can leave a partial merge; completed changes remain in place.`,
+    });
+    check();
+    if (choice !== 1) {
+      update.status = 'cancelled';
+      report();
+      return;
+    }
+  }
   let completed = 0;
   try {
     for (const entry of entries) {
       check();
       const from = source.join(sourceRoot, ...entry.parts);
       const to = target.join(targetRoot, ...entry.parts);
-      if (entry.parts.length)
-        await verifyAncestors(source.dirname(from), sourceRoot, source, sourceDirectories);
-      const before = await source.inspect(from);
-      if (before.key !== entry.key || before.info.isDirectory() !== entry.directory)
-        throw new Error('A source changed after the folder scan.');
-      await verifyAncestors(target.dirname(to), parent, target, directories);
-      if (await target.stat(to))
-        throw new Error(
-          'A folder destination appeared during transfer. Nothing will be overwritten.',
-        );
+      const guard = async () => {
+        if (entry.parts.length)
+          await verifyAncestors(source.dirname(from), sourceRoot, source, sourceDirectories);
+        const before = await source.inspect(from);
+        if (before.key !== entry.key || before.info.isDirectory() !== entry.directory)
+          throw new Error('A source changed after the folder scan.');
+        const containing = target.dirname(to);
+        await verifyAncestors(containing, parent, target, directories);
+        if (merge && (containing === parent || existingDirectories.has(containing)))
+          checkName(to, await target.list(containing, mergeDirectoryLimit));
+        const destination = await target.stat(to);
+        if (
+          entry.targetKey
+            ? !destination || (await target.inspect(to)).key !== entry.targetKey
+            : destination
+        )
+          throw new Error('A folder destination changed after the scan. Inspect before retrying.');
+      };
+      await guard();
       if (entry.directory) {
-        await target.create(to);
+        if (!entry.targetKey) await target.create(to);
         const made = await target.inspect(to);
-        if (!made.info.isDirectory()) throw new Error('The created folder changed.');
+        if (!made.info.isDirectory() || (entry.targetKey && made.key !== entry.targetKey))
+          throw new Error('A destination folder changed.');
         directories.set(to, made.key);
       } else {
-        const nested: TransferUpdate = {
-          ...update,
-          total: entry.size,
-          transferred: 0,
-          status: 'running',
+        const transfer = async (
+          direction: 'upload' | 'download',
+          local: string,
+          remote: string,
+        ) => {
+          await guard();
+          const nested: TransferUpdate = {
+            ...update,
+            direction,
+            total: entry.size,
+            transferred: 0,
+            status: 'running',
+          };
+          await runTransfer({
+            ...options,
+            direction,
+            local,
+            remote,
+            beforePublish: merge ? guard : undefined,
+            update: nested,
+            publish: () => {
+              update.transferred = completed + nested.transferred;
+              update.phase = nested.phase;
+              publish();
+            },
+          });
+          if (nested.status !== 'completed')
+            throw new Error(nested.error ?? 'Folder file transfer stopped.');
         };
-        await runTransfer({
-          ...options,
-          local: options.direction === 'upload' ? from : to,
-          remote: options.direction === 'upload' ? to : from,
-          update: nested,
-          publish: () => {
-            update.transferred = completed + nested.transferred;
-            update.phase = nested.phase;
-            publish();
-          },
-        });
-        if (nested.status !== 'completed')
-          throw new Error(nested.error ?? 'Folder file transfer stopped.');
-        completed += entry.size;
+        const local = options.direction === 'upload' ? from : to;
+        const remote = options.direction === 'upload' ? to : from;
+        if (merge && entry.targetKey && !(await merge.conflict(local, remote, transfer, guard))) {
+          skipped++;
+          update.total -= entry.size;
+        } else {
+          if (!entry.targetKey) await transfer(options.direction, local, remote);
+          copied++;
+          completed += entry.size;
+          update.transferred = completed;
+        }
+        report();
       }
     }
     check();

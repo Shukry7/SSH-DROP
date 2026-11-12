@@ -11,7 +11,7 @@ Queued files are read and verified when their job starts; selection does not fre
 3. Cancel a waiting file: it must never open or publish. Cancel an active transfer: preserve the existing destination, pause the rest if the operation fails, and inspect uncertainty warnings before continuing. Continue queue must use a native confirmation defaulting to Cancel and must not retry the failed file.
 4. Trigger an unreadable/missing source, denied write, or a conflict. Existing Cancel/Keep both/verified backup-and-replace choices must still apply per file. Recovery inspection must remain usable while paused; file mutations and navigation stay locked until queued files complete or are cancelled.
 5. Disconnect during streaming or a pending picker/continuation confirmation, then reconnect. Old jobs must not run, old names/history must clear, and late approvals must not apply to the new connection. No queue should survive an application restart.
-6. Queue more files while one runs; enforce at most 100 active/waiting jobs. Confirm duplicate selected basenames (including case/Unicode variants) reject the batch. There is no persistent queue, folder merging, automatic retry or byte-level pause/resume.
+6. Queue more files while one runs; enforce at most 100 active/waiting jobs. Confirm duplicate selected basenames (including case/Unicode variants) reject the batch. There is no persistent queue, automatic retry or byte-level pause/resume.
 
 Use a disposable Linux server with SSH and SFTP enabled and an account you are allowed to access. Use a writable test folder and disposable files. The current application version is shown in the top bar. This checklist covers the implemented alpha, not the whole PRD.
 
@@ -136,11 +136,18 @@ Use disposable data and new destination names. Existing alpha.3 installers do no
 
 1. Upload a small folder containing nested files, zero-byte files and empty directories. Cancel the native warning first and verify no change. Confirm next; both paths and limits should be visible, defaulting to Cancel. Check every file byte-for-byte and verify empty directories.
 2. Download that remote folder using its row’s Download button and select a local parent. Confirm the copied root retains its name and exact contents. Check aggregate progress and cancellation controls.
-3. Retry with the same destination. It must refuse the existing root and leave existing bytes unchanged. No folder merging or recursive deletion is offered.
+3. On alpha.4, retry with the same destination. It must refuse the existing root and leave existing bytes unchanged. For alpha.6 development builds, use the merge checklist below.
 4. Test symbolic links, local junctions/hard-linked files, special files, case/Unicode-normalization collisions and Windows-reserved names on supported test devices. The scan must fail before creating the root.
 5. Test more than 100 items (root/folders count), more than 16 levels and more than 10 GiB. Verify refusal without a destination. Never use important data for these checks.
 6. Cancel during a slow copy or disconnect mid-file. Completed files/folders may remain; inspect them. Later files must not start and reconnect must not replay the copy. Delete or rename the partial root manually before retrying. Waiting folder cancellation must touch no destination.
 7. Change a source or replace a parent during a disposable copy; detected changes must stop work. These checks do not prevent all filesystem races; stop other writers in normal use. There is no folder rollback, resume, permission/ACL preservation or automatic partial-tree cleanup.
+
+## Folder merges (unreleased 0.2.0-alpha.6)
+
+1. Upload or download into an existing disposable folder. Cancel the separate merge preview and verify no files or folders were added. Retry and compare the shown source, destination and conflict count.
+2. Test **Skip file**, **Keep both**, **Back up and replace**, and **Replace without backup**. Check existing and incoming bytes, the extra permanent-replacement warning, and the encrypted recovery record for the backed replacement. Verify unrelated files remain and the transfer row shows copied and skipped counts.
+3. Test a destination symlink, case/Unicode alias and file-versus-folder collision before any copy. Then test an external edit while a file-conflict dialog is open, and disconnect during a slow merge. Check the partial result and verify later work is never replayed on reconnect.
+4. Test a destination directory listing over 1,000 items and a merge with more than 10 GiB of existing conflicting files. Both should fail before writes. Each affected directory is bounded, and the source and destination preflight share the 30-second limit.
 
 ## 0.2.0-alpha.5 overwrite, workflows and terminal sizing
 

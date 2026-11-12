@@ -882,6 +882,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                       {transfer.error ??
                         `${size(transfer.transferred)} / ${size(transfer.total)} · ${transfer.status === 'running' ? (transfer.phase ?? 'transferring') : transfer.status}`}
                     </small>
+                    {transfer.folderFiles && (
+                      <small>
+                        {transfer.folderFiles.copied} of {transfer.folderFiles.total} files copied ·{' '}
+                        {transfer.folderFiles.skipped} skipped
+                      </small>
+                    )}
                   </div>
                   {(transfer.status === 'running' || transfer.status === 'queued') && (
                     <button

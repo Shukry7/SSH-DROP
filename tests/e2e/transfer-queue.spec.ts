@@ -45,7 +45,7 @@ async function dialogs(application: ElectronApplication, paths: string[], folder
   );
 }
 
-test('folder pickers and default-Cancel warning gate verified nested copies without merging', async () => {
+test('folder pickers and default-Cancel warnings gate verified copies and merges', async () => {
   test.setTimeout(60000);
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-folder-ui-'));
   const source = join(directory, 'tree');
@@ -64,7 +64,7 @@ test('folder pickers and default-Cancel warning gate verified nested copies with
       dialog.showMessageBox = async (...args: unknown[]) => {
         const options = args.at(-1) as import('electron').MessageBoxOptions;
         if (
-          options.title !== 'Copy folder into a new destination' ||
+          options.title !== 'Copy folder' ||
           options.defaultId !== 0 ||
           options.cancelId !== 0 ||
           !options.message.includes('/tree')
@@ -102,6 +102,31 @@ test('folder pickers and default-Cancel warning gate verified nested copies with
     expect(await page.evaluate(() => window.sshdrop.downloadFolder('/bad/../tree'))).toMatchObject({
       ok: false,
     });
+    await writeFile(join(source, 'content.txt'), 'changed bytes');
+    await writeFile(join(source, 'new.txt'), 'new bytes');
+    await application.evaluate(({ dialog }, source) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [source] });
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        const options = args.at(-1) as import('electron').MessageBoxOptions;
+        if (options.defaultId !== 0 || options.cancelId !== 0) throw new Error('Unsafe default');
+        if (options.title === 'File already exists') {
+          if (options.buttons?.[0] !== 'Skip file') throw new Error('Missing skip option');
+          return { response: 0, checkboxChecked: false };
+        }
+        if (
+          options.title === 'Merge into existing folder?' &&
+          !options.detail?.includes('File conflicts: 1.')
+        )
+          throw new Error('Missing merge preview');
+        return { response: 1, checkboxChecked: false };
+      };
+    }, source);
+    await page.getByRole('button', { name: 'Upload folder', exact: true }).click();
+    await expect(
+      page.getByRole('group', { name: 'Transfer tree', exact: true }).first(),
+    ).toContainText('1 of 2 files copied · 1 skipped');
+    expect(fixture.files.get('/tree/content.txt')?.toString()).toBe('folder desktop bytes');
+    expect(fixture.files.get('/tree/new.txt')?.toString()).toBe('new bytes');
     await page.screenshot({ path: 'artifacts/folder-transfers.png' });
   } finally {
     await application.close();

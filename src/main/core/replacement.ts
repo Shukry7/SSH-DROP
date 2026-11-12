@@ -24,6 +24,7 @@ export interface ReplacementContext {
   localIO: ReplacementIO;
   remoteIO: ReplacementIO;
   check(): void;
+  beforePublish?: () => Promise<void>;
   transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void>;
   confirm(approval: ReplacementApproval): Promise<number>;
 }
@@ -82,6 +83,7 @@ export class Replacements {
     direction: 'upload' | 'download',
     local: string,
     remote: string,
+    skipLabel = 'Cancel',
   ): Promise<boolean> {
     // Reject control/bidirectional characters before displaying a native warning,
     // rather than waiting until a recovery record is written after approval.
@@ -103,7 +105,7 @@ export class Replacements {
     const choice = await this.approve({
       title: 'File already exists',
       buttons: [
-        'Cancel',
+        skipLabel,
         'Keep both',
         ...(supported ? ['Back up and replace', 'Replace without backup'] : []),
       ],
@@ -171,6 +173,7 @@ export class Replacements {
         );
       if (!unchangedFile(await io.snapshot(target), previous))
         throw new Error('Destination changed. The original has not been replaced.');
+      await c.beforePublish?.();
       c.check();
       publishing = true;
       await io.replace(stage, target);
@@ -259,6 +262,7 @@ export class Replacements {
         );
       c.check();
       await c.store.update(record.id, c.identity, { state: 'publishing', installed });
+      await c.beforePublish?.();
       c.check();
       publishing = true;
       await io.replace(stage, target, safety);
