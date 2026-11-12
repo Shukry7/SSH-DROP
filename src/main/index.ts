@@ -42,6 +42,7 @@ import { BackupVault } from './core/backup-vault';
 import { osKeyProtection } from './core/os-key-protection';
 import { downloadSelection } from './core/download-selection';
 import { folderName } from './core/folder-transfer';
+import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
@@ -689,6 +690,28 @@ function registerAPI(): void {
             remote: childPath(directory, basename(local)),
           })),
         );
+    }),
+  );
+  handle(channels.dropUpload, (value) =>
+    selectFiles(async () => {
+      const owner = session!;
+      const lease = owner.lease();
+      const { directory, jobs } = await inspectDroppedFiles(value);
+      lease();
+      const names = jobs.slice(0, 8).map(({ local }) => basename(local));
+      const more = jobs.length - names.length;
+      const approval = await messageBox({
+        type: 'question',
+        title: 'Upload dropped files',
+        message: `Queue ${jobs.length} ${jobs.length === 1 ? 'file' : 'files'} for upload to ${JSON.stringify(directory)}?`,
+        detail: `${names.map((name) => JSON.stringify(name)).join('\n')}${more ? `\n… and ${more} more` : ''}\n\nExisting files require a separate conflict decision.`,
+        buttons: ['Cancel', 'Queue uploads'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      lease();
+      if (approval.response === 1) owner.enqueue(jobs);
     }),
   );
   const confirmFolder = async (source: string, destination: string) =>

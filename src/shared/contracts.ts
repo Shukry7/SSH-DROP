@@ -172,4 +172,5 @@ export interface DesktopAPI {
   acknowledge(id: number): Promise<Result<void>>;
   resize(size: { cols: number; rows: number }): Promise<Result<void>>;
   onEvent(listener: (event: SessionEvent) => void): () => void;
+  onDropError(listener: (error: string) => void): () => void;
 }

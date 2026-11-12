@@ -27,6 +27,7 @@ export const channels = {
   recovery: 'recovery:list',
   recover: 'recovery:action',
   upload: 'sftp:upload',
+  dropUpload: 'sftp:drop-upload',
   uploadFolder: 'sftp:upload-folder',
   downloadFolder: 'sftp:download-folder',
   download: 'sftp:download',

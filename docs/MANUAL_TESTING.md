@@ -68,7 +68,9 @@ Profiles contain connection metadata and key-file locations in local user-data s
 - [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own temporary `.sshdrop-*.part` sibling file. If cleanup fails, inspect the selected folders before retrying.
 - [ ] Cancel a native upload/download file dialog. No transfer should start.
 
-Uploads target the folder displayed in the explorer, not the terminal's current working directory. Version 0.2.0-alpha.4 supports bounded folder copies into new destinations; see the folder checklist below. Drag-and-drop is not implemented.
+Uploads target the folder displayed in the explorer, not the terminal's current working directory. Version 0.2.0-alpha.4 supports bounded folder copies into new destinations; see the folder checklist below.
+
+- [ ] On each supported OS, drag two disposable files from the native file manager onto the remote explorer. Check the highlighted panel and the destination in the default-Cancel review. Cancel first and confirm on a second attempt. Compare remote bytes, test a destination conflict, and confirm a file changed while waiting is refused. Drop a folder or link and check the batch is rejected. Drop outside the explorer, during navigation, and after disconnect to check that no work queues.
 
 - [ ] On a throttled disposable connection, observe **preparing**, **transferring**, **verifying**, and **finalizing**. Long transfers must continue while progress occurs; the final filename should not appear until verification/publication. Upload verification reads the remote temporary file once, adding download traffic.
 - [ ] Block SFTP data requests while leaving SSH alive. After two minutes with no progress, the app should stop and disconnect. Setup/finalization requests are separately bounded at 30 seconds; cleanup is bounded at three seconds. Never test this by interfering with production servers.
