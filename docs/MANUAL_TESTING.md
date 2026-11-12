@@ -183,3 +183,10 @@ Create a small encrypted recovery backup from disposable data, then export it fr
 ## Reconnect and cancel setup
 
 Cancel a new connection during host verification and retry. A stale approval must not establish a session or write a trust record. Use a disposable connection and interrupt it mid-transfer: the app should show Connection lost, retain a generic warning, clear passwords and old output, and wait for an explicit reconnect. Verify the last nonsecret fields are available, a changed key is refused, and interrupted operations are not replayed. Close only the remote shell and confirm SFTP can still browse; test a server without SFTP and confirm the shell remains usable. See RECONNECT.md.
+
+## Editor highlighting (0.3.0-alpha.3 development source)
+
+- Open ordinary UTF-8 `.ts`, `.json`, `.yaml`, `.py`, and `.sh` fixtures. Check the initial Highlighting mode, syntax colors and line numbers. Unknown filenames must use Plain text. Highlighting must never execute text or fetch document resources.
+- Switch modes and Plain text while dirty. Confirm the draft and unsaved status persist. Use undo/redo, Ctrl/Cmd+F, next/previous matches and Ctrl/Cmd+S. Search should select and scroll to the matching text.
+- Check long lines and many lines at narrow window widths and when comparing with the server. Both editors must stay inside the dialog with usable scrollbars. The server comparison remains read-only.
+- Repeat conflict review, save cancellation, network loss, close/quit draft protection and idle clearing with the new surface. Check non-ASCII text, CRLF and BOM preservation. Oversized draft input is refused; oversized UTF-8 saves must not replace the remote file.

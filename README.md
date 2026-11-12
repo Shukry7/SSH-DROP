@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.3.0-alpha.2, early development preview.** Cross-platform checks run in GitHub Actions; consult the latest workflow for each platform’s results. Real-device certification and signed installers are still pending.
+**Status: 0.3.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.3.0-alpha.3`** adds editor line numbers and syntax highlighting for JavaScript, TypeScript, JSON, YAML, Python, and shell scripts. The filename selects the initial mode; **Highlighting** lets you change it or choose Plain text. This changes display only and never executes file contents.
 
 **Development source `0.3.0-alpha.2`** adds in-file search and a comparison view to the remote editor. **Compare with server** shows the current server text beside the draft. After review and confirmation, keep the draft against the reviewed baseline or use the server text. A later save still checks for newer remote changes and uses the normal backup/save confirmation.
 

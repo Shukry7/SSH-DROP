@@ -16,4 +16,8 @@ Compare with server reads a fresh bounded snapshot and displays it beside the dr
 
 Keep my draft asks for confirmation, rechecks the server, and uses the reviewed version for the next save checks while preserving the draft. Save changes then requires its normal confirmation and verification. Use server text asks before discarding unsaved edits and loading the reviewed text into the editor. It also rechecks the server first. If the server changes during review, refresh the comparison before accepting it. The reviewed encoding becomes the encoding used by the next save.
 
-Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. Syntax highlighting, automatic merging, multiple tabs, and large-file support remain planned.
+## Highlighting and line numbers in 0.3.0-alpha.3
+
+The draft editor uses CodeMirror with line numbers, bounded horizontal/vertical scrolling, and undo/redo (Ctrl/Cmd+Z; redo with Ctrl/Cmd+Shift+Z). It initially detects JavaScript, TypeScript, JSON, YAML, Python, and shell scripts from the filename. Unknown extensions open as Plain text. Use Highlighting to select another mode or Plain text without changing the draft, its save baseline, or the bytes sent to the server. This selection lasts for the open editor only. Highlighting is visual assistance, not a syntax validator. The reviewed server pane remains read-only plain text.
+
+The editor does not run scripts or load language servers, remote plugins, or external document resources. Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. The draft remains bounded to 1,048,576 UTF-16 code units, and saves additionally enforce the original 1 MiB UTF-8 byte limit. An edit that would exceed the draft limit is refused. Automatic merging, multiple tabs, and large-file support remain planned.
