@@ -138,6 +138,8 @@ export interface DesktopAPI {
   idleEnd(): Promise<Result<void>>;
   idleReturn(): Promise<Result<void>>;
   workflows(): Promise<Result<import('./workflows').Workflow[]>>;
+  importWorkflow(): Promise<Result<import('./workflows').Workflow | null>>;
+  exportWorkflow(id: string): Promise<Result<boolean>>;
   saveWorkflow(
     value: import('./workflows').Workflow,
   ): Promise<Result<import('./workflows').Workflow>>;
@@ -159,6 +161,11 @@ export interface DesktopAPI {
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  openEditor(input: {
+    directory: string;
+    name: string;
+  }): Promise<Result<import('./editor').EditorDocument>>;
+  saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
   recovery(): Promise<Result<RecoveryView[]>>;
   recover(input: RecoveryAction): Promise<Result<void>>;
   upload(directory: string): Promise<Result<void>>;
@@ -172,4 +179,5 @@ export interface DesktopAPI {
   acknowledge(id: number): Promise<Result<void>>;
   resize(size: { cols: number; rows: number }): Promise<Result<void>>;
   onEvent(listener: (event: SessionEvent) => void): () => void;
+  onDropError(listener: (error: string) => void): () => void;
 }

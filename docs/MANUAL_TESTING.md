@@ -68,7 +68,9 @@ Profiles contain connection metadata and key-file locations in local user-data s
 - [ ] Transfer a sufficiently large disposable file and select **Cancel** while running. It should report cancellation and attempt to remove its own temporary `.sshdrop-*.part` sibling file. If cleanup fails, inspect the selected folders before retrying.
 - [ ] Cancel a native upload/download file dialog. No transfer should start.
 
-Uploads target the folder displayed in the explorer, not the terminal's current working directory. Version 0.2.0-alpha.4 supports bounded folder copies into new destinations; see the folder checklist below. Drag-and-drop is not implemented.
+Uploads target the folder displayed in the explorer, not the terminal's current working directory. Version 0.2.0-alpha.4 supports bounded folder copies into new destinations; see the folder checklist below.
+
+- [ ] On each supported OS, drag two disposable files from the native file manager onto the remote explorer. Check the highlighted panel and the destination in the default-Cancel review. Cancel first and confirm on a second attempt. Compare remote bytes, test a destination conflict, and confirm a file changed while waiting is refused. Drop a folder or link and check the batch is rejected. Drop outside the explorer, during navigation, and after disconnect to check that no work queues.
 
 - [ ] On a throttled disposable connection, observe **preparing**, **transferring**, **verifying**, and **finalizing**. Long transfers must continue while progress occurs; the final filename should not appear until verification/publication. Upload verification reads the remote temporary file once, adding download traffic.
 - [ ] Block SFTP data requests while leaving SSH alive. After two minutes with no progress, the app should stop and disconnect. Setup/finalization requests are separately bounded at 30 seconds; cleanup is bounded at three seconds. Never test this by interfering with production servers.
@@ -102,7 +104,13 @@ Remote changes use SFTP, not shell commands. Other server processes can change p
 - [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; permission changes involving ownership or special bits, recursive changes, or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; rich editing with syntax highlighting or graphical merging; permission changes involving ownership or special bits, recursive changes, or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates.
+
+## Remote editor (0.3.0-alpha.1 development source)
+
+Use disposable UTF-8 files. Open **Edit text**, modify a draft, and try Close editor. Keep editing must preserve the draft. Close the app while dirty and cancel the discard warning. Save first with a backup, compare bytes and permissions on the server, then test guarded rollback in Recovery. Test Save without backup by cancelling and then confirming its second warning.
+
+Change a file outside SSHDrop while its draft is open. Save must refuse and preserve the external bytes and the draft. Test LF, CRLF, BOM, invalid UTF-8, binary data, mixed endings, a file above 1 MiB, denied permissions, and a server without atomic replacement. Drop the connection while editing and saving; inspect the remote file before retrying. Check idle expiry clears the draft with the rest of the workspace. Validate close warnings and Ctrl/Cmd+S on Windows, Linux, and macOS devices.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 
@@ -155,6 +163,8 @@ Use disposable data and new destination names. Existing alpha.3 installers do no
 ## 0.2.0-alpha.5 overwrite, workflows and terminal sizing
 
 Use disposable files and servers. Choose Replace without backup for uploads and downloads: cancel the final permanent warning first, then confirm; verify new bytes, no recovery record and no vault-key requirement. Re-test backed replacement and rollback. Interrupt a disposable replacement and inspect before retrying; no rollback is available for no-backup mode.
+
+In alpha.6 development builds, assign two workflows to different groups and test search and filtering. Duplicate one, edit its name, save, and restart to check persistence. Export a definition, cancel the sharing warning first, then choose a new local filename. Import it and verify no command runs and no saved data changes until Save. Check that run confirmation is enabled and the original stays in the library. Repeat with malformed and oversized JSON files; inspect the existing saved definitions afterward.
 
 Follow WORKFLOWS.md to create, edit, delete and restart with a saved workflow. Confirm definitions remain available across servers while values/results clear on disconnect. Test text containing apostrophes and shell metacharacters: previews must show quoted arguments and execution must match the native confirmed script. Cancel first. Fail the middle step and verify later steps never run; test Stop, follow mode, output limits, disconnect during confirmation and reconnect without replay. Use only generic commands and disposable data for destructive-command testing. After success, failure and Stop, test Run again: it must reload the latest saved definition, clear variable values, start from step 1 and honor the saved confirmation preference (on by default). With confirmation on, require a fresh preview and native confirmation. With it off, variable-free rerun starts immediately; variable workflows still need fresh values and preview submission. Cancel the opt-out save warning and verify the setting is not changed. Re-enable confirmation and verify it is honored on the next rerun. Cancel confirmation and verify no command runs. Delete the definition and verify rerun is refused. Disconnect must clear rerun availability. Check maximum-runtime help explains immediate execution rather than a delay.
 

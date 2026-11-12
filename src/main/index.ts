@@ -42,8 +42,11 @@ import { BackupVault } from './core/backup-vault';
 import { osKeyProtection } from './core/os-key-protection';
 import { downloadSelection } from './core/download-selection';
 import { folderName } from './core/folder-transfer';
+import { inspectDroppedFiles } from './core/dropped-files';
 import metadata from '../../package.json';
 import { WorkflowStore } from './core/workflow-store';
+import { openEditorSchema, saveEditorSchema } from '../shared/editor';
+import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
 import { IdleSettingsStore } from './core/idle-settings';
@@ -265,6 +268,53 @@ function registerAPI(): void {
     z.undefined().parse(value);
     return workflows.list();
   });
+  handle(channels.importWorkflow, (value) =>
+    selectFiles(async () => {
+      z.undefined().parse(value);
+      const selection = await openDialog({
+        title: 'Import workflow for review',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (selection.canceled || !selection.filePaths[0]) return null;
+      const workflow = await readWorkflowImport(selection.filePaths[0]).catch(() => {
+        throw new Error(
+          'The workflow file is invalid, unsupported, or exceeds 128 KiB. Nothing was imported.',
+        );
+      });
+      checkOperation();
+      return workflow;
+    }),
+  );
+  handle(channels.exportWorkflow, (value) =>
+    selectFiles(async () => {
+      const id = workflowId.parse(value);
+      const workflow = (await workflows.list()).find((item) => item.id === id);
+      if (!workflow) throw new Error('Workflow not found.');
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Export workflow definition',
+        message: `Export ${JSON.stringify(workflow.name)}?`,
+        detail:
+          'The file contains the saved commands, description, working directory, variable definitions, group, and execution settings as readable text. Check for secrets and private server details before sharing. Entered variable values and command results are excluded.',
+        buttons: ['Cancel', 'Choose export location'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      const destination = await saveDialog({
+        title: 'Export workflow definition',
+        defaultPath: 'workflow-export.json',
+        filters: [{ name: 'SSHDrop workflow', extensions: ['json'] }],
+      });
+      if (destination.canceled || !destination.filePath) return false;
+      await writeWorkflowExport(destination.filePath, workflow, checkOperation).catch(() => {
+        throw new Error('Could not export the workflow. Choose a new writable filename.');
+      });
+      return true;
+    }),
+  );
   handle(channels.saveWorkflow, async (value) => {
     const w = workflowSchema.parse(value);
     renderWorkflow(
@@ -642,6 +692,11 @@ function registerAPI(): void {
       return result.response === 1;
     }),
   );
+  handle(channels.openEditor, async (value) => {
+    const { directory, name } = openEditorSchema.parse(value);
+    return session!.editText({ path: childPath(directory, name) });
+  });
+  handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
   handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),
@@ -689,6 +744,28 @@ function registerAPI(): void {
             remote: childPath(directory, basename(local)),
           })),
         );
+    }),
+  );
+  handle(channels.dropUpload, (value) =>
+    selectFiles(async () => {
+      const owner = session!;
+      const lease = owner.lease();
+      const { directory, jobs } = await inspectDroppedFiles(value);
+      lease();
+      const names = jobs.slice(0, 8).map(({ local }) => basename(local));
+      const more = jobs.length - names.length;
+      const approval = await messageBox({
+        type: 'question',
+        title: 'Upload dropped files',
+        message: `Queue ${jobs.length} ${jobs.length === 1 ? 'file' : 'files'} for upload to ${JSON.stringify(directory)}?`,
+        detail: `${names.map((name) => JSON.stringify(name)).join('\n')}${more ? `\n… and ${more} more` : ''}\n\nExisting files require a separate conflict decision.`,
+        buttons: ['Cancel', 'Queue uploads'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      lease();
+      if (approval.response === 1) owner.enqueue(jobs);
     }),
   );
   const confirmFolder = async (source: string, destination: string) =>
@@ -848,6 +925,28 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
   session = createdSession;
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
+  let askingToDiscard = false;
+  window.webContents.on('will-prevent-unload', () => {
+    if (askingToDiscard) return;
+    askingToDiscard = true;
+    void messageBox({
+      type: 'warning',
+      title: 'Unsaved editor changes',
+      message: 'Discard the editor draft and close SSHDrop?',
+      detail: 'The draft is held in memory and has not been saved to the server.',
+      buttons: ['Keep editing', 'Discard and close'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+      .then((choice) => {
+        if (choice.response === 1 && !createdWindow.isDestroyed()) createdWindow.destroy();
+      })
+      .catch(() => {})
+      .finally(() => {
+        askingToDiscard = false;
+      });
+  });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );
@@ -959,4 +1058,3 @@ void app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (!rebuildingWindow && process.platform !== 'darwin') app.quit();
 });
-app.on('before-quit', () => session?.disconnect());

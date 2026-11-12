@@ -15,6 +15,8 @@ import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
+import { RemoteEditor } from './RemoteEditor';
+import type { EditorDocument } from '../../shared/editor';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -64,8 +66,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const connectionEpoch = useRef(0);
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [editor, setEditor] = useState<{ document: EditorDocument; epoch: number }>();
+  const [dropActive, setDropActive] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const filesReady = connected && sftpOpen;
+  const dropDirectory =
+    filesReady && !loading && !actionBusy && !actionInput && !editor ? listing?.path : undefined;
   const fileBusy =
     actionBusy ||
     loading ||
@@ -85,7 +91,8 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       setListing(undefined);
       setLoading(false);
     };
-    return window.sshdrop.onEvent((event) => {
+    const stopDropErrors = window.sshdrop.onDropError(setError);
+    const stopEvents = window.sshdrop.onEvent((event) => {
       if (event.type === 'status') {
         setConnected(event.connected);
         setLost(event.lost === true);
@@ -137,6 +144,10 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
         }
       }
     });
+    return () => {
+      stopDropErrors();
+      stopEvents();
+    };
   }, []);
 
   async function run(operation: () => Promise<unknown>) {
@@ -546,7 +557,25 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               </button>
             </div>
           )}
-          <section className="explorer panel" aria-label="Remote file explorer">
+          <section
+            className={`explorer panel${dropDirectory && dropActive ? ' upload-drop-active' : ''}`}
+            aria-label="Remote file explorer"
+            data-sshdrop-upload-directory={dropDirectory}
+            onDragOver={(event) => {
+              if (!event.dataTransfer.types.includes('Files')) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = dropDirectory ? 'copy' : 'none';
+              setDropActive(!!dropDirectory);
+            }}
+            onDragLeave={(event) => {
+              if (
+                !(event.relatedTarget instanceof Node) ||
+                !event.currentTarget.contains(event.relatedTarget)
+              )
+                setDropActive(false);
+            }}
+            onDrop={() => setDropActive(false)}
+          >
             <div className="panel-heading">
               <h3>
                 <span className="panel-icon">▱</span> Files
@@ -767,6 +796,34 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                           )}
                           {(entry.kind === 'file' || entry.kind === 'directory') && (
                             <>
+                              {entry.kind === 'file' && (
+                                <button
+                                  className="text-button"
+                                  disabled={
+                                    !filesReady || fileBusy || !!editor || entry.size > 1048576
+                                  }
+                                  onClick={() =>
+                                    void run(async () => {
+                                      const epoch = connectionEpoch.current;
+                                      setActionBusy(true);
+                                      try {
+                                        const document = unwrap(
+                                          await window.sshdrop.openEditor({
+                                            directory: listing.path,
+                                            name: entry.name,
+                                          }),
+                                        );
+                                        if (epoch === connectionEpoch.current)
+                                          setEditor({ document, epoch });
+                                      } finally {
+                                        setActionBusy(false);
+                                      }
+                                    })
+                                  }
+                                >
+                                  Edit text
+                                </button>
+                              )}
                               <button
                                 className="text-button"
                                 disabled={!filesReady || fileBusy}
@@ -854,7 +911,9 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                     ? `${listing.entries.length} items`
                     : 'Waiting for connection'}
               </span>
-              <span>Remote Linux filesystem</span>
+              <span>
+                {dropDirectory ? 'Drop files here to review uploads' : 'Remote Linux filesystem'}
+              </span>
             </div>
           </section>
           {actionInput && (
@@ -866,6 +925,16 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               close={() => {
                 setActionInput(undefined);
                 setError('');
+              }}
+            />
+          )}
+          {editor && (
+            <RemoteEditor
+              document={editor.document}
+              active={filesReady && editor.epoch === connectionEpoch.current}
+              close={() => {
+                setEditor(undefined);
+                if (filesReady && listingPath.current) void run(() => browse(listingPath.current!));
               }}
             />
           )}

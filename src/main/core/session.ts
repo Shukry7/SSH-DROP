@@ -24,6 +24,8 @@ import { replacementIO } from './replacement-io';
 import { type RecoveryRecord, type RecoveryStore, type ServerIdentity } from './recovery-store';
 import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
+import { readDroppedFileFingerprint } from './dropped-files';
+import { RemoteEditor } from './remote-editor';
 import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
@@ -43,8 +45,18 @@ export class Session {
   private recoveryBusy = false;
   private workflow?: { id: string; controller: AbortController };
   private commandServer = '';
+  private readonly editor = new RemoteEditor();
   private readonly queue = new TransferQueue(
-    (job) => this.transfer(job.direction, job.local, job.remote, undefined, job.id, job.folder),
+    (job) =>
+      this.transfer(
+        job.direction,
+        job.local,
+        job.remote,
+        undefined,
+        job.id,
+        job.folder,
+        job.sourceFingerprint,
+      ),
     (transfer) => this.emit({ type: 'transfer', transfer }),
     (queue) => this.emit({ type: 'queue', queue }),
   );
@@ -206,6 +218,7 @@ export class Session {
   }
 
   disconnect(): void {
+    this.editor.clear();
     this.setup?.abort(new Error('Connection was cancelled.'));
     if (this.workflow)
       this.emit({
@@ -316,6 +329,56 @@ export class Session {
   async list(path: string): Promise<DirectoryListing> {
     const sftp = this.files();
     return readDirectory(sftp, path, () => this.sftp === sftp);
+  }
+  async editText(input: { path: string } | { token: string; text: string }) {
+    if (
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error('Finish the active operation before opening or saving an editor file.');
+    const sftp = this.files();
+    const controller = new AbortController();
+    this.fileAction = controller;
+    const current = () => this.sftp === sftp;
+    const check = () => {
+      controller.signal.throwIfAborted();
+      if (!current()) throw new Error('The connection changed. Reopen the editor file.');
+    };
+    const invalidate = () => {
+      if (!current()) return;
+      this.disconnect();
+      this.emit({
+        type: 'status',
+        connected: false,
+        lost: true,
+        message:
+          'Editor operation interrupted. Inspect the remote file and recovery before retrying.',
+      });
+    };
+    try {
+      return await this.editor.operate(
+        { sftp, signal: controller.signal, current, invalidate },
+        async (io, guard) => {
+          if ('path' in input) return this.editor.open(input.path, io, guard);
+          if (!this.recoveryOptions || !this.identity)
+            throw new Error('Editor saving is unavailable.');
+          return this.editor.save(input.token, input.text, io, guard, {
+            ...this.recoveryOptions,
+            identity: this.identity,
+            check,
+          });
+        },
+      );
+    } catch (error) {
+      if (error instanceof Error && /uncertain/i.test(error.message))
+        this.emit({ type: 'transfer-warning', message: transferWarning });
+      throw error;
+    } finally {
+      if (this.fileAction === controller) this.fileAction = undefined;
+    }
   }
 
   async changeFile(
@@ -437,6 +500,7 @@ export class Session {
     recoveryAction?: RecoveryAction,
     queueId?: string,
     folder = false,
+    sourceFingerprint?: string,
   ): Promise<void> {
     if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     if (
@@ -481,6 +545,21 @@ export class Session {
       });
     };
     const warn = () => this.emit({ type: 'transfer-warning', message: transferWarning });
+    const verifyDroppedSource = async () => {
+      if (!sourceFingerprint) return;
+      const latest = await transferWait<string>(
+        (done) => {
+          void readDroppedFileFingerprint(local).then(
+            (value) => done(undefined, value),
+            (error: Error) => done(error),
+          );
+        },
+        this.transferTiming.request,
+        controller.signal,
+      );
+      if (latest !== sourceFingerprint)
+        throw new Error('A dropped file changed after review. Drop it again.');
+    };
     const recovery = this.recoveryOptions;
     const identity = this.identity;
     const replacements =
@@ -507,6 +586,7 @@ export class Session {
         : undefined;
     publish();
     try {
+      if (sourceFingerprint) await verifyDroppedSource();
       if (folder) {
         this.recoveryBusy = !!replacements;
         await runFolderTransfer({
@@ -538,38 +618,43 @@ export class Session {
           controller.signal.throwIfAborted();
           if (!current()) throw new Error('Connection changed.');
         };
-        const replacement = replacements(async (d, l, r) => {
-          check();
-          const nested: TransferUpdate = {
-            ...update,
-            direction: d,
-            status: 'running',
-            total: 0,
-            transferred: 0,
-          };
-          await runTransfer({
-            sftp,
-            direction: d,
-            local: l,
-            remote: r,
-            signal: controller.signal,
-            current,
-            update: nested,
-            publish: () => {
-              Object.assign(update, {
-                total: nested.total,
-                transferred: nested.transferred,
-                phase: nested.phase,
-              });
-              publish();
-            },
-            limits: this.transferTiming,
-            warn,
-            invalidate,
-          });
-          check();
-          if (nested.status !== 'completed') throw new Error(nested.error ?? 'Transfer cancelled.');
-        });
+        const replacement = replacements(
+          async (d, l, r) => {
+            check();
+            const nested: TransferUpdate = {
+              ...update,
+              direction: d,
+              status: 'running',
+              total: 0,
+              transferred: 0,
+            };
+            await runTransfer({
+              sftp,
+              direction: d,
+              local: l,
+              remote: r,
+              sourceFingerprint: d === 'upload' && l === local ? sourceFingerprint : undefined,
+              signal: controller.signal,
+              current,
+              update: nested,
+              publish: () => {
+                Object.assign(update, {
+                  total: nested.total,
+                  transferred: nested.transferred,
+                  phase: nested.phase,
+                });
+                publish();
+              },
+              limits: this.transferTiming,
+              warn,
+              invalidate,
+            });
+            check();
+            if (nested.status !== 'completed')
+              throw new Error(nested.error ?? 'Transfer cancelled.');
+          },
+          sourceFingerprint ? verifyDroppedSource : undefined,
+        );
         const completed = recoveryAction
           ? await replacement.recover(recoveryAction.id, recoveryAction.action)
           : await replacement.transfer(direction, local, path);
@@ -582,6 +667,7 @@ export class Session {
         direction,
         local,
         remote: path,
+        sourceFingerprint,
         signal: controller.signal,
         current: () => this.sftp === sftp,
         update,

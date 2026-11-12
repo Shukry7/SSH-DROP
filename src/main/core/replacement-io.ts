@@ -66,7 +66,8 @@ export function replacementIO(
       );
     if (!Number.isSafeInteger(before.size) || before.size < 0)
       throw new Error('Invalid file size.');
-    if (before.size > maxReadBytes) throw new Error('The file exceeds the remote copy size limit.');
+    if (before.size > maxReadBytes)
+      throw new Error('The file exceeds the size limit for this operation.');
     const remoteHandle = sftp
       ? await transferWait<Buffer>(
           (cb) => {
