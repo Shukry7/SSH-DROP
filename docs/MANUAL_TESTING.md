@@ -82,6 +82,7 @@ Uploads target the folder displayed in the explorer, not the terminal's current 
 Use only disposable files. Deletion is permanent: there is no trash or undo.
 
 - [ ] Select **New folder**, enter one name, and choose **Review change**. The native confirmation must show the complete remote path, default to Cancel, and explain permissions. Cancel first; nothing should be created. Confirm next; the new folder should appear in the displayed directory. The app requests mode 0700; inspect actual permissions on the server.
+- [ ] Select **New file** in an alpha.6 development build. Cancel the confirmation and verify nothing changes. Confirm and verify the empty file appears in the displayed directory. Check the requested mode `0600` on the server. Repeat with an existing name and verify the original contents are preserved.
 - [ ] Try a duplicate name, `..`, a name containing `/` or `\`, and a name exceeding 255 UTF-8 bytes. These must fail without changing existing items. Spaces, quotes, and Unicode names are supported.
 - [ ] Choose **Rename** on a disposable file and folder. Cancel the native confirmation, then retry and confirm. The listing should refresh. Existing destination names must be rejected and their contents preserved.
 - [ ] Choose **Delete** on a disposable file or empty folder. The native warning must show the full path, default to Cancel, and explain permanent deletion. Cancel first, then confirm. The item should disappear only after confirmation.
@@ -99,7 +100,7 @@ Remote changes use SFTP, not shell commands. Other server processes can change p
 - [ ] Before disconnecting, produce a distinctive disposable terminal message and complete a transfer. Disconnect and reconnect: the previous terminal buffer and transfer names must disappear. This clears the app UI, not clipboard contents or forensic memory copies.
 - [ ] On a disposable setup, interrupt the network connection. The app should report disconnection when detected and allow a new connection. An interrupted remote transfer can leave a partial file if the server is unreachable during cleanup.
 
-Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; file creation, copy/move between folders, permission changes, recursive deletion or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
+Not implemented: saved passwords/passphrases; multiple simultaneous servers or terminal tabs; file preview/edit/save; copy/move between folders, permission changes, recursive deletion or undo; persistent queues or byte-level resume; local split pane; Docker browsing; Mobile Bridge; signed installers; automatic updates. A manual `nano` session edits through the remote terminal and is different from a built-in graphical editor.
 
 When reporting an issue, include the app version, OS, steps, expected behavior, and actual behavior. Do not share passwords, private keys, sensitive terminal output, or server files.
 

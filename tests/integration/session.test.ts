@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { utils } from 'ssh2';
 import { Session } from '../../src/main/core/session';
 import { HostTrust } from '../../src/main/core/host-trust';
 import type { SessionEvent, TransferUpdate } from '../../src/shared/contracts';
@@ -154,6 +155,60 @@ describe('SSH and SFTP over a real loopback connection', () => {
       ),
     ).rejects.toThrow('already exists');
     expect(fixture.files.get('/large.bin')?.length).toBe(2 * 1024 * 1024);
+  });
+  it('creates only an approved empty file and requests owner-only permissions without truncation', async () => {
+    const beforeCreate = vi.fn();
+    await replaceFixture({ beforeCreate });
+    await connect();
+    const input = {
+      action: 'create-file',
+      directory: '/folder',
+      name: "new 'quoted' 日本語.txt",
+    } as const;
+    expect(await session.changeFile(input, async () => false)).toBe(false);
+    expect(beforeCreate).not.toHaveBeenCalled();
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile(input, confirm)).toBe(true);
+    const { WRITE, CREAT, EXCL } = utils.sftp.OPEN_MODE;
+    expect(beforeCreate).toHaveBeenCalledExactlyOnceWith(
+      `/folder/${input.name}`,
+      WRITE | CREAT | EXCL,
+      0o600,
+    );
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ button: 'Create file', detail: expect.stringContaining('0600') }),
+    );
+    expect(fixture.files.get(`/folder/${input.name}`)).toEqual(Buffer.alloc(0));
+    expect((await session.list('/folder')).entries).toContainEqual(
+      expect.objectContaining({ name: input.name, kind: 'file', size: 0 }),
+    );
+    await expect(session.changeFile(input, confirm)).rejects.toThrow('already exists');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+  it('preserves a file created by another writer after the final preflight', async () => {
+    await replaceFixture({ beforeCreate: (path) => fixture.files.set(path, Buffer.from('keep')) });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'create-file', directory: '/', name: 'race.txt' },
+        async () => true,
+      ),
+    ).rejects.toThrow('server refused');
+    expect(fixture.files.get('/race.txt')?.toString()).toBe('keep');
+    expect((await session.list('/')).entries.some((entry) => entry.name === 'race.txt')).toBe(true);
+  });
+  it('reports uncertain creation and invalidates SFTP if the created handle cannot be closed', async () => {
+    await replaceFixture({ failClose: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'create-file', directory: '/', name: 'closed.txt' },
+        async () => true,
+      ),
+    ).rejects.toThrow('result is uncertain');
+    expect(fixture.files.get('/closed.txt')).toEqual(Buffer.alloc(0));
+    expect(fixture.openedFiles.filter((path) => path === '/closed.txt')).toHaveLength(1);
+    await expect(session.list('/')).rejects.toThrow('SFTP is unavailable');
   });
   it('rejects permission failures while preserving the connection', async () => {
     await replaceFixture({ denyChanges: true });

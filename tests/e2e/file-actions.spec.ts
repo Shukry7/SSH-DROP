@@ -47,6 +47,34 @@ test('remote folder and file actions require confirmation, preserve collisions, 
     await respond(application, 1);
     const page = await application.firstWindow();
     await connect(page, fixture.port);
+    const create = page.getByRole('button', { name: 'New file', exact: true });
+    const createFile = page.getByRole('dialog', { name: 'Create remote file', exact: true });
+    await create.click();
+    await createFile.getByLabel('New name').fill('hello.txt');
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(createFile.getByRole('alert')).toContainText('already exists');
+    await createFile.getByLabel('New name').fill('empty.txt');
+    await respond(application, 0);
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(createFile).not.toBeVisible();
+    expect(fixture.files.has('/empty.txt')).toBe(false);
+    expect(
+      await application.evaluate(
+        () => (globalThis as unknown as { lastWarning: unknown }).lastWarning,
+      ),
+    ).toMatchObject({
+      defaultId: 0,
+      cancelId: 0,
+      buttons: ['Cancel', 'Create file'],
+      message: expect.stringContaining('/empty.txt'),
+      detail: expect.stringContaining('0600'),
+    });
+    await respond(application, 1);
+    await create.click();
+    await createFile.getByLabel('New name').fill('empty.txt');
+    await createFile.getByRole('button', { name: 'Review change' }).click();
+    await expect(page.getByRole('cell', { name: /empty\.txt/ })).toBeVisible();
+    expect(fixture.files.get('/empty.txt')).toEqual(Buffer.alloc(0));
     await expect(
       page
         .getByRole('row')

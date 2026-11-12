@@ -12,6 +12,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Export individual encrypted recovery backups up to 32 MiB as passphrase-protected portable files. Open them offline into new local copies without the original OS key store. Wrong passphrases and damaged exports produce no destination file; existing files are never overwritten.
 - Explicit Reconnect to server and Cancel connection attempt controls. Keep nonsecret connection fields in the current workspace, clear submitted credentials, and distinguish a lost SSH connection from a closed terminal or unavailable SFTP. Connection setup is bounded, and a late host approval cannot authorize a cancelled attempt. Interrupted operations are never replayed.
 - Merge folder uploads and downloads after a bounded destination scan and separate approval. Each conflicting file can be skipped, copied under a new name, or replaced with or without a recovery backup where supported. Transfer rows show how many files were copied or skipped. A failed merge stops and leaves completed changes available for inspection.
+- Create an empty remote file from the explorer after confirmation. SSHDrop requests owner-only access and uses exclusive SFTP creation to preserve existing paths.
 
 ### Limits
 

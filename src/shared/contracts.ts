@@ -20,6 +20,7 @@ export interface DirectoryListing {
   entries: RemoteEntry[];
 }
 export type FileAction =
+  | { action: 'create-file'; directory: string; name: string }
   | { action: 'create-folder'; directory: string; name: string }
   | {
       action: 'rename';

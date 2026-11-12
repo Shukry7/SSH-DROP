@@ -116,6 +116,7 @@ export const downloadSelectionSchema = z
 const actionFields = { directory: actionDirectorySchema, name: actionNameSchema };
 export const fileActionSchema = z
   .discriminatedUnion('action', [
+    z.object({ action: z.literal('create-file'), ...actionFields }).strict(),
     z.object({ action: z.literal('create-folder'), ...actionFields }).strict(),
     z
       .object({
