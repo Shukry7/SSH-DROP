@@ -19,7 +19,12 @@ export function FileActionDialog({
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const title = input.action === 'rename' ? 'Rename remote item' : 'Create remote folder';
+  const title =
+    input.action === 'rename'
+      ? 'Rename remote item'
+      : input.action === 'create-file'
+        ? 'Create remote file'
+        : 'Create remote folder';
   return (
     <dialog
       ref={dialog}

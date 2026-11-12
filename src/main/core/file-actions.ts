@@ -1,4 +1,4 @@
-import type { SFTPWrapper, Stats } from 'ssh2';
+import { utils, type SFTPWrapper, type Stats } from 'ssh2';
 import type { FileAction } from '../../shared/contracts';
 import { childPath, fileActionSchema } from '../../shared/validation';
 
@@ -19,6 +19,9 @@ export async function changeRemoteFile(
   milliseconds = 10000,
 ): Promise<boolean> {
   const input = fileActionSchema.parse(value);
+  const creatingFile = input.action === 'create-file';
+  const creating = creatingFile || input.action === 'create-folder';
+  const createButton = creatingFile ? 'Create file' : 'Create folder';
   let sent = false;
   let invalidated = false;
   const stop = () => {
@@ -114,7 +117,7 @@ export async function changeRemoteFile(
   const inspect = async () => {
     await parent();
     const stats = await info(source);
-    if (input.action !== 'create-folder') {
+    if (!creating) {
       if (!stats) throw new Error('The selected item no longer exists. Refresh the directory.');
       if (
         (input.kind === 'file' && !stats.isFile()) ||
@@ -127,11 +130,7 @@ export async function changeRemoteFile(
         if (!Number.isSafeInteger(stats[field]) || stats[field] < 0)
           throw new Error('The server returned invalid item metadata.');
     }
-    if (
-      input.action === 'create-folder'
-        ? stats
-        : input.action === 'rename' && (await info(destination))
-    )
+    if (creating ? stats : input.action === 'rename' && (await info(destination)))
       throw new Error(
         'The destination already exists. Choose a different name; existing items are not replaced.',
       );
@@ -144,18 +143,20 @@ export async function changeRemoteFile(
         ? 'Permanently delete remote item'
         : input.action === 'rename'
           ? 'Rename remote item'
-          : 'Create remote folder',
+          : creatingFile
+            ? 'Create remote file'
+            : 'Create remote folder',
     message:
       input.action === 'rename'
         ? `Rename ${JSON.stringify(source)} to ${JSON.stringify(destination)}?`
-        : `${input.action === 'delete' ? 'Permanently delete' : 'Create folder'} ${JSON.stringify(source)}?`,
-    detail: `${input.action === 'delete' ? 'This cannot be undone. There is no trash or backup. Only files and empty folders can be deleted; folders are never removed recursively.' : input.action === 'rename' ? 'Existing destinations are refused. Other applications using this path may be affected.' : 'The new folder requests owner-only permissions (0700); the server controls the final permissions.'} If the connection is interrupted, inspect the remote folder before retrying.`,
+        : `${input.action === 'delete' ? 'Permanently delete' : createButton} ${JSON.stringify(source)}?`,
+    detail: `${input.action === 'delete' ? 'This cannot be undone. There is no trash or backup. Only files and empty folders can be deleted; folders are never removed recursively.' : input.action === 'rename' ? 'Existing destinations are refused. Other applications using this path may be affected.' : creatingFile ? 'Creates an empty file and requests owner-only read/write permissions (0600). The server controls final permissions. Existing items are preserved.' : 'The new folder requests owner-only permissions (0700); the server controls the final permissions.'} If the connection is interrupted, inspect the remote folder before retrying.`,
     button:
       input.action === 'delete'
         ? 'Delete permanently'
         : input.action === 'rename'
           ? 'Rename'
-          : 'Create folder',
+          : createButton,
   });
   if (!approved) return false;
   deadline = Date.now() + milliseconds;
@@ -173,16 +174,26 @@ export async function changeRemoteFile(
     );
   check();
   sent = true;
+  let fileCreated = false;
   try {
-    await request<void>((cb) => {
-      if (input.action === 'create-folder') sftp.mkdir(source, { mode: 0o700 }, cb);
-      else if (input.action === 'rename') sftp.rename(source, destination, cb);
-      else if (input.kind === 'directory') sftp.rmdir(source, cb);
-      else sftp.unlink(source, cb);
-    });
+    if (creatingFile) {
+      const { WRITE, CREAT, EXCL } = utils.sftp.OPEN_MODE;
+      const handle = await request<Buffer>((cb) =>
+        sftp.open(source, WRITE | CREAT | EXCL, { mode: 0o600 }, cb),
+      );
+      fileCreated = true;
+      await request<void>((cb) => sftp.close(handle, cb));
+    } else {
+      await request<void>((cb) => {
+        if (input.action === 'create-folder') sftp.mkdir(source, { mode: 0o700 }, cb);
+        else if (input.action === 'rename') sftp.rename(source, destination, cb);
+        else if (input.kind === 'directory') sftp.rmdir(source, cb);
+        else sftp.unlink(source, cb);
+      });
+    }
   } catch (error) {
     const code = (error as { code?: number }).code;
-    if (code === 6 || code === 7) {
+    if (fileCreated || code === 6 || code === 7) {
       stop();
       throw new Error(uncertain, { cause: error });
     }

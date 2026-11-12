@@ -612,6 +612,16 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 >
                   New folder
                 </button>
+                <button
+                  className="secondary compact"
+                  disabled={!filesReady || !listing || fileBusy}
+                  onClick={() => {
+                    setError('');
+                    setActionInput({ action: 'create-file', directory: listing!.path, name: '' });
+                  }}
+                >
+                  New file
+                </button>
               </div>
             </div>
             <form

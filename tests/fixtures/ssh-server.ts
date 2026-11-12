@@ -27,6 +27,7 @@ export async function sshFixture(
     corruptReadback?: boolean;
     atomicReplace?: boolean;
     dropAfterReplace?: boolean;
+    beforeCreate?: (path: string, flags: number, mode?: number) => void;
     exec?: (command: string, stream: ServerChannel) => void;
   } = {},
 ) {
@@ -205,9 +206,10 @@ export async function sshFixture(
               void response.then(respond);
             } else respond();
           });
-          sftp.on('OPEN', (id, path, flags) => {
+          sftp.on('OPEN', (id, path, flags, attrs) => {
             if (path.startsWith('/blocked/')) return sftp.status(id, status.PERMISSION_DENIED);
-            if (flags & modes.EXCL && files.has(path)) return sftp.status(id, status.FAILURE);
+            if (flags & modes.CREAT) options.beforeCreate?.(path, flags, attrs.mode);
+            if (flags & modes.EXCL && exists(path)) return sftp.status(id, status.FAILURE);
             if (!(flags & modes.CREAT) && !files.has(path))
               return sftp.status(id, status.NO_SUCH_FILE);
             if ((flags & modes.CREAT && !files.has(path)) || flags & modes.TRUNC)
