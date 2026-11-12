@@ -49,7 +49,7 @@ Implemented in development source (not in the 0.1.0-alpha.1 installers): saved p
 
 Version 0.2.0-alpha.4 adds a bounded, session-only multi-file upload/download queue with sequential execution, per-file cancellation, explicit continuation after failure, and no replay after disconnect. Version 0.2.0-alpha.4 also adds bounded folder copies into new destinations (100 items, 16 levels, 10 GiB, 30-second scan), refusing links/special files and preserving empty folders. Cancellation keeps partial results for inspection. Existing alpha.3 installers include neither queue nor folder copies.
 
-The unreleased alpha.6 adds confirmed creation of empty remote files. Remaining: optional saved credential storage (backup key protection does not save SSH credentials), copy/move between folders, permissions editing, and drag-and-drop uploads. Recursive deletion and general undo for deletion/renaming are not implemented.
+The unreleased alpha.6 adds confirmed creation of empty remote files and same-server copy/move of regular files between existing folders. Remaining: optional saved credential storage (backup key protection does not save SSH credentials), permissions editing, and drag-and-drop uploads. Recursive deletion and general undo for deletion/renaming are not implemented.
 
 Development hardening adds terminal/transfer-history reset, bounded remote directory reads, ephemeral renderer storage, dependency/secret gates, and packaged security-fuse verification. Signing, notarization, independent review, and real-device security validation remain pending; see [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 

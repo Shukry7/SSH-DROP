@@ -783,6 +783,23 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                               >
                                 Rename
                               </button>
+                              {entry.kind === 'file' && (
+                                <button
+                                  className="text-button"
+                                  disabled={!filesReady || fileBusy}
+                                  onClick={() => {
+                                    setError('');
+                                    setActionInput({
+                                      action: 'copy',
+                                      directory: listing.path,
+                                      name: entry.name,
+                                      destinationDirectory: '',
+                                    });
+                                  }}
+                                >
+                                  Copy or move
+                                </button>
+                              )}
                               <button
                                 className="text-button danger-button"
                                 disabled={!filesReady || fileBusy}

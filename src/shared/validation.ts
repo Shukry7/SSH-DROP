@@ -120,6 +120,13 @@ export const fileActionSchema = z
     z.object({ action: z.literal('create-folder'), ...actionFields }).strict(),
     z
       .object({
+        action: z.enum(['copy', 'move']),
+        ...actionFields,
+        destinationDirectory: actionDirectorySchema,
+      })
+      .strict(),
+    z
+      .object({
         action: z.literal('rename'),
         ...actionFields,
         newName: actionNameSchema,
@@ -139,6 +146,12 @@ export const fileActionSchema = z
         ctx.addIssue({ code: 'custom', message: 'The remote path is too long.' });
     if (input.action === 'rename' && input.name === input.newName)
       ctx.addIssue({ code: 'custom', message: 'Choose a different name.' });
+    if ('destinationDirectory' in input) {
+      if (input.destinationDirectory === input.directory)
+        ctx.addIssue({ code: 'custom', message: 'Choose a different destination folder.' });
+      if (Buffer.byteLength(posix.join(input.destinationDirectory, input.name), 'utf8') > 4096)
+        ctx.addIssue({ code: 'custom', message: 'The destination path is too long.' });
+    }
   });
 export function childPath(directory: string, name: string): string {
   if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0'))

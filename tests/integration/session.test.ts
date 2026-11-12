@@ -221,6 +221,98 @@ describe('SSH and SFTP over a real loopback connection', () => {
     ).rejects.toThrow('denied permission');
     expect((await session.list('/')).entries.length).toBeGreaterThan(0);
   });
+  it('copies and moves regular files across folders after review', async () => {
+    await connect();
+    const input = { directory: '/', name: 'hello.txt', destinationDirectory: '/folder' };
+    const source = fixture.files.get('/hello.txt');
+    const confirm = vi.fn(async () => true);
+    expect(await session.changeFile({ ...input, action: 'copy' }, async () => false)).toBe(false);
+    expect(fixture.files.has('/folder/hello.txt')).toBe(false);
+    expect(await session.changeFile({ ...input, action: 'copy' }, confirm)).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('/folder/hello.txt') }),
+    );
+    expect(fixture.files.get('/hello.txt')).toEqual(source);
+    expect(fixture.files.get('/folder/hello.txt')).toEqual(source);
+    await expect(session.changeFile({ ...input, action: 'move' }, confirm)).rejects.toThrow(
+      'already exists',
+    );
+    fixture.files.delete('/folder/hello.txt');
+    expect(await session.changeFile({ ...input, action: 'move' }, confirm)).toBe(true);
+    expect(fixture.files.has('/hello.txt')).toBe(false);
+    expect(fixture.files.get('/folder/hello.txt')).toEqual(source);
+  });
+
+  it('refuses a directory as a copy source or a symbolic link as a move destination', async () => {
+    await connect();
+    fixture.symlinks.add('/alias');
+    const confirm = vi.fn(async () => true);
+    await expect(
+      session.changeFile(
+        { action: 'copy', directory: '/', name: 'folder', destinationDirectory: '/folder' },
+        confirm,
+      ),
+    ).rejects.toThrow('item type changed');
+    await expect(
+      session.changeFile(
+        { action: 'move', directory: '/', name: 'hello.txt', destinationDirectory: '/alias' },
+        confirm,
+      ),
+    ).rejects.toThrow('symbolic link');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+  });
+
+  it('does not publish a corrupt copy and cleans up the staging file', async () => {
+    await replaceFixture({ corruptReadback: true });
+    await connect();
+    await expect(
+      session.changeFile(
+        { action: 'copy', directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+        async () => true,
+      ),
+    ).rejects.toThrow('SHA-256');
+    expect(fixture.files.has('/hello.txt')).toBe(true);
+    expect(fixture.files.has('/folder/hello.txt')).toBe(false);
+    expect([...fixture.files.keys()].some((path) => path.endsWith('.part'))).toBe(false);
+  });
+
+  it.each(['copy', 'move'] as const)(
+    'preserves a destination created during %s publication',
+    async (action) => {
+      await replaceFixture({
+        beforeRename: (_from, to) => fixture.files.set(to, Buffer.from('keep')),
+      });
+      await connect();
+      await expect(
+        session.changeFile(
+          { action, directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+          async () => true,
+        ),
+      ).rejects.toThrow('server refused');
+      expect(fixture.files.has('/hello.txt')).toBe(true);
+      expect(fixture.files.get('/folder/hello.txt')?.toString()).toBe('keep');
+      expect([...fixture.files.keys()].some((path) => path.endsWith('.part'))).toBe(false);
+    },
+  );
+
+  it.each(['copy', 'move'] as const)(
+    'reports uncertain %s publication without replay after losing the acknowledgment',
+    async (action) => {
+      await replaceFixture({ dropAfterChange: true });
+      await connect();
+      await expect(
+        session.changeFile(
+          { action, directory: '/', name: 'hello.txt', destinationDirectory: '/folder' },
+          async () => true,
+        ),
+      ).rejects.toThrow('uncertain');
+      expect(fixture.files.has('/hello.txt')).toBe(action === 'copy');
+      expect(fixture.files.get('/folder/hello.txt')?.toString()).toContain('Hello');
+      await connect();
+      expect(fixture.files.has('/hello.txt')).toBe(action === 'copy');
+    },
+  );
   it('reports an applied change with a lost acknowledgment as uncertain without retrying', async () => {
     await replaceFixture({ dropAfterChange: true });
     await connect();

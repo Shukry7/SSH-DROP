@@ -22,6 +22,7 @@ export interface DirectoryListing {
 export type FileAction =
   | { action: 'create-file'; directory: string; name: string }
   | { action: 'create-folder'; directory: string; name: string }
+  | { action: 'copy' | 'move'; directory: string; name: string; destinationDirectory: string }
   | {
       action: 'rename';
       directory: string;

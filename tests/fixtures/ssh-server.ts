@@ -28,6 +28,7 @@ export async function sshFixture(
     atomicReplace?: boolean;
     dropAfterReplace?: boolean;
     beforeCreate?: (path: string, flags: number, mode?: number) => void;
+    beforeRename?: (from: string, to: string) => void;
     exec?: (command: string, stream: ServerChannel) => void;
   } = {},
 ) {
@@ -281,6 +282,7 @@ export async function sshFixture(
           });
           sftp.on('RENAME', (id, from, to) => {
             if (options.denyChanges) return sftp.status(id, status.PERMISSION_DENIED);
+            options.beforeRename?.(from, to);
             if (!exists(from) || exists(to)) return sftp.status(id, status.FAILURE);
             if (files.has(from)) {
               files.set(to, files.get(from)!);

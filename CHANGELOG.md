@@ -13,6 +13,7 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 - Explicit Reconnect to server and Cancel connection attempt controls. Keep nonsecret connection fields in the current workspace, clear submitted credentials, and distinguish a lost SSH connection from a closed terminal or unavailable SFTP. Connection setup is bounded, and a late host approval cannot authorize a cancelled attempt. Interrupted operations are never replayed.
 - Merge folder uploads and downloads after a bounded destination scan and separate approval. Each conflicting file can be skipped, copied under a new name, or replaced with or without a recovery backup where supported. Transfer rows show how many files were copied or skipped. A failed merge stops and leaves completed changes available for inspection.
 - Create an empty remote file from the explorer after confirmation. SSHDrop requests owner-only access and uses exclusive SFTP creation to preserve existing paths.
+- Copy or move regular files to another folder on the connected server after confirmation. Copies are limited to 128 MiB and verified before publication. Moves use SFTP rename and preserve the source if the server refuses the move. Existing destinations are refused.
 
 ### Limits
 
