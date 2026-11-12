@@ -101,9 +101,17 @@ export type SessionEvent =
   | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
-  | { type: 'status'; connected: boolean; message: string }
+  | {
+      type: 'status';
+      connected: boolean;
+      message: string;
+      lost?: true;
+      terminal?: boolean;
+      sftp?: boolean;
+    }
   | { type: 'terminal'; data: string; id: number }
   | { type: 'terminal-exit' }
+  | { type: 'sftp-exit' }
   | { type: 'transfer'; transfer: TransferUpdate }
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -134,7 +142,8 @@ export interface DesktopAPI {
   saveProfile(input: ProfileInput): Promise<Result<ServerProfile>>;
   loadProfile(id: string): Promise<Result<LoadedProfile>>;
   deleteProfile(id: string): Promise<Result<boolean>>;
-  connect(input: ConnectionInput): Promise<Result<void>>;
+  connect(input: ConnectionInput): Promise<Result<{ sftp: boolean }>>;
+  cancelConnect(): Promise<Result<void>>;
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
