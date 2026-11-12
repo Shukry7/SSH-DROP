@@ -13,6 +13,7 @@ import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHe
 import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
+import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
 
 function unwrap<T>(result: Result<T>): T {
@@ -237,6 +238,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           <span className="version">v{info?.version ?? '…'}</span>
         </div>
         <div className="topbar-right">
+          <PortableBackup />
           {sessionProtection}
           <span className={`connection-pill ${connected ? 'live' : ''}`}>
             <i />

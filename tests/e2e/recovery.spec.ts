@@ -42,13 +42,17 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-recovery-ui-'));
   const fixture = await sshFixture({ atomicReplace: true });
   const destination = join(directory, 'local-original.txt');
+  const portable = join(directory, 'test.sshdrop-backup');
+  const restored = join(directory, 'portable-copy.txt');
+  const backupPassphrase = 'test-only portable backup passphrase';
+  const appData = join(directory, 'app-data');
   await writeFile(destination, 'local original');
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
-  env.SSHDROP_USER_DATA_DIR = directory;
+  env.SSHDROP_USER_DATA_DIR = appData;
   delete env.ELECTRON_RUN_AS_NODE;
   const application = await electron.launch({ args: ['.'], env, chromiumSandbox: true });
   try {
@@ -101,7 +105,7 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
     await expect(recovery.locator('.recovery-record')).toHaveCount(1);
     await expect(recovery).toContainText('completed');
     await expect(recovery).toContainText('Encrypted');
-    const stored = await readdir(join(directory, 'backups'));
+    const stored = await readdir(join(appData, 'backups'));
     expect(stored).toContain('recovery.enc');
     expect(stored.some((name) => name.endsWith('.bak'))).toBe(false);
     expect(await readFile(destination, 'utf8')).toBe('Hello from the remote server.\n');
@@ -135,6 +139,31 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
     );
     expect(forged.ok).toBe(false);
     await expect(recovery.getByRole('button', { name: 'Restore copy' })).toBeEnabled();
+    await application.evaluate(({ dialog }, filePath) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath });
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        const options = args.at(-1) as import('electron').MessageBoxOptions;
+        if (
+          options.title !== 'Export encrypted backup' ||
+          options.defaultId !== 0 ||
+          !options.detail?.includes(filePath)
+        )
+          throw new Error('Export warning missing');
+        return { response: 1, checkboxChecked: false };
+      };
+    }, portable);
+    await recovery.getByRole('button', { name: 'Export encrypted backup', exact: true }).click();
+    const exportForm = page.getByRole('dialog', { name: 'Export encrypted backup' });
+    await exportForm.getByLabel('Backup passphrase', { exact: true }).fill(backupPassphrase);
+    await exportForm.getByLabel('Repeat backup passphrase').fill('mismatched test passphrase');
+    await exportForm.getByRole('button', { name: 'Choose files' }).click();
+    await expect(exportForm.getByRole('alert')).toContainText('do not match');
+    await expect(readFile(portable)).rejects.toMatchObject({ code: 'ENOENT' });
+    await exportForm.getByLabel('Repeat backup passphrase').fill(backupPassphrase);
+    await exportForm.getByRole('button', { name: 'Choose files' }).click();
+    await expect(recovery.getByRole('status')).toContainText('Encrypted backup exported');
+    const encrypted = await readFile(portable);
+    expect(encrypted.includes(Buffer.from('local original'))).toBe(false);
     await application.evaluate(({ dialog }, destination) => {
       dialog.showMessageBox = () =>
         new Promise((_resolve, reject) => {
@@ -165,6 +194,38 @@ test('desktop confirms replacement, guards rollback, restores a copy and hides r
     await expect(page.getByRole('button', { name: 'Dismiss error', exact: true })).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText('Stale recovery path');
     await expect(page.locator('body')).not.toContainText(destination);
+    await application.evaluate(
+      ({ dialog, safeStorage }, { portable, restored }) => {
+        safeStorage.isAsyncEncryptionAvailable = async () => false;
+        safeStorage.isEncryptionAvailable = () => false;
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [portable] });
+        dialog.showSaveDialog = async () => ({ canceled: false, filePath: restored });
+        dialog.showMessageBox = async (...args: unknown[]) => {
+          const options = args.at(-1) as import('electron').MessageBoxOptions;
+          if (
+            options.title !== 'Restore an unencrypted copy' ||
+            options.defaultId !== 0 ||
+            !options.detail?.includes(restored)
+          )
+            throw new Error('Restore warning missing');
+          return { response: 1, checkboxChecked: false };
+        };
+      },
+      { portable, restored },
+    );
+    await page.getByRole('button', { name: 'Open portable backup', exact: true }).click();
+    const restoreForm = page.getByRole('dialog', { name: 'Open portable backup' });
+    await restoreForm.getByLabel('Backup passphrase').fill('wrong test portable passphrase');
+    await restoreForm.getByRole('button', { name: 'Choose files' }).click();
+    await expect(restoreForm.getByRole('alert')).toContainText('Wrong passphrase or damaged');
+    await expect(readFile(restored)).rejects.toMatchObject({ code: 'ENOENT' });
+    await restoreForm.getByLabel('Backup passphrase').fill(backupPassphrase);
+    await restoreForm.getByRole('button', { name: 'Choose files' }).click();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Restored to a new local copy' }),
+    ).toBeVisible();
+    expect(await readFile(restored, 'utf8')).toBe('local original');
+    expect(await readFile(portable)).toEqual(encrypted);
   } finally {
     await application.close();
     await fixture.close();

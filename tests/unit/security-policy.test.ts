@@ -125,6 +125,8 @@ describe('tracked-file secret detection', () => {
     'data/known-hosts.json',
     'workflows.json',
     'data/workflows.json',
+    'test.sshdrop-backup',
+    'data/test.sshdrop-backup',
     'idle-settings.json',
     'data/idle-settings.json',
     'backups/vault-key.json',

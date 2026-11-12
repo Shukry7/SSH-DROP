@@ -1,6 +1,11 @@
 import { posix } from 'node:path';
 import { z } from 'zod';
 
+export const portablePassphrase = z.string().min(16).max(256);
+export const portableExportRequest = z
+  .object({ id: z.string().uuid(), passphrase: portablePassphrase })
+  .strict();
+
 const hasControl = (value: string) =>
   Array.from(value).some(
     (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,

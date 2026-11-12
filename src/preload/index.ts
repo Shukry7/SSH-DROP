@@ -11,6 +11,8 @@ for (const name of ['keydown', 'pointerdown', 'wheel'])
   window.addEventListener(name, activity, { capture: true, passive: true });
 
 const api: DesktopAPI = {
+  exportBackup: (value) => ipcRenderer.invoke(channels.exportBackup, value),
+  openBackup: (passphrase) => ipcRenderer.invoke(channels.openBackup, passphrase),
   idleStatus: () => ipcRenderer.invoke(channels.idleStatus),
   idleSettings: (value) => ipcRenderer.invoke(channels.idleSettings, value),
   idleStayActive: () => ipcRenderer.invoke(channels.idleStayActive),

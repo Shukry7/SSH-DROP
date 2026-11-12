@@ -108,6 +108,8 @@ export type SessionEvent =
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  exportBackup(value: { id: string; passphrase: string }): Promise<Result<boolean>>;
+  openBackup(passphrase: string): Promise<Result<boolean>>;
   idleStatus(): Promise<Result<import('./idle').IdleState>>;
   idleSettings(
     settings: import('./idle').IdleSettings,
