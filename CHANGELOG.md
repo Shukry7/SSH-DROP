@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.3.0-alpha.5] — Unreleased
+
+### Added
+
+- Open up to eight remote text files in separate editor tabs. Return to the file explorer without losing drafts, undo history, search, or comparison state. Each tab uses its own verified save baseline and asks before discarding unsaved changes.
+
 ## [0.3.0-alpha.4] — Unreleased
 
 ### Added

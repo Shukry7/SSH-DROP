@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { findEditorMatches } from '../../shared/editor-search';
 import { EditorSurface, type EditorSurfaceHandle } from './EditorSurface';
@@ -7,13 +7,20 @@ import { detectEditorLanguage, editorLanguages, type EditorLanguage } from './ed
 export function RemoteEditor({
   document,
   active,
+  id,
+  visible,
+  onDirtyChange,
+  ref,
   close,
 }: {
   document: EditorDocument;
   active: boolean;
+  id: string;
+  visible: boolean;
+  onDirtyChange: (id: string, dirty: boolean) => void;
+  ref?: Ref<{ requestClose: () => void }>;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const draft = useRef<EditorSurfaceHandle>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const [language, setLanguage] = useState(() => detectEditorLanguage(document.path));
@@ -29,8 +36,8 @@ export function RemoteEditor({
   const matches = useMemo(() => findEditorMatches(text, query), [text, query]);
   const dirty = text !== saved;
   useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+    onDirtyChange(id, dirty);
+  }, [onDirtyChange, id, dirty]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirty && !busy) return;
@@ -40,11 +47,25 @@ export function RemoteEditor({
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [dirty, busy]);
+  const finishClose = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.sshdrop.closeEditor(token);
+      if (!result.ok) throw new Error(result.error);
+      close();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The tab could not be closed.');
+    } finally {
+      setBusy(false);
+    }
+  };
   const requestClose = () => {
     if (busy) return;
     if (dirty) setDiscarding(true);
-    else close();
+    else void finishClose();
   };
+  useImperativeHandle(ref, () => ({ requestClose }));
   const save = async () => {
     if (busy || !active || !dirty) return;
     setBusy(true);
@@ -120,14 +141,11 @@ export function RemoteEditor({
     textarea.select(start, start + query.length);
   };
   return (
-    <dialog
-      ref={dialog}
-      className="remote-editor-dialog"
-      aria-labelledby="remote-editor-title"
-      onCancel={(event) => {
-        event.preventDefault();
-        requestClose();
-      }}
+    <section
+      role="tabpanel"
+      id={`editor-panel-${id}`}
+      aria-labelledby={`editor-tab-${id}`}
+      hidden={!visible}
       onKeyDown={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
           event.preventDefault();
@@ -140,7 +158,6 @@ export function RemoteEditor({
         }
       }}
     >
-      <h3 id="remote-editor-title">Edit remote text file</h3>
       <p>
         <bdi>{document.path}</bdi>
       </p>
@@ -285,10 +302,14 @@ export function RemoteEditor({
       {discarding ? (
         <div role="alert">
           <p>Discard this unsaved draft?</p>
-          <button className="secondary" onClick={() => setDiscarding(false)}>
+          <button className="secondary" disabled={busy} onClick={() => setDiscarding(false)}>
             Keep editing
           </button>
-          <button className="secondary danger-button" onClick={close}>
+          <button
+            className="secondary danger-button"
+            disabled={busy}
+            onClick={() => void finishClose()}
+          >
             Discard draft
           </button>
         </div>
@@ -313,6 +334,6 @@ export function RemoteEditor({
         Drafts stay in memory. Idle protection clears the workspace, including unsaved drafts. Stop
         other writers while saving.
       </p>
-    </dialog>
+    </section>
   );
 }

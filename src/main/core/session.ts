@@ -183,6 +183,7 @@ export class Session {
           if (this.sftp !== sftp) return;
           this.sftp = undefined;
           this.identity = undefined;
+          this.editor.clear();
           this.emit({ type: 'sftp-exit' });
         };
         sftp.on('error', filesClosed);
@@ -378,6 +379,11 @@ export class Session {
       if (this.imageRequest?.controller === controller) this.imageRequest = undefined;
     }
   }
+  closeEditor(token: string): void {
+    if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
+    this.editor.close(token);
+  }
+
   async editText(input: { path: string }): Promise<EditorDocument>;
   async editText(input: { token: string; text: string }): Promise<boolean>;
   async editText(input: { token: string; compare: true }): Promise<EditorComparison>;

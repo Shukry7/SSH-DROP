@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { actionDirectorySchema, actionNameSchema } from './validation';
 
 export const editorLimit = 1024 * 1024;
+export { editorTabLimit } from './editor-limits';
 export const openEditorSchema = z
   .object({ directory: actionDirectorySchema, name: actionNameSchema })
   .strict();

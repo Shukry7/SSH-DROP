@@ -1,6 +1,6 @@
 {
   "name": "sshdrop",
-  "version": "0.3.0-alpha.4",
+  "version": "0.3.0-alpha.5",
   "description": "A cross-platform desktop SSH workspace with a terminal, remote file explorer, text editor, and verified file transfers.",
   "productName": "SSHDrop",
   "private": true,

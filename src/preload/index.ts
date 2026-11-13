@@ -81,6 +81,7 @@ const api: DesktopAPI = {
   list: (path) => ipcRenderer.invoke(channels.list, path),
   fileAction: (input) => ipcRenderer.invoke(channels.fileAction, input),
   openEditor: (input) => ipcRenderer.invoke(channels.openEditor, input),
+  closeEditor: (token) => ipcRenderer.invoke(channels.closeEditor, token),
   openImage: (input) => ipcRenderer.invoke(channels.openImage, input),
   cancelImage: (requestId) => ipcRenderer.invoke(channels.cancelImage, requestId),
   saveEditor: (input) => ipcRenderer.invoke(channels.saveEditor, input),

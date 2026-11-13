@@ -1,4 +1,11 @@
-import { test, expect, _electron as electron, type Locator } from '@playwright/test';
+import {
+  test,
+  expect,
+  _electron as electron,
+  type Locator,
+  type Page,
+  type ElectronApplication,
+} from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,8 +17,13 @@ async function expectDraft(contents: Locator, text: string) {
     .toBe(text);
 }
 
-test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
-  test.setTimeout(60000);
+async function withEditorWorkspace(
+  run: (
+    page: Page,
+    fixture: Awaited<ReturnType<typeof sshFixture>>,
+    application: ElectronApplication,
+  ) => Promise<void>,
+) {
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-editor-ui-'));
   const fixture = await sshFixture({ atomicReplace: true });
   const env = Object.fromEntries(
@@ -44,6 +56,20 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await page.getByLabel('Username', { exact: true }).fill('tester');
     await page.getByLabel('Password', { exact: true }).fill('test-password');
     await page.getByRole('button', { name: 'Connect to server', exact: true }).click();
+    await run(page, fixture, application);
+  } finally {
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().forEach((window) => window.destroy()),
+    );
+    await application.close();
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(async (page, fixture, application) => {
     const row = page
       .getByRole('row')
       .filter({ has: page.getByRole('cell', { name: /hello\.txt/ }) });
@@ -141,12 +167,52 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await editor.getByRole('button', { name: 'Close editor' }).click();
     await editor.getByRole('button', { name: 'Discard draft' }).click();
     await expect(editor).not.toBeVisible();
-  } finally {
-    await application.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().forEach((window) => window.destroy()),
-    );
-    await application.close();
-    await fixture.close();
-    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }
+  });
+});
+
+test('editor tabs preserve drafts when browsing and isolate saves and discards', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(async (page, fixture, application) => {
+    const dialog = page.getByRole('dialog', { name: 'Edit remote text file' });
+    const contents = dialog.getByRole('textbox', { name: 'Remote file contents' });
+    const openFile = (name: RegExp) =>
+      page
+        .getByRole('row')
+        .filter({ has: page.getByRole('cell', { name }) })
+        .getByRole('button', { name: 'Edit text' })
+        .click();
+    await openFile(/hello\.txt/);
+    await contents.fill('first tab draft');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await page.getByRole('button', { name: /▰\s*folder$/ }).click();
+    await openFile(/nested\.txt/);
+    await expectDraft(contents, 'nested\n');
+    await contents.fill('second tab save');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(dialog.getByRole('status')).toHaveText('No unsaved changes');
+    expect(fixture.files.get('/folder/nested.txt')?.toString()).toBe('second tab save');
+    expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await application.evaluate(({ app }) => app.quit());
+    await expect
+      .poll(() =>
+        application.evaluate(
+          () => (globalThis as unknown as { editorWarning: { title: string } }).editorWarning.title,
+        ),
+      )
+      .toBe('Unsaved editor changes');
+    await page.getByRole('button', { name: 'Open editors (2)' }).click();
+    const second = dialog.getByRole('tab', { name: '/folder/nested.txt' });
+    await second.focus();
+    await second.press('ArrowLeft');
+    await expect(dialog.getByRole('tab', { name: /hello\.txt.*Unsaved/ })).toBeFocused();
+    await expectDraft(contents, 'first tab draft');
+    await dialog.getByRole('button', { name: 'Close editor' }).click();
+    await dialog.getByRole('button', { name: 'Discard draft' }).click();
+    await expect(dialog.getByRole('tab')).toHaveCount(1);
+    await expectDraft(contents, 'second tab save');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await openFile(/nested\.txt/);
+    await expect(dialog.getByRole('tab')).toHaveCount(1);
+  });
 });

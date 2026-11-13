@@ -464,6 +464,33 @@ input::placeholder {
 .remote-editor-dialog::backdrop {
   background: #05090dbb;
 }
+.editor-tab-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.editor-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 4px 10px;
+  border-bottom: 1px solid #465c68;
+}
+.editor-tabs button {
+  flex: 0 0 auto;
+  max-width: min(320px, 60vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-tabs button[aria-selected='true'] {
+  border-color: #73ceba;
+  background: #173638;
+}
+.editor-unsaved {
+  color: #e8c88e;
+}
 .image-preview-dialog {
   width: min(1100px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);

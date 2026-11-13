@@ -708,6 +708,7 @@ function registerAPI(): void {
   });
   handle(channels.cancelImage, (value) => session!.cancelImage(imageRequestSchema.parse(value)));
   handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
+  handle(channels.closeEditor, (value) => session!.closeEditor(editorTokenSchema.parse(value)));
   handle(channels.compareEditor, (value) =>
     session!.editText({ token: editorTokenSchema.parse(value), compare: true }),
   );
@@ -949,8 +950,8 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
     void messageBox({
       type: 'warning',
       title: 'Unsaved editor changes',
-      message: 'Discard the editor draft and close SSHDrop?',
-      detail: 'The draft is held in memory and has not been saved to the server.',
+      message: 'Discard unsaved editor changes and close SSHDrop?',
+      detail: 'Any unsaved changes in open tabs will be lost.',
       buttons: ['Keep editing', 'Discard and close'],
       defaultId: 0,
       cancelId: 0,

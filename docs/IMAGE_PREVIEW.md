@@ -16,4 +16,4 @@ Only allowed raster signatures reach the decoder. It reads a buffer, limits pixe
 
 No local preview files or recovery backups are created, and remote bytes/permissions are unchanged. Decoder caching is disabled. Closing the dialog releases its display data; SSH/SFTP loss and idle protection remove the preview. Memory release is not guaranteed secure erasure: the operating system can retain process memory or paging data. File contents are not logged or stored as preferences.
 
-Native decoder packaging and actual-device behavior require validation on Windows, Linux and both macOS architectures. The source is an alpha preview; passing Windows checks does not certify the other platforms. Multiple image/editor tabs remain planned.
+Native decoder packaging and actual-device behavior require validation on Windows, Linux and both macOS architectures. The source is an alpha preview; passing Windows checks does not certify the other platforms. Image preview opens in its own dialog. Text editor tabs are available from alpha.5.

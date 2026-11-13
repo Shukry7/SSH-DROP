@@ -172,6 +172,7 @@ export interface DesktopAPI {
     name: string;
   }): Promise<Result<import('./editor').EditorDocument>>;
   saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
+  closeEditor(token: string): Promise<Result<void>>;
   compareEditor(token: string): Promise<Result<import('./editor').EditorComparison>>;
   acceptEditorReview(input: {
     token: string;

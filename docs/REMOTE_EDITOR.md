@@ -20,4 +20,10 @@ Keep my draft asks for confirmation, rechecks the server, and uses the reviewed 
 
 The draft editor uses CodeMirror with line numbers, bounded horizontal/vertical scrolling, and undo/redo (Ctrl/Cmd+Z; redo with Ctrl/Cmd+Shift+Z). It initially detects JavaScript, TypeScript, JSON, YAML, Python, and shell scripts from the filename. Unknown extensions open as Plain text. Use Highlighting to select another mode or Plain text without changing the draft, its save baseline, or the bytes sent to the server. This selection lasts for the open editor only. Highlighting is visual assistance, not a syntax validator. The reviewed server pane remains read-only plain text.
 
-The editor does not run scripts or load language servers, remote plugins, or external document resources. Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. The draft remains bounded to 1,048,576 UTF-16 code units, and saves additionally enforce the original 1 MiB UTF-8 byte limit. An edit that would exceed the draft limit is refused. Automatic merging, multiple tabs, and large-file support remain planned.
+The editor does not run scripts or load language servers, remote plugins, or external document resources. Files are never rendered as HTML or executed by the editor. File contents are excluded from logs and local storage. The draft remains bounded to 1,048,576 UTF-16 code units, and saves additionally enforce the original 1 MiB UTF-8 byte limit. An edit that would exceed the draft limit is refused. Automatic merging and large-file support remain planned.
+
+## Editor tabs in 0.3.0-alpha.5
+
+Open up to eight files with **Edit text**. Use **Back to files** to browse for another file, or **Open editors** to return to your tabs. Opening the same path on the current connection selects its existing tab. With the tab strip focused, use Left/Right arrows to switch or Home/End to select the first/last tab.
+
+Each tab keeps its own draft, undo history, search and comparison. **Close editor** closes the selected tab and asks before discarding unsaved text. Closing SSHDrop warns about unsaved edits even when the editor is hidden. Disconnection disables saving old tabs and leaves drafts available for copying. Idle protection clears all tabs.

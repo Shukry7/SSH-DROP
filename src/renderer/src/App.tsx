@@ -15,9 +15,9 @@ import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
-import { RemoteEditor } from './RemoteEditor';
+import { EditorTabs, type EditorTab } from './EditorTabs';
 import { ImagePreview } from './ImagePreview';
-import type { EditorDocument } from '../../shared/editor';
+import { editorTabLimit } from '../../shared/editor-limits';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -67,13 +67,23 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const connectionEpoch = useRef(0);
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [editor, setEditor] = useState<{ document: EditorDocument; epoch: number }>();
+  const [editorTabs, setEditorTabs] = useState<EditorTab[]>([]);
+  const [selectedEditor, setSelectedEditor] = useState('');
+  const [editorShown, setEditorShown] = useState(false);
+  const visibleEditor = editorTabs.some((tab) => tab.document.token === selectedEditor)
+    ? selectedEditor
+    : (editorTabs[0]?.document.token ?? '');
   const [image, setImage] = useState<{ directory: string; name: string }>();
   const [dropActive, setDropActive] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const filesReady = connected && sftpOpen;
   const dropDirectory =
-    filesReady && !loading && !actionBusy && !actionInput && !editor && !image
+    filesReady &&
+    !loading &&
+    !actionBusy &&
+    !actionInput &&
+    !(editorShown && visibleEditor) &&
+    !image
       ? listing?.path
       : undefined;
   const fileBusy =
@@ -155,6 +165,34 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       stopEvents();
     };
   }, []);
+
+  async function openEditor(directory: string, name: string) {
+    const epoch = connectionEpoch.current;
+    const existing = editorTabs.find(
+      (tab) => tab.epoch === epoch && tab.document.path === join(directory, name),
+    );
+    if (existing) {
+      setSelectedEditor(existing.document.token);
+      setEditorShown(true);
+      return;
+    }
+    if (editorTabs.length >= editorTabLimit) {
+      setError('Close an editor tab before opening another file.');
+      return;
+    }
+    await run(async () => {
+      setActionBusy(true);
+      try {
+        const document = unwrap(await window.sshdrop.openEditor({ directory, name }));
+        if (epoch !== connectionEpoch.current) return;
+        setEditorTabs((tabs) => [...tabs, { document, epoch }]);
+        setSelectedEditor(document.token);
+        setEditorShown(true);
+      } finally {
+        if (epoch === connectionEpoch.current) setActionBusy(false);
+      }
+    });
+  }
 
   async function run(operation: () => Promise<unknown>) {
     setError('');
@@ -587,6 +625,11 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 <span className="panel-icon">▱</span> Files
               </h3>
               <div className="toolbar">
+                {editorTabs.length > 0 && (
+                  <button className="secondary compact" onClick={() => setEditorShown(true)}>
+                    Open editors ({editorTabs.length})
+                  </button>
+                )}
                 <button
                   className="secondary compact"
                   disabled={!filesReady || fileBusy}
@@ -809,7 +852,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                     disabled={
                                       !filesReady ||
                                       fileBusy ||
-                                      !!editor ||
+                                      (editorShown && !!visibleEditor) ||
                                       !!image ||
                                       entry.size > 10485760
                                     }
@@ -824,26 +867,12 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                 <button
                                   className="text-button"
                                   disabled={
-                                    !filesReady || fileBusy || !!editor || entry.size > 1048576
+                                    !filesReady ||
+                                    fileBusy ||
+                                    (editorShown && !!visibleEditor) ||
+                                    entry.size > 1048576
                                   }
-                                  onClick={() =>
-                                    void run(async () => {
-                                      const epoch = connectionEpoch.current;
-                                      setActionBusy(true);
-                                      try {
-                                        const document = unwrap(
-                                          await window.sshdrop.openEditor({
-                                            directory: listing.path,
-                                            name: entry.name,
-                                          }),
-                                        );
-                                        if (epoch === connectionEpoch.current)
-                                          setEditor({ document, epoch });
-                                      } finally {
-                                        setActionBusy(false);
-                                      }
-                                    })
-                                  }
+                                  onClick={() => void openEditor(listing.path, entry.name)}
                                 >
                                   Edit text
                                 </button>
@@ -959,13 +988,18 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               close={() => setImage(undefined)}
             />
           )}
-          {editor && (
-            <RemoteEditor
-              document={editor.document}
-              active={filesReady && editor.epoch === connectionEpoch.current}
-              close={() => {
-                setEditor(undefined);
-                if (filesReady && listingPath.current) void run(() => browse(listingPath.current!));
+          {editorTabs.length > 0 && (
+            <EditorTabs
+              tabs={editorTabs}
+              selected={visibleEditor}
+              shown={editorShown}
+              isCurrent={(tab) => filesReady && tab.epoch === connectionEpoch.current}
+              select={setSelectedEditor}
+              hide={() => setEditorShown(false)}
+              close={(id) => {
+                setEditorTabs((tabs) => tabs.filter((tab) => tab.document.token !== id));
+                if (editorTabs.length === 1 && filesReady && listingPath.current)
+                  void run(() => browse(listingPath.current!));
               }}
             />
           )}
