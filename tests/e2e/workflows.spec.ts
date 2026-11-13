@@ -29,6 +29,49 @@ const dialogs = async (app: ElectronApplication) =>
   app.evaluate(({ dialog }) => {
     dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
   });
+test('terminal tabs preserve output, confirm closing, and clear on disconnect', async () => {
+  test.setTimeout(60000);
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-terminal-tabs-'));
+  const fixture = await sshFixture();
+  const app = await launch(dir);
+  try {
+    await dialogs(app);
+    const page = await app.firstWindow();
+    await connect(page, fixture.port);
+    const terminal = page.getByRole('region', { name: 'Terminal panel' });
+    const first = terminal.getByRole('tab', { name: 'Terminal 1', exact: true });
+    const second = terminal.getByRole('tab', { name: 'Terminal 2', exact: true });
+    const visibleRows = terminal.getByRole('tabpanel').locator('.xterm-rows');
+    fixture.writeTerminal(Buffer.from('FIRST-TAB-OUTPUT\r\n'));
+    await expect(visibleRows).toContainText('FIRST-TAB-OUTPUT');
+    await terminal.getByRole('button', { name: 'New terminal' }).click();
+    await expect(second).toHaveAttribute('aria-selected', 'true');
+    fixture.writeTerminal(Buffer.from('SECOND-TAB-OUTPUT\r\n'));
+    await expect(visibleRows).toContainText('SECOND-TAB-OUTPUT');
+    await expect(visibleRows).not.toContainText('FIRST-TAB-OUTPUT');
+    await second.focus();
+    await second.press('ArrowLeft');
+    await expect(first).toBeFocused();
+    await expect(visibleRows).toContainText('FIRST-TAB-OUTPUT');
+    await expect(visibleRows).not.toContainText('SECOND-TAB-OUTPUT');
+    await second.click();
+    await terminal.getByRole('button', { name: 'Close terminal' }).click();
+    await terminal.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(second).toBeVisible();
+    await terminal.getByRole('button', { name: 'Close terminal' }).click();
+    await terminal.getByRole('button', { name: 'Close shell', exact: true }).click();
+    await expect(second).toHaveCount(0);
+    await expect(first).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('cell', { name: /hello.txt/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    await expect(terminal.getByRole('tab')).toHaveCount(0);
+    await expect(terminal.locator('.xterm-rows')).not.toContainText('FIRST-TAB-OUTPUT');
+  } finally {
+    await app.close();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 test('workflow library filters, duplicates and imports reviewed definitions without executing them', async () => {
   test.setTimeout(60000);
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-library-ui-'));

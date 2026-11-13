@@ -8,7 +8,7 @@ import type {
   TransferUpdate,
   QueueState,
 } from '../../shared/contracts';
-import { Terminal } from './Terminal';
+import { TerminalTabs } from './TerminalTabs';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
 import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
@@ -40,7 +40,6 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [lost, setLost] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
   const [sftpOpen, setSftpOpen] = useState(false);
   const connectionAttempt = useRef(false);
   const [profileBusy, setProfileBusy] = useState(false);
@@ -110,7 +109,6 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       if (event.type === 'status') {
         setConnected(event.connected);
         setLost(event.lost === true);
-        setTerminalOpen(event.connected && event.terminal !== false);
         setSftpOpen(event.connected && event.sftp !== false);
         setMessage(event.message);
         if (!event.connected) {
@@ -124,7 +122,6 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           clearListing();
         }
       }
-      if (event.type === 'terminal-exit') setTerminalOpen(false);
       if (event.type === 'sftp-exit') {
         setImage(undefined);
         setSftpOpen(false);
@@ -1003,26 +1000,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               }}
             />
           )}
-          <section className="terminal-panel panel" aria-label="Terminal panel">
-            <div className="panel-heading">
-              <h3>
-                <span className="terminal-symbol">›_</span> Terminal{' '}
-                <span className="terminal-tab">shell 01</span>
-              </h3>
-              <span className="small-label">
-                {terminalOpen ? 'INTERACTIVE SSH' : connected ? 'SHELL CLOSED' : 'NOT CONNECTED'}
-              </span>
-            </div>
-            <div className="terminal-container">
-              <Terminal connected={connected && terminalOpen} />
-              {!connected && (
-                <div className="terminal-placeholder">
-                  <span>$</span> Your next command starts here.
-                  <i />
-                </div>
-              )}
-            </div>
-          </section>
+          <TerminalTabs connected={connected} />
           <Workflows connected={connected} />
           {transfers.length > 0 && (
             <section className="transfers panel" aria-label="File transfers">

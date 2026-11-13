@@ -10,6 +10,7 @@ import type {
   TransferUpdate,
 } from '../../shared/contracts';
 import { remotePath } from '../../shared/validation';
+import { terminalTabLimit } from '../../shared/terminal-limits';
 import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
 import { changeRemoteFile, type FileActionWarning } from './file-actions';
@@ -32,15 +33,23 @@ import { runWorkflow } from './workflow-runner';
 import type { WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
 
+interface TerminalShell {
+  channel: ClientChannel;
+  pendingBytes: number;
+}
+
 export class Session {
   private client?: Client;
   private sftp?: SFTPWrapper;
-  private shell?: ClientChannel;
+  private readonly terminals = new Map<string, TerminalShell>();
+  private readonly closingTerminals = new Set<ClientChannel>();
+  private readonly exitedTerminals = new Set<string>();
+  private primaryTerminal?: string;
+  private openingTerminal?: AbortController;
   private transfers = new Map<string, AbortController>();
   private connecting = false;
   private setup?: AbortController;
-  private pendingOutput = new Map<number, number>();
-  private outputBytes = 0;
+  private pendingOutput = new Map<number, { terminal: TerminalShell; bytes: number }>();
   private outputId = 0;
   private fileAction?: AbortController;
   private imageRequest?: { id: string; controller: AbortController };
@@ -146,21 +155,7 @@ export class Session {
         throw new Error('Connection was cancelled.');
       }
       this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
-      this.shell = shell;
-      const decoder = new StringDecoder('utf8');
-      shell.on('data', (data: Buffer) => {
-        if (this.shell === shell) this.output(decoder.write(data));
-      });
-      shell.on('error', () => {
-        /* The close event reports shell termination. */
-      });
-      shell.on('close', () => {
-        if (this.shell !== shell) return;
-        const tail = decoder.end();
-        if (tail) this.output(tail);
-        this.shell = undefined;
-        this.emit({ type: 'terminal-exit' });
-      });
+      this.primaryTerminal = this.registerTerminal(shell);
       try {
         const sftp = await transferWait<SFTPWrapper>(
           (done) => client.sftp(done),
@@ -192,7 +187,7 @@ export class Session {
         setup.signal.throwIfAborted();
         if (this.client !== client) throw new Error('Connection was cancelled.');
       }
-      const terminal = !!this.shell;
+      const terminal = this.terminals.size > 0;
       const sftp = !!this.sftp;
       this.emit({
         type: 'status',
@@ -241,43 +236,136 @@ export class Session {
     for (const controller of this.transfers.values())
       controller.abort(new Error('Transfer interrupted by disconnection.'));
     this.transfers.clear();
+    this.openingTerminal?.abort();
+    this.openingTerminal = undefined;
     this.pendingOutput.clear();
-    this.outputBytes = 0;
+    this.terminals.clear();
+    this.closingTerminals.clear();
+    this.exitedTerminals.clear();
+    this.primaryTerminal = undefined;
     const client = this.client;
     this.client = undefined;
-    this.shell = undefined;
     this.sftp = undefined;
     this.identity = undefined;
     client?.end();
     this.emit({ type: 'terminal-reset' });
   }
 
-  private output(data: string): void {
+  private registerTerminal(channel: ClientChannel): string {
+    const terminalId = randomUUID();
+    const terminal = { channel, pendingBytes: 0 };
+    const decoder = new StringDecoder('utf8');
+    this.terminals.set(terminalId, terminal);
+    channel.on('data', (data: Buffer) => {
+      if (this.terminals.has(terminalId)) this.output(terminalId, terminal, decoder.write(data));
+    });
+    channel.on('error', () => {
+      /* The close event reports shell termination. */
+    });
+    channel.on('close', () => {
+      if (!this.terminals.has(terminalId)) return;
+      this.output(terminalId, terminal, decoder.end());
+      this.releaseTerminal(terminalId, terminal);
+      this.exitedTerminals.add(terminalId);
+      this.emit({ type: 'terminal-exit', terminalId });
+    });
+    this.emit({ type: 'terminal-opened', terminalId });
+    return terminalId;
+  }
+
+  async openTerminal(): Promise<void> {
+    const client = this.client;
+    if (!client || this.connecting) throw new Error('Connect to a server first.');
+    if (this.openingTerminal) throw new Error('A terminal is already opening.');
+    if (
+      this.terminals.size + this.closingTerminals.size + this.exitedTerminals.size >=
+      terminalTabLimit
+    )
+      throw new Error('Close a terminal before opening another.');
+    const controller = new AbortController();
+    this.openingTerminal = controller;
+    let replied = false;
+    const release = () => {
+      if (this.openingTerminal === controller) this.openingTerminal = undefined;
+    };
+    try {
+      const channel = await transferWait<ClientChannel>(
+        (done) =>
+          client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, (error, channel) => {
+            replied = true;
+            done(error, channel);
+            release();
+          }),
+        this.setupTimeout,
+        controller.signal,
+        (late) => {
+          if (this.client === client) this.endTerminal(late);
+          else late.close();
+        },
+      );
+      if (controller.signal.aborted || this.client !== client) {
+        channel.close();
+        throw new Error('The connection changed while opening a terminal.');
+      }
+      this.registerTerminal(channel);
+    } finally {
+      if (replied) release();
+    }
+  }
+
+  private releaseTerminal(terminalId: string, terminal: TerminalShell): void {
+    this.terminals.delete(terminalId);
+    for (const [id, pending] of this.pendingOutput)
+      if (pending.terminal === terminal) this.pendingOutput.delete(id);
+  }
+
+  closeTerminal(terminalId: string): void {
+    this.exitedTerminals.delete(terminalId);
+    const terminal = this.terminals.get(terminalId);
+    if (!terminal) return;
+    this.releaseTerminal(terminalId, terminal);
+    this.endTerminal(terminal.channel);
+  }
+
+  private endTerminal(channel: ClientChannel): void {
+    this.closingTerminals.add(channel);
+    channel.on('error', () => {
+      /* The close event releases the channel slot. */
+    });
+    channel.once('close', () => this.closingTerminals.delete(channel));
+    channel.close();
+  }
+
+  private output(terminalId: string, terminal: TerminalShell, data: string): void {
     if (!data) return;
     const id = ++this.outputId;
     const bytes = Buffer.byteLength(data);
-    this.pendingOutput.set(id, bytes);
-    this.outputBytes += bytes;
-    if (this.outputBytes >= 512 * 1024) this.shell?.pause();
-    this.emit({ type: 'terminal', data, id });
+    this.pendingOutput.set(id, { terminal, bytes });
+    terminal.pendingBytes += bytes;
+    if (terminal.pendingBytes >= 512 * 1024) terminal.channel.pause();
+    this.emit({ type: 'terminal', terminalId, data, id });
   }
 
   acknowledge(id: number): void {
-    const bytes = this.pendingOutput.get(id);
-    if (bytes === undefined) return;
+    const pending = this.pendingOutput.get(id);
+    if (!pending) return;
     this.pendingOutput.delete(id);
-    this.outputBytes -= bytes;
-    if (this.outputBytes < 256 * 1024) this.shell?.resume();
+    pending.terminal.pendingBytes -= pending.bytes;
+    if (pending.terminal.pendingBytes < 256 * 1024) pending.terminal.channel.resume();
   }
 
-  input(data: string): void {
-    if (!this.shell) throw new Error('No active terminal.');
-    this.shell.write(data);
+  private terminal(terminalId = this.primaryTerminal): ClientChannel {
+    const terminal = terminalId && this.terminals.get(terminalId);
+    if (!terminal) throw new Error('No active terminal.');
+    return terminal.channel;
   }
 
-  resize(cols: number, rows: number): void {
-    if (!this.shell) throw new Error('No active terminal.');
-    this.shell.setWindow(rows, cols, 0, 0);
+  input(data: string, terminalId?: string): void {
+    this.terminal(terminalId).write(data);
+  }
+
+  resize(cols: number, rows: number, terminalId?: string): void {
+    this.terminal(terminalId).setWindow(rows, cols, 0, 0);
   }
 
   private files(): SFTPWrapper {

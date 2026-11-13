@@ -754,12 +754,8 @@ input[type='checkbox'] {
   color: #58e0bb;
   font: 15px monospace;
 }
-.terminal-tab {
-  color: #768ca3;
-  font: 9px monospace;
-  border-left: 1px solid #344253;
-  padding-left: 13px;
-  margin-left: 7px;
+.terminal-notice {
+  margin: 10px 15px;
 }
 .terminal-container {
   position: relative;

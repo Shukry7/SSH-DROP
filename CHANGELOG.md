@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.4.0-alpha.1] — Unreleased
+
+### Added
+
+- Open up to four terminal tabs on one SSH connection. Tabs preserve separate output and scrollback, and closing a shell asks for confirmation. The file explorer and other shells remain available.
+
 ## [0.3.0-alpha.5] — Unreleased
 
 ### Added

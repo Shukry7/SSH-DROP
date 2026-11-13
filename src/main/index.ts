@@ -715,13 +715,27 @@ function registerAPI(): void {
   handle(channels.acceptEditorReview, (value) =>
     session!.editText(acceptEditorReviewSchema.parse(value)),
   );
-  handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
+  handle(channels.openTerminal, (value) => {
+    z.undefined().parse(value);
+    return session!.openTerminal();
+  });
+  handle(channels.closeTerminal, (value) => session!.closeTerminal(z.string().uuid().parse(value)));
+  handle(channels.input, (value) => {
+    const { data, terminalId } = z
+      .object({
+        data: terminalInputSchema,
+        terminalId: z.string().uuid().optional(),
+      })
+      .strict()
+      .parse(value);
+    session!.input(data, terminalId);
+  });
   handle(channels.acknowledge, (value) =>
     session!.acknowledge(z.number().int().positive().parse(value)),
   );
   handle(channels.resize, (value) => {
     const size = terminalSizeSchema.parse(value);
-    session!.resize(size.cols, size.rows);
+    session!.resize(size.cols, size.rows, size.terminalId);
   });
   handle(channels.cancel, (value) => session!.cancel(transferIdSchema.parse(value)));
   handle(channels.resumeQueue, async (value) => {

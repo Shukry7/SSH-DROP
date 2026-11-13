@@ -113,6 +113,7 @@ export type SessionEvent =
   | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
+  | { type: 'terminal-opened'; terminalId: string }
   | {
       type: 'status';
       connected: boolean;
@@ -121,8 +122,8 @@ export type SessionEvent =
       terminal?: boolean;
       sftp?: boolean;
     }
-  | { type: 'terminal'; data: string; id: number }
-  | { type: 'terminal-exit' }
+  | { type: 'terminal'; terminalId: string; data: string; id: number }
+  | { type: 'terminal-exit'; terminalId: string }
   | { type: 'sftp-exit' }
   | { type: 'transfer'; transfer: TransferUpdate }
   | { type: 'transfer-warning'; message: string };
@@ -188,9 +189,11 @@ export interface DesktopAPI {
   downloadMany(paths: string[]): Promise<Result<void>>;
   resumeQueue(): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;
-  input(data: string): Promise<Result<void>>;
+  openTerminal(): Promise<Result<void>>;
+  closeTerminal(terminalId: string): Promise<Result<void>>;
+  input(data: string, terminalId?: string): Promise<Result<void>>;
   acknowledge(id: number): Promise<Result<void>>;
-  resize(size: { cols: number; rows: number }): Promise<Result<void>>;
+  resize(size: { cols: number; rows: number; terminalId?: string }): Promise<Result<void>>;
   onEvent(listener: (event: SessionEvent) => void): () => void;
   onDropError(listener: (error: string) => void): () => void;
 }

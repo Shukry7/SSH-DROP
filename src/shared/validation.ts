@@ -44,7 +44,11 @@ export const remotePathSchema = z
   .refine((s) => s.startsWith('/') && !s.includes('\0'), 'Use an absolute remote path.');
 export const terminalInputSchema = z.string().max(65536);
 export const terminalSizeSchema = z
-  .object({ cols: z.number().int().min(2).max(1000), rows: z.number().int().min(1).max(1000) })
+  .object({
+    cols: z.number().int().min(2).max(1000),
+    rows: z.number().int().min(1).max(1000),
+    terminalId: z.string().uuid().optional(),
+  })
   .strict();
 export const transferIdSchema = z.string().uuid();
 export const profileDetailsSchema = z

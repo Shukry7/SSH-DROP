@@ -44,6 +44,8 @@ export const channels = {
   resumeQueue: 'transfer:resume-queue',
   cancel: 'transfer:cancel',
   input: 'terminal:input',
+  openTerminal: 'terminal:open',
+  closeTerminal: 'terminal:close',
   acknowledge: 'terminal:acknowledge',
   resize: 'terminal:resize',
   event: 'session:event',
