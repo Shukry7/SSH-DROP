@@ -11,3 +11,15 @@ Interrupted transfers and workflows keep their generic inspection warnings. Chec
 ## Terminal tabs in 0.4.0-alpha.1
 
 Use **New terminal** to open another shell on the current SSH connection, up to four tabs. Each tab keeps its own scrollback. A shell that exits keeps its output available until you close its tab. Closing one terminal leaves the other shells and file explorer available. Disconnecting clears every terminal tab and its output. Reconnecting starts one fresh shell.
+
+## Open the shell folder in 0.4.0-alpha.2
+
+Select a terminal tab and click **Open shell folder** to browse the path shown next to the button. The button becomes available when your shell emits an OSC 7 working directory report and SFTP is ready. SSHDrop uses the path from the report on your current connection. Check the displayed path before starting file operations, since programs running in the shell can also emit reports.
+
+For a one-time report from a shell with Python 3, run this on the server after changing directory:
+
+```sh
+python3 -c 'import os, urllib.parse; print("\033]7;file://" + urllib.parse.quote(os.getcwd(), safe="/") + "\007", end="")'
+```
+
+If the shell does not report a path or the directory is unavailable through SFTP, enter a path in **Files** and choose **Go**. A failed lookup leaves the current listing in place. Directory reports clear when the shell closes or the connection ends.

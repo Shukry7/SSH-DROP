@@ -1000,7 +1000,11 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               }}
             />
           )}
-          <TerminalTabs connected={connected} />
+          <TerminalTabs
+            connected={connected}
+            canBrowse={filesReady && !fileBusy && !actionInput}
+            browse={(directory) => void run(() => browse(directory))}
+          />
           <Workflows connected={connected} />
           {transfers.length > 0 && (
             <section className="transfers panel" aria-label="File transfers">

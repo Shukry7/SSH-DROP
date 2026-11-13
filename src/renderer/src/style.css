@@ -757,6 +757,18 @@ input[type='checkbox'] {
 .terminal-notice {
   margin: 10px 15px;
 }
+.terminal-directory {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 15px;
+}
+.terminal-directory-path {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 .terminal-container {
   position: relative;
   min-height: 0;

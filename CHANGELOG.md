@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.4.0-alpha.2] — Unreleased
+
+### Added
+
+- Open the selected terminal tab’s reported working directory in Files. Shell directory reports are tracked per tab, and navigation uses the current SFTP connection after the user clicks Open shell folder.
+
 ## [0.4.0-alpha.1] — Unreleased
 
 ### Added

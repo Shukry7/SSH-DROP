@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { SessionEvent } from '../../shared/contracts';
+import { parseTerminalDirectory } from './terminal-directory';
 
 export type TerminalOutput = (
   event: Extract<SessionEvent, { type: 'terminal' | 'terminal-exit' }>,
@@ -13,11 +14,13 @@ export function Terminal({
   subscribe,
   connected,
   visible,
+  onDirectory,
 }: {
   id?: string;
   subscribe: (id: string, listener: TerminalOutput) => () => void;
   connected: boolean;
   visible: boolean;
+  onDirectory: (id: string, directory: string | undefined) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const active = useRef(connected && visible);
@@ -50,6 +53,10 @@ export function Terminal({
       const subscription = view.onData((data) => {
         if (active.current) void window.sshdrop.input(data, id);
       });
+      const directoryReports = view.parser.registerOscHandler(7, (report) => {
+        if (id) onDirectory(id, parseTerminalDirectory(report));
+        return true;
+      });
       let frame = 0;
       let disposed = false;
       const resize = () => {
@@ -73,6 +80,7 @@ export function Terminal({
         cancelAnimationFrame(frame);
         window.removeEventListener('resize', resize);
         subscription.dispose();
+        directoryReports.dispose();
         observer.disconnect();
         view.dispose();
         terminal.current = null;
@@ -98,7 +106,7 @@ export function Terminal({
       unsubscribe?.();
       disposeView();
     };
-  }, [id, subscribe]);
+  }, [id, onDirectory, subscribe]);
 
   useEffect(() => {
     active.current = connected && visible;

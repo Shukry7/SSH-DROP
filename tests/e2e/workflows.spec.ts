@@ -29,6 +29,48 @@ const dialogs = async (app: ElectronApplication) =>
   app.evaluate(({ dialog }) => {
     dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
   });
+test('opens only the selected shell folder on request and preserves manual navigation', async () => {
+  test.setTimeout(60000);
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-terminal-directory-'));
+  const fixture = await sshFixture();
+  const app = await launch(dir);
+  try {
+    await dialogs(app);
+    const page = await app.firstWindow();
+    await connect(page, fixture.port);
+    const terminal = page.getByRole('region', { name: 'Terminal panel' });
+    const openFolder = terminal.getByRole('button', { name: 'Open shell folder' });
+    const path = page.getByLabel('Remote directory', { exact: true });
+    await expect(openFolder).toBeDisabled();
+    fixture.writeTerminal(Buffer.from('\x1b]7;file://fixture/folder'));
+    fixture.writeTerminal(Buffer.from('\x1b\\'));
+    await expect(openFolder).toBeEnabled();
+    await expect(path).toHaveValue('/');
+    await terminal.getByRole('button', { name: 'New terminal' }).click();
+    await expect(terminal.getByRole('tab', { name: 'Terminal 2' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(openFolder).toBeDisabled();
+    fixture.writeTerminal(Buffer.from('\x1b]7;file:///missing\x07'));
+    await expect(openFolder).toBeEnabled();
+    await openFolder.click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(path).toHaveValue('/');
+    fixture.writeTerminal(Buffer.from('\x1b]7;https://fixture/folder\x07'));
+    await expect(openFolder).toBeDisabled();
+    await terminal.getByRole('tab', { name: 'Terminal 1' }).click();
+    await openFolder.click();
+    await expect(path).toHaveValue('/folder');
+    await expect(page.getByRole('cell', { name: /nested\.txt/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    await expect(openFolder).toHaveCount(0);
+  } finally {
+    await app.close();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 test('terminal tabs preserve output, confirm closing, and clear on disconnect', async () => {
   test.setTimeout(60000);
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-terminal-tabs-'));

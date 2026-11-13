@@ -8,9 +8,18 @@ interface Tab {
   id: string;
   number: number;
   running: boolean;
+  directory?: string;
 }
 
-export function TerminalTabs({ connected }: { connected: boolean }) {
+export function TerminalTabs({
+  connected,
+  canBrowse,
+  browse,
+}: {
+  connected: boolean;
+  canBrowse: boolean;
+  browse: (directory: string) => void;
+}) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [selected, setSelected] = useState('');
   const [opening, setOpening] = useState(false);
@@ -46,7 +55,9 @@ export function TerminalTabs({ connected }: { connected: boolean }) {
           if (event.type === 'terminal-exit')
             setTabs((previous) =>
               previous.map((tab) =>
-                tab.id === event.terminalId ? { ...tab, running: false } : tab,
+                tab.id === event.terminalId
+                  ? { ...tab, running: false, directory: undefined }
+                  : tab,
               ),
             );
         }
@@ -63,6 +74,14 @@ export function TerminalTabs({ connected }: { connected: boolean }) {
     return () => {
       outlet.listener = undefined;
     };
+  }, []);
+
+  const onDirectory = useCallback((id: string, directory: string | undefined) => {
+    setTabs((previous) => {
+      const tab = previous.find((item) => item.id === id);
+      if (!tab?.running || tab.directory === directory) return previous;
+      return previous.map((item) => (item === tab ? { ...item, directory } : item));
+    });
   }, []);
 
   async function open() {
@@ -167,6 +186,28 @@ export function TerminalTabs({ connected }: { connected: boolean }) {
           ))}
         </div>
       )}
+      {connected && selectedTab?.running && (
+        <div className="terminal-directory">
+          <button
+            className="secondary compact"
+            disabled={!canBrowse || selectedTab.directory === undefined}
+            onClick={() => {
+              if (selectedTab.directory !== undefined) browse(selectedTab.directory);
+            }}
+          >
+            Open shell folder
+          </button>
+          {selectedTab.directory ? (
+            <bdi className="terminal-directory-path" title={selectedTab.directory}>
+              {selectedTab.directory}
+            </bdi>
+          ) : (
+            <span className="muted">
+              Waiting for a directory report. You can enter a path in Files.
+            </span>
+          )}
+        </div>
+      )}
       {confirmClose && (
         <div className="terminal-notice" role="alert">
           <p>Close this shell? Running commands in this terminal may stop.</p>
@@ -192,13 +233,20 @@ export function TerminalTabs({ connected }: { connected: boolean }) {
             key={tab.id}
             id={tab.id}
             subscribe={subscribe}
+            onDirectory={onDirectory}
             visible={tab.id === selectedTab?.id}
             connected={connected && tab.running}
           />
         ))}
         {!tabs.length && (
           <>
-            <Terminal key="placeholder" subscribe={subscribe} visible connected={false} />
+            <Terminal
+              key="placeholder"
+              subscribe={subscribe}
+              onDirectory={onDirectory}
+              visible
+              connected={false}
+            />
             <div className="terminal-placeholder">
               {connected ? (
                 'Open a terminal to start a new shell.'

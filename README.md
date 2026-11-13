@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.4.0-alpha.1, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.4.0-alpha.2, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.4.0-alpha.2`** adds **Open shell folder**. If your shell reports its working directory, use this button to open it in Files on the same SSH connection. Enter a path manually when no report is available.
 
 **Development source `0.4.0-alpha.1`** adds up to four terminal tabs on one SSH connection. Use **New terminal** to start another shell. Tabs preserve separate scrollback and can be closed independently. Disconnecting or idle clearing removes all terminal tabs and their output.
 
