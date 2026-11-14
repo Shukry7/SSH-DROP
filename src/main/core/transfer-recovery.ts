@@ -33,7 +33,12 @@ const recordSchema = z
   })
   .strict()
   .refine((item) =>
-    item.file.folder ? !item.hash && !item.uploadStage : !!item.hash && !item.folderCheckpoint,
+    item.file.folder
+      ? !item.hash &&
+        !item.uploadStage &&
+        (item.file.direction === 'upload' ||
+          !item.folderCheckpoint?.entries.some((entry) => entry.uploadStage))
+      : !!item.hash && !item.folderCheckpoint,
   );
 type Record = z.infer<typeof recordSchema>;
 const schema = z

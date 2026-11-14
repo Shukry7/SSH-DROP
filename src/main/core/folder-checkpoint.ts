@@ -47,7 +47,7 @@ export const folderCheckpointSchema = z
   .strict()
   .refine(({ entries, merge }) =>
     merge
-      ? !!entries[0].originalNames && entries.every((item) => !item.uploadStage)
+      ? !!entries[0].originalNames
       : entries.every((item) => !item.original && !item.originalNames),
   );
 export type FolderCheckpoint = z.infer<typeof folderCheckpointSchema>;

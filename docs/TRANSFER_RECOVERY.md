@@ -30,10 +30,16 @@ After a disconnect, reconnect to the same verified server and account and select
 
 Enable recovery and use **Upload folder** to copy into a new remote destination. The 128 MiB, 100-entry and 16-level limits apply. After reconnecting to the same verified server and account, select **Review folder upload** to see the recorded progress and approve continuing. SSHDrop verifies the source tree and completed remote files. If an unfinished file has a recorded remote temporary file, SSHDrop checks its ownership, permissions and bytes before continuing. A missing temporary file starts that file from byte zero. Changed files or unexpected remote entries stop the retry.
 
-The temporary file contains the uploaded bytes and requests owner-only permissions. Forgetting the record leaves remote files and any temporary file available for inspection. Disable recovery to merge an upload into an existing folder.
+The temporary file contains the uploaded bytes and requests owner-only permissions. Forgetting the record leaves remote files and any temporary file available for inspection.
 
 ## Folder download merge recovery in 0.5.0-alpha.6
 
 Enable transfer recovery and download a folder into a parent with an existing folder of the same name. The native confirmation identifies both paths. The saved merge offers **Skip file** or **Keep both** for existing files. The 100-entry and 16-level source limits apply, along with separate 128 MiB limits for incoming files and existing conflicts. Keep other writers away from both folders while the merge runs.
 
-After reconnecting to the same server and account, select **Review folder merge**. SSHDrop shows copied and skipped counts, verifies the source, original conflict files, recorded copies and directory entries, then asks for a decision on each remaining conflict. If a copy was published before its checkpoint was saved, the extra file stops recovery and stays available for inspection. Disable transfer recovery to use the ordinary merge options, including replacements. Recovery for upload merges and replacements remains planned.
+After reconnecting to the same server and account, select **Review folder merge**. SSHDrop shows copied and skipped counts, verifies the source, original conflict files, recorded copies and directory entries, then asks for a decision on each remaining conflict. If a copy was published before its checkpoint was saved, the extra file stops recovery and stays available for inspection. Disable transfer recovery to use the ordinary merge options, including replacements.
+
+## Folder upload merge recovery in 0.5.0-alpha.7
+
+Enable transfer recovery, choose **Upload folder**, and select a folder whose name matches an existing remote folder. The saved merge offers **Skip file** and **Keep both**. The same 100-entry, 16-level, and separate 128 MiB incoming and conflict limits apply. Reconnect to the original verified server and account and select **Review folder merge** to resume. SSHDrop rechecks the local source, remote originals, and completed copies.
+
+If a **Keep both** copy or temporary file appears on the server without a matching completed record, recovery stops so you can inspect it. Files with no conflict can reuse a verified upload checkpoint. Disable transfer recovery for overwrite options. Recovery for replacements remains planned.

@@ -258,7 +258,7 @@ export async function runFolderTransfer(options: {
   const merge = rootExists && !checkpoint ? options.merge : undefined;
   const previous = await checkpoint?.load();
   const savedMerge =
-    checkpoint && !uploading && options.merge && (previous ? previous.merge : rootExists)
+    checkpoint && options.merge && (previous ? previous.merge : rootExists)
       ? options.merge
       : undefined;
   if (previous?.merge && !savedMerge) throw new Error('Saved merge review is unavailable.');
@@ -454,7 +454,7 @@ export async function runFolderTransfer(options: {
     check();
     if (!previous && savedMerge) {
       const choice = await savedMerge.confirm({
-        title: 'Save and merge folder download?',
+        title: `Save and merge folder ${options.direction}?`,
         buttons: ['Cancel', 'Review file conflicts and merge'],
         detail: `Source: ${sourceRoot}\nDestination: ${targetRoot}\n\nYou can skip conflicts or keep both files. Existing files are preserved. If interrupted, review the saved merge before continuing.`,
       });
@@ -582,7 +582,7 @@ export async function runFolderTransfer(options: {
             beforePublish: merge || checkpoint ? beforePublish : undefined,
             expectedSourceHash: savedEntry?.hash,
             uploadCheckpoint:
-              direction === 'upload' && checkpoint && saved && savedEntry
+              direction === 'upload' && checkpoint && saved && savedEntry && !savedEntry.original
                 ? {
                     maxBytes: folderCheckpointByteLimit,
                     load: async () => savedEntry.uploadStage,
@@ -606,27 +606,49 @@ export async function runFolderTransfer(options: {
         const remote = options.direction === 'upload' ? to : from;
         if (savedMerge && saved && savedEntry?.original && checkpoint) {
           if (!savedEntry.skipped && !savedEntry.destinationKey) {
-            const alternate = copyName(to, false);
+            const alternate = copyName(to, uploading);
             const name = folderName(target.basename(alternate));
+            recoveryPathsSchema.parse({
+              local: uploading ? local : alternate,
+              remote: uploading ? alternate : remote,
+            });
+            const verifyOriginal = async () => {
+              await guard();
+              const io = replacementIO(
+                uploading ? sftp : undefined,
+                signal,
+                current,
+                options.invalidate,
+                folderCheckpointByteLimit,
+              );
+              if ((await io.snapshot(to))?.hash !== savedEntry.original!.hash)
+                throw new Error('An original merge file changed. Inspect the partial merge.');
+              await guard();
+            };
             const choice = await savedMerge.confirm({
               title: 'File already exists',
               buttons: ['Skip file', 'Keep both'],
               detail: `Existing file: ${to}\nKeep both creates: ${alternate}\n\nThe existing file stays in place.`,
             });
-            await guard();
+            await verifyOriginal();
             if (choice === 0) {
               savedEntry.skipped = true;
               await checkpoint.save(saved);
             } else if (choice === 1) {
               const checkAlternate = async () => {
-                await guard();
+                await verifyOriginal();
                 checkName(
                   alternate,
                   await target.list(target.dirname(to), mergeDirectoryLimit + folderLimits.entries),
                 );
               };
               await checkAlternate();
-              await transfer('download', alternate, remote, checkAlternate);
+              await transfer(
+                options.direction,
+                uploading ? local : alternate,
+                uploading ? alternate : remote,
+                checkAlternate,
+              );
               await recordPublication(alternate, name);
             } else {
               throw new Error('Invalid saved merge choice.');
