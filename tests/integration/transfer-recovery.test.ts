@@ -78,6 +78,78 @@ it('preserves an encrypted interrupted job and permits only a confirmed, unchang
   }
 });
 
+it('resumes the recorded upload stage without rewriting its prefix', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-upload-resume-'));
+  const original = Buffer.alloc(256 * 1024, 29);
+  const local = join(dir, 'upload.bin');
+  const remote = '/upload.bin';
+  const offsets: number[] = [];
+  const events: SessionEvent[] = [];
+  let stalled = true;
+  const fixture = await sshFixture({
+    stallWriteAt: (offset) => {
+      offsets.push(offset);
+      return stalled && offset >= 65536;
+    },
+  });
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      undefined,
+      new TransferRecovery(testVault(join(dir, 'journal'))),
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  try {
+    await writeFile(local, original);
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'upload', local, remote }]);
+    await vi.waitFor(() => expect(offsets).toContain(65536));
+    const stage = [...fixture.files.keys()].find((path) => path.endsWith('.part'))!;
+    const prefix = fixture.files.get(stage)!;
+    expect(prefix).toEqual(original.subarray(0, 65536));
+    session.disconnect();
+    session = createSession();
+    await connect();
+    const [record] = await session.savedTransfers();
+    offsets.length = 0;
+    stalled = false;
+    fixture.files.set(stage, Buffer.alloc(prefix.length, 99));
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(() =>
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'transfer' && event.transfer.error?.includes('prefix does not match'),
+        ),
+      ).toBe(true),
+    );
+    await vi.waitFor(async () => expect(await session.savedTransfers()).toHaveLength(1));
+    expect(offsets).toEqual([]);
+    expect(fixture.files.has(remote)).toBe(false);
+    fixture.files.set(stage, prefix);
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(() => expect(fixture.files.get(remote)?.equals(original)).toBe(true));
+    expect(offsets[0]).toBe(prefix.length);
+    expect(fixture.files.has(stage)).toBe(false);
+    await vi.waitFor(async () => expect(await session.savedTransfers()).toEqual([]));
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+}, 20000);
+
 it('authenticates a retained download prefix, rejects changed remote bytes and resumes safely', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-download-resume-'));
   let stall = false;

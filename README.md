@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.5.0-alpha.2, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.5.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.5.0-alpha.3`** adds resume for saved individual uploads. SSHDrop verifies its remote temporary file before writing the remainder. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
 
 **Development source `0.5.0-alpha.2`** adds encrypted checkpoints for interrupted saved downloads. Review the download after reconnecting to continue from a verified partial file. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
 

@@ -58,7 +58,7 @@ test('reviews a saved upload after restart and requires a separate retry confirm
     app = await launch();
     page = await connect();
     const panel = page.getByRole('region', { name: 'Saved transfers' });
-    const retry = panel.getByRole('button', { name: 'Review retry' });
+    const retry = panel.getByRole('button', { name: 'Review upload resume' });
     await expect(retry).toBeVisible();
     expect(fixture.files.has(target)).toBe(false);
     await retry.click();

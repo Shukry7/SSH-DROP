@@ -20,10 +20,19 @@ const recordSchema = z
       (file) => !file.folder && !file.recoveryId && !file.expectedSourceHash,
     ),
     hash: z.string().regex(/^[a-f0-9]{64}$/),
+    uploadStage: z
+      .object({
+        name: z.string().regex(/^\.sshdrop-[a-f0-9-]{36}\.part$/),
+        uid: z.number().int().nonnegative(),
+        gid: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
     created: z.string().datetime(),
   })
   .strict();
 type Record = z.infer<typeof recordSchema>;
+export type UploadStage = NonNullable<Record['uploadStage']>;
 const schema = z
   .object({ version: z.literal(1), records: z.array(recordSchema).max(100) })
   .strict()
@@ -116,6 +125,24 @@ export class TransferRecovery {
 
   release(id: string) {
     this.claimed.delete(id);
+  }
+
+  private uploadRecord(records: Record[], id: string) {
+    const record = records.find((item) => item.id === id && item.file.direction === 'upload');
+    if (!record || !this.claimed.has(id))
+      throw new TransferFailure('The saved upload record is unavailable.');
+    return record;
+  }
+
+  readUploadStage(id: string) {
+    return this.queue((records) => this.uploadRecord(records, id).uploadStage);
+  }
+
+  saveUploadStage(id: string, stage: UploadStage) {
+    return this.queue(async (records) => {
+      this.uploadRecord(records, id).uploadStage = stage;
+      await this.write(records);
+    });
   }
 
   async readDownloadPrefix(id: string): Promise<Buffer> {

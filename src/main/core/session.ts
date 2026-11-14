@@ -1034,6 +1034,14 @@ export class Session {
         remote: path,
         sourceFingerprint,
         expectedSourceHash,
+        uploadCheckpoint:
+          recoveryId && direction === 'upload' && this.transferRecovery
+            ? {
+                maxBytes: savedTransferByteLimit,
+                load: () => this.savedTransferStore().readUploadStage(recoveryId),
+                save: (stage) => this.savedTransferStore().saveUploadStage(recoveryId, stage),
+              }
+            : undefined,
         downloadCheckpoint:
           recoveryId && direction === 'download' && this.transferRecovery
             ? {

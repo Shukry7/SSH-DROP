@@ -84,7 +84,7 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
                 void perform(() => api.reviewSavedTransfer({ id: record.id, action: 'retry' }))
               }
             >
-              {record.direction === 'download' ? 'Review download resume' : 'Review retry'}
+              {record.direction === 'download' ? 'Review download resume' : 'Review upload resume'}
             </button>
             <button
               className="secondary compact"
