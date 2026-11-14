@@ -6,7 +6,7 @@ import type { TransferUpdate } from '../../shared/contracts';
 import { actionNameSchema } from '../../shared/validation';
 import { readDirectory } from './directory';
 import { folderCheckpointByteLimit, type FolderCheckpoint } from './folder-checkpoint';
-import type { ReplacementApproval } from './replacement';
+import { copyName, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
 import { recoveryPathsSchema } from './recovery-store';
 import { runTransfer, transferLimits } from './transfer';
@@ -256,6 +256,12 @@ export async function runFolderTransfer(options: {
   if (!parentInfo.info.isDirectory()) throw new Error('Choose a destination folder.');
   const rootExists = !!(await target.stat(targetRoot));
   const merge = rootExists && !checkpoint ? options.merge : undefined;
+  const previous = await checkpoint?.load();
+  const savedMerge =
+    checkpoint && !uploading && options.merge && (previous ? previous.merge : rootExists)
+      ? options.merge
+      : undefined;
+  if (previous?.merge && !savedMerge) throw new Error('Saved merge review is unavailable.');
   if (rootExists && !merge && !checkpoint)
     throw new Error('The destination folder already exists.');
   const directories = new Map<string, string>([[parent, parentInfo.key]]);
@@ -299,8 +305,7 @@ export async function runFolderTransfer(options: {
   let saved: FolderCheckpoint | undefined;
   if (checkpoint) {
     recoveryPathsSchema.parse({ local: localRoot, remote: options.remote });
-    const previous = await checkpoint.load();
-    if (!previous && rootExists)
+    if (!previous && rootExists && !savedMerge)
       throw new Error('Saved folder transfers require a new destination folder.');
     if (
       previous &&
@@ -336,9 +341,14 @@ export async function runFolderTransfer(options: {
     );
     const sourceIO = uploading ? localIO : remoteIO;
     const targetIO = uploading ? remoteIO : localIO;
-    saved = previous ?? { parentKey: parentInfo.key, entries: [] };
+    saved = previous ?? {
+      parentKey: parentInfo.key,
+      entries: [],
+      merge: savedMerge ? true : undefined,
+    };
     const children = new Map<string, string[]>();
     const stages = new Map<string, Set<string>>();
+    let originalBytes = 0;
     for (const [index, entry] of entries.entries()) {
       inspectSignal.throwIfAborted();
       const from = source.join(sourceRoot, ...entry.parts);
@@ -355,16 +365,31 @@ export async function runFolderTransfer(options: {
         throw new Error('A saved source file changed. Start a new transfer.');
 
       const destination = await target.stat(to);
-      if (existing?.destinationKey) {
+      if (existing?.original) {
         const value = await target.inspect(to);
+        if (
+          value.key !== existing.original.key ||
+          !value.info.isFile() ||
+          (await targetIO.snapshot(to))?.hash !== existing.original.hash
+        )
+          throw new Error('An original merge file changed. Inspect the partial merge.');
+        entry.targetKey = value.key;
+      }
+      const published = existing?.alternate
+        ? target.join(target.dirname(to), existing.alternate)
+        : to;
+      if (existing?.destinationKey) {
+        const value = await target.inspect(published);
         if (value.key !== existing.destinationKey || entry.directory !== value.info.isDirectory())
           throw new Error('A completed destination changed. Inspect the partial folder.');
-        if (!entry.directory && (await targetIO.snapshot(to))?.hash !== existing.hash)
+        if (!entry.directory && (await targetIO.snapshot(published))?.hash !== existing.hash)
           throw new Error('A completed destination file changed. Inspect the partial folder.');
-        entry.targetKey = existing.destinationKey;
-        if (entry.directory) children.set(to, []);
-        children.get(target.dirname(to))?.push(target.basename(to));
-      } else if (destination) {
+        if (!existing.alternate) entry.targetKey = existing.destinationKey;
+        if (entry.directory) children.set(to, [...(existing.originalNames ?? [])]);
+        const names = children.get(target.dirname(published));
+        if (names && !names.includes(target.basename(published)))
+          names.push(target.basename(published));
+      } else if (destination && !existing?.original && (previous || !savedMerge)) {
         throw new Error('An unrecorded destination already exists. Inspect the partial folder.');
       }
       if (uploading && existing?.uploadStage) {
@@ -373,13 +398,51 @@ export async function runFolderTransfer(options: {
         names.add(existing.uploadStage.name);
         stages.set(parent, names);
       }
-      if (!previous)
-        saved.entries.push({ parts: entry.parts, sourceKey: entry.key, hash: snapshot?.hash });
+      if (!previous) {
+        const record: FolderCheckpoint['entries'][number] = {
+          parts: entry.parts,
+          sourceKey: entry.key,
+          hash: snapshot?.hash,
+        };
+        if (savedMerge && destination) {
+          const value = await target.inspect(to);
+          if (entry.directory !== value.info.isDirectory())
+            throw new Error(
+              'A destination file and folder have the same name. Resolve it before merging.',
+            );
+          entry.targetKey = value.key;
+          if (entry.directory) {
+            record.destinationKey = value.key;
+            record.originalNames = await target.list(to, mergeDirectoryLimit);
+          } else {
+            originalBytes += value.info.size;
+            if (
+              !Number.isSafeInteger(originalBytes) ||
+              originalBytes < 0 ||
+              originalBytes > folderCheckpointByteLimit
+            )
+              throw new Error('Existing conflicting files exceed the 128 MiB saved merge limit.');
+            const original = await targetIO.snapshot(to);
+            if (!original || (await target.inspect(to)).key !== value.key)
+              throw new Error('An original merge file changed during review.');
+            record.original = { key: value.key, hash: original.hash };
+          }
+        }
+        const originalNames = saved.entries.find(
+          (item) =>
+            item.originalNames && target.join(targetRoot, ...item.parts) === target.dirname(to),
+        )?.originalNames;
+        if (originalNames) checkName(to, originalNames);
+        saved.entries.push(record);
+      }
     }
     for (const [directory, names] of children) {
       const temporary = stages.get(directory);
       const actual = (
-        await target.list(directory, folderLimits.entries + (temporary?.size ?? 0))
+        await target.list(
+          directory,
+          (savedMerge ? mergeDirectoryLimit : 0) + folderLimits.entries + (temporary?.size ?? 0),
+        )
       ).filter((name) => !temporary?.has(name));
       if (actual.length !== names.length || actual.some((name) => !names.includes(name)))
         throw new Error(
@@ -389,6 +452,19 @@ export async function runFolderTransfer(options: {
     checkName(targetRoot, await target.list(parent, mergeDirectoryLimit));
     inspectSignal.throwIfAborted();
     check();
+    if (!previous && savedMerge) {
+      const choice = await savedMerge.confirm({
+        title: 'Save and merge folder download?',
+        buttons: ['Cancel', 'Review file conflicts and merge'],
+        detail: `Source: ${sourceRoot}\nDestination: ${targetRoot}\n\nYou can skip conflicts or keep both files. Existing files are preserved. If interrupted, review the saved merge before continuing.`,
+      });
+      check();
+      if (choice !== 1) {
+        update.status = 'cancelled';
+        publish();
+        return;
+      }
+    }
     if (!previous) await checkpoint.save(saved);
     check();
   }
@@ -473,10 +549,22 @@ export async function runFolderTransfer(options: {
           await checkpoint!.save(saved);
         }
       } else {
+        const recordPublication = async (path: string, alternate?: string) => {
+          if (!saved || !savedEntry || !checkpoint) return;
+          await verifyAncestors(target.dirname(path), parent, target, directories);
+          const result = await target.inspect(path);
+          if (!result.info.isFile() || result.info.size !== entry.size)
+            throw new Error('A published destination file changed. Inspect the partial folder.');
+          savedEntry.destinationKey = result.key;
+          savedEntry.alternate = alternate;
+          delete savedEntry.uploadStage;
+          await checkpoint.save(saved);
+        };
         const transfer = async (
           direction: 'upload' | 'download',
           local: string,
           remote: string,
+          beforePublish = guard,
         ) => {
           await guard();
           const nested: TransferUpdate = {
@@ -491,7 +579,7 @@ export async function runFolderTransfer(options: {
             direction,
             local,
             remote,
-            beforePublish: merge || checkpoint ? guard : undefined,
+            beforePublish: merge || checkpoint ? beforePublish : undefined,
             expectedSourceHash: savedEntry?.hash,
             uploadCheckpoint:
               direction === 'upload' && checkpoint && saved && savedEntry
@@ -516,23 +604,53 @@ export async function runFolderTransfer(options: {
         };
         const local = options.direction === 'upload' ? from : to;
         const remote = options.direction === 'upload' ? to : from;
-        if (merge && entry.targetKey && !(await merge.conflict(local, remote, transfer, guard))) {
+        if (savedMerge && saved && savedEntry?.original && checkpoint) {
+          if (!savedEntry.skipped && !savedEntry.destinationKey) {
+            const alternate = copyName(to, false);
+            const name = folderName(target.basename(alternate));
+            const choice = await savedMerge.confirm({
+              title: 'File already exists',
+              buttons: ['Skip file', 'Keep both'],
+              detail: `Existing file: ${to}\nKeep both creates: ${alternate}\n\nThe existing file stays in place.`,
+            });
+            await guard();
+            if (choice === 0) {
+              savedEntry.skipped = true;
+              await checkpoint.save(saved);
+            } else if (choice === 1) {
+              const checkAlternate = async () => {
+                await guard();
+                checkName(
+                  alternate,
+                  await target.list(target.dirname(to), mergeDirectoryLimit + folderLimits.entries),
+                );
+              };
+              await checkAlternate();
+              await transfer('download', alternate, remote, checkAlternate);
+              await recordPublication(alternate, name);
+            } else {
+              throw new Error('Invalid saved merge choice.');
+            }
+          }
+          if (savedEntry.skipped) {
+            skipped++;
+            update.total -= entry.size;
+          } else {
+            copied++;
+            completed += entry.size;
+            update.transferred = completed;
+          }
+        } else if (
+          merge &&
+          entry.targetKey &&
+          !(await merge.conflict(local, remote, transfer, guard))
+        ) {
           skipped++;
           update.total -= entry.size;
         } else {
           if (!entry.targetKey) {
             await transfer(options.direction, local, remote);
-            if (saved && savedEntry) {
-              await verifyAncestors(target.dirname(to), parent, target, directories);
-              const result = await target.inspect(to);
-              if (!result.info.isFile() || result.info.size !== entry.size)
-                throw new Error(
-                  'A published destination file changed. Inspect the partial folder.',
-                );
-              savedEntry.destinationKey = result.key;
-              delete savedEntry.uploadStage;
-              await checkpoint!.save(saved);
-            }
+            await recordPublication(to);
           }
           copied++;
           completed += entry.size;

@@ -1,12 +1,106 @@
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { TransferRecovery } from '../../src/main/core/transfer-recovery';
+import { RecoveryStore } from '../../src/main/core/recovery-store';
 import { Session } from '../../src/main/core/session';
 import type { SessionEvent } from '../../src/shared/contracts';
 import { testVault } from '../fixtures/backup-vault';
 import { sshFixture } from '../fixtures/ssh-server';
+
+it('recovers a download merge without repeating completed decisions or replacing originals', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-merge-recovery-'));
+  const local = join(dir, 'destination');
+  const root = join(dir, 'vault');
+  const fixture = await sshFixture();
+  const remote = '/merge-test';
+  const events: SessionEvent[] = [];
+  const conflicts: string[] = [];
+  let interrupt = true;
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => {
+        events.push(event);
+        if (interrupt && event.type === 'transfer' && event.transfer.folderFiles?.copied === 1) {
+          interrupt = false;
+          session.disconnect();
+        }
+      },
+      undefined,
+      {
+        store: new RecoveryStore(root, testVault(root)),
+        confirm: async ({ title, buttons, detail }) => {
+          if (title !== 'File already exists') return 1;
+          expect(buttons).toEqual(['Skip file', 'Keep both']);
+          conflicts.push(detail);
+          return detail.includes('a.txt') ? 0 : 1;
+        },
+      },
+      undefined,
+      new TransferRecovery(testVault(root)),
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  try {
+    await mkdir(local);
+    for (const name of ['a.txt', 'b.txt', 'c.txt']) {
+      await writeFile(join(local, name), 'original');
+      fixture.files.set(remote + '/' + name, Buffer.from('incoming'));
+    }
+    fixture.directories.add(remote);
+    await writeFile(join(local, 'unrelated.txt'), 'keep');
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'download', local, remote, folder: true }]);
+    await vi.waitFor(() => expect(interrupt).toBe(false));
+    session = createSession();
+    await connect();
+    const [record] = await session.savedTransfers();
+    expect(record).toMatchObject({ copiedFiles: 1, totalFiles: 3 });
+    await session.reviewSavedTransfer(record.id, 'retry', async () => false);
+    expect(conflicts).toHaveLength(2);
+    await writeFile(join(local, 'unexpected.txt'), 'keep');
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'transfer' && event.transfer.error?.includes('Unexpected entries'),
+        ),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toHaveLength(1);
+    });
+    expect(conflicts).toHaveLength(2);
+    await unlink(join(local, 'unexpected.txt'));
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some((event) => event.type === 'transfer' && event.transfer.status === 'completed'),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toEqual([]);
+    });
+    expect(conflicts).toHaveLength(3);
+    expect(conflicts.at(-1)).toContain('c.txt');
+    for (const name of ['a.txt', 'b.txt', 'c.txt'])
+      expect(await readFile(join(local, name), 'utf8')).toBe('original');
+    for (const name of (await readdir(local)).filter((name) => /^(b|c) \(copy /.test(name)))
+      expect(await readFile(join(local, name), 'utf8')).toBe('incoming');
+    expect((await readdir(local)).filter((name) => name.includes(' (copy '))).toHaveLength(2);
+    expect(await readFile(join(local, 'unrelated.txt'), 'utf8')).toBe('keep');
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+}, 20000);
 
 it('recovers a folder upload using only verified remote files and a verified partial file', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-folder-upload-'));
