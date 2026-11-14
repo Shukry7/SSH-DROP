@@ -661,14 +661,18 @@ export class Session {
   }
 
   async queueFiles(files: QueuedFile[]): Promise<void> {
-    if (!this.rememberTransfers || files.some((file) => file.folder)) return this.enqueue(files);
+    if (!this.rememberTransfers || files.some((file) => file.folder && file.direction === 'upload'))
+      return this.enqueue(files);
     const store = this.savedTransferStore();
     if (files.length > 8)
       throw new Error('Queue up to eight files at a time with transfer recovery enabled.');
     await this.withIdleTransferSlot(async (sftp, identity, signal) => {
       const batch = [];
       for (const file of this.queue.validate(files))
-        batch.push({ file, hash: await fingerprintRecoverableFile(sftp, file, signal) });
+        batch.push({
+          file,
+          hash: file.folder ? undefined : await fingerprintRecoverableFile(sftp, file, signal),
+        });
       const records = await store.add(identity, batch);
       try {
         signal.throwIfAborted();
@@ -731,6 +735,9 @@ export class Session {
       local: string;
       remote: string;
       direction: 'upload' | 'download';
+      folder?: true;
+      copiedFiles?: number;
+      totalFiles?: number;
     }) => Promise<boolean>,
   ) {
     const store = this.savedTransferStore();
@@ -738,14 +745,23 @@ export class Session {
       const record = await store.claim(identity, id);
       let queued = false;
       try {
-        if (!(await confirm(record.file))) return;
+        const savedFiles = record.folderCheckpoint?.entries.filter((entry) => entry.hash);
+        if (
+          !(await confirm({
+            ...record.file,
+            copiedFiles: savedFiles?.filter((entry) => entry.destinationKey).length,
+            totalFiles: savedFiles?.length,
+          }))
+        )
+          return;
         signal.throwIfAborted();
         if (this.sftp !== sftp) throw new Error('The connection changed.');
         if (action === 'forget') return await store.finish(id);
-        if (record.file.direction === 'download') {
-          await checkRecoverablePaths(sftp, record.file, signal);
-        } else if ((await fingerprintRecoverableFile(sftp, record.file, signal)) !== record.hash) {
-          throw new Error('The saved transfer source changed. Select the file again.');
+        if (!record.file.folder) {
+          if (record.file.direction === 'download')
+            await checkRecoverablePaths(sftp, record.file, signal);
+          else if ((await fingerprintRecoverableFile(sftp, record.file, signal)) !== record.hash)
+            throw new Error('The saved transfer source changed. Select the file again.');
         }
         signal.throwIfAborted();
         if (this.sftp !== sftp) throw new Error('The connection changed.');
@@ -966,6 +982,13 @@ export class Session {
           limits: this.transferTiming,
           invalidate,
           warn,
+          checkpoint: recoveryId
+            ? {
+                load: () => this.savedTransferStore().readFolderCheckpoint(recoveryId),
+                save: (checkpoint) =>
+                  this.savedTransferStore().saveFolderCheckpoint(recoveryId, checkpoint),
+              }
+            : undefined,
           merge:
             recovery && replacements
               ? {

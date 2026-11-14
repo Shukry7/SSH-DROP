@@ -5,7 +5,9 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { actionNameSchema } from '../../shared/validation';
 import { readDirectory } from './directory';
+import { folderCheckpointByteLimit, type FolderCheckpoint } from './folder-checkpoint';
 import type { ReplacementApproval } from './replacement';
+import { replacementIO } from './replacement-io';
 import { recoveryPathsSchema } from './recovery-store';
 import { runTransfer, transferLimits } from './transfer';
 import { transferWait } from './transfer-wait';
@@ -62,6 +64,10 @@ export async function runFolderTransfer(options: {
   update: TransferUpdate;
   publish: () => void;
   warn: () => void;
+  checkpoint?: {
+    load: () => Promise<FolderCheckpoint | undefined>;
+    save: (checkpoint: FolderCheckpoint) => Promise<void>;
+  };
   merge?: {
     confirm: (approval: ReplacementApproval) => Promise<number>;
     conflict: (
@@ -73,7 +79,9 @@ export async function runFolderTransfer(options: {
   };
   limits?: typeof transferLimits;
 }): Promise<void> {
-  const { signal, current, sftp, update, publish } = options;
+  const { signal, current, sftp, update, publish, checkpoint } = options;
+  if (checkpoint && options.direction !== 'download')
+    throw new Error('Folder recovery supports downloads only.');
   let scanDeadline = Infinity;
   const check = () => {
     signal.throwIfAborted();
@@ -215,6 +223,8 @@ export async function runFolderTransfer(options: {
       throw new Error('Invalid folder metadata.');
     bytes += info.isFile() ? info.size : 0;
     if (bytes > folderLimits.bytes) throw new Error('Folder size limit exceeded (10 GiB).');
+    if (checkpoint && bytes > folderCheckpointByteLimit)
+      throw new Error('Saved folder downloads are limited to 128 MiB.');
     entries.push({
       parts,
       directory: info.isDirectory(),
@@ -246,8 +256,9 @@ export async function runFolderTransfer(options: {
   const parentInfo = await target.inspect(parent);
   if (!parentInfo.info.isDirectory()) throw new Error('Choose a destination folder.');
   const rootExists = !!(await target.stat(targetRoot));
-  const merge = rootExists ? options.merge : undefined;
-  if (rootExists && !merge) throw new Error('The destination folder already exists.');
+  const merge = rootExists && !checkpoint ? options.merge : undefined;
+  if (rootExists && !merge && !checkpoint)
+    throw new Error('The destination folder already exists.');
   const directories = new Map<string, string>([[parent, parentInfo.key]]);
   const existingDirectories = new Set<string>();
   const checkName = (path: string, names: string[]) => {
@@ -286,6 +297,90 @@ export async function runFolderTransfer(options: {
     if (!entries[0].targetKey) throw new Error('The destination folder changed before merging.');
   }
   scanDeadline = Infinity;
+  let saved: FolderCheckpoint | undefined;
+  if (checkpoint) {
+    recoveryPathsSchema.parse({ local: localRoot, remote: options.remote });
+    const previous = await checkpoint.load();
+    if (!previous && rootExists)
+      throw new Error('Saved folder downloads require a new destination folder.');
+    if (
+      previous &&
+      (previous.parentKey !== parentInfo.key ||
+        previous.entries.length !== entries.length ||
+        entries.some(({ parts, key, directory }, index) => {
+          const saved = previous.entries[index];
+          return (
+            key !== saved.sourceKey ||
+            directory === !!saved.hash ||
+            JSON.stringify(parts) !== JSON.stringify(saved.parts)
+          );
+        }))
+    )
+      throw new Error('The saved source tree or destination parent changed. Start a new download.');
+
+    // Verify the entire plan before writing. A retry will never adopt an existing file
+    // or directory whose publication was not acknowledged in the encrypted journal.
+    const inspectSignal = AbortSignal.any([signal, AbortSignal.timeout(120000)]);
+    const remoteIO = replacementIO(
+      sftp,
+      inspectSignal,
+      current,
+      options.invalidate,
+      folderCheckpointByteLimit,
+    );
+    const localIO = replacementIO(
+      undefined,
+      inspectSignal,
+      current,
+      options.invalidate,
+      folderCheckpointByteLimit,
+    );
+    saved = previous ?? { parentKey: parentInfo.key, entries: [] };
+    const children = new Map<string, string[]>();
+    for (const [index, entry] of entries.entries()) {
+      inspectSignal.throwIfAborted();
+      const from = source.join(sourceRoot, ...entry.parts);
+      const to = target.join(targetRoot, ...entry.parts);
+      const existing = previous?.entries[index];
+      const before = (await source.inspect(from)).key;
+      const snapshot = entry.directory ? undefined : await remoteIO.snapshot(from);
+      if (
+        before !== entry.key ||
+        (await source.inspect(from)).key !== entry.key ||
+        (!entry.directory && (!snapshot || snapshot.size !== entry.size)) ||
+        (existing && existing.hash !== snapshot?.hash)
+      )
+        throw new Error('A saved source file changed. Start a new download.');
+
+      const destination = await target.stat(to);
+      if (existing?.destinationKey) {
+        const value = await target.inspect(to);
+        if (value.key !== existing.destinationKey || entry.directory !== value.info.isDirectory())
+          throw new Error('A completed destination changed. Inspect the partial folder.');
+        if (!entry.directory && (await localIO.snapshot(to))?.hash !== existing.hash)
+          throw new Error('A completed destination file changed. Inspect the partial folder.');
+        entry.targetKey = existing.destinationKey;
+        if (entry.directory) children.set(to, []);
+        children.get(target.dirname(to))?.push(target.basename(to));
+      } else if (destination) {
+        throw new Error('An unrecorded destination already exists. Inspect the partial folder.');
+      }
+      if (!previous)
+        saved.entries.push({ parts: entry.parts, sourceKey: entry.key, hash: snapshot?.hash });
+    }
+    for (const [directory, names] of children) {
+      const actual = await target.list(directory, folderLimits.entries);
+      if (actual.length !== names.length || actual.some((name) => !names.includes(name)))
+        throw new Error(
+          'Unexpected entries exist in the partial folder. Inspect it before retrying.',
+        );
+    }
+    checkName(targetRoot, await target.list(parent, mergeDirectoryLimit));
+    inspectSignal.throwIfAborted();
+    check();
+    if (!previous) await checkpoint.save(saved);
+    check();
+  }
   const sourceDirectories = new Map(
     entries
       .filter((entry) => entry.directory)
@@ -332,7 +427,7 @@ export async function runFolderTransfer(options: {
   }
   let completed = 0;
   try {
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
       check();
       const from = source.join(sourceRoot, ...entry.parts);
       const to = target.join(targetRoot, ...entry.parts);
@@ -344,7 +439,7 @@ export async function runFolderTransfer(options: {
           throw new Error('A source changed after the folder scan.');
         const containing = target.dirname(to);
         await verifyAncestors(containing, parent, target, directories);
-        if (merge && (containing === parent || existingDirectories.has(containing)))
+        if (checkpoint || (merge && (containing === parent || existingDirectories.has(containing))))
           checkName(to, await target.list(containing, mergeDirectoryLimit));
         const destination = await target.stat(to);
         if (
@@ -355,12 +450,17 @@ export async function runFolderTransfer(options: {
           throw new Error('A folder destination changed after the scan. Inspect before retrying.');
       };
       await guard();
+      const savedEntry = saved?.entries[index];
       if (entry.directory) {
         if (!entry.targetKey) await target.create(to);
         const made = await target.inspect(to);
         if (!made.info.isDirectory() || (entry.targetKey && made.key !== entry.targetKey))
           throw new Error('A destination folder changed.');
         directories.set(to, made.key);
+        if (saved && savedEntry && !savedEntry.destinationKey) {
+          savedEntry.destinationKey = made.key;
+          await checkpoint!.save(saved);
+        }
       } else {
         const transfer = async (
           direction: 'upload' | 'download',
@@ -380,7 +480,8 @@ export async function runFolderTransfer(options: {
             direction,
             local,
             remote,
-            beforePublish: merge ? guard : undefined,
+            beforePublish: merge || checkpoint ? guard : undefined,
+            expectedSourceHash: savedEntry?.hash,
             update: nested,
             publish: () => {
               update.transferred = completed + nested.transferred;
@@ -397,7 +498,19 @@ export async function runFolderTransfer(options: {
           skipped++;
           update.total -= entry.size;
         } else {
-          if (!entry.targetKey) await transfer(options.direction, local, remote);
+          if (!entry.targetKey) {
+            await transfer(options.direction, local, remote);
+            if (saved && savedEntry) {
+              await verifyAncestors(target.dirname(to), parent, target, directories);
+              const result = await target.inspect(to);
+              if (!result.info.isFile() || result.info.size !== entry.size)
+                throw new Error(
+                  'A published destination file changed. Inspect the partial folder.',
+                );
+              savedEntry.destinationKey = result.key;
+              await checkpoint!.save(saved);
+            }
+          }
           copied++;
           completed += entry.size;
           update.transferred = completed;

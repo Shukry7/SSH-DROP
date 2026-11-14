@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.4] — Unreleased
+
+### Added
+
+- Opt-in folder download recovery between files for new destinations up to 128 MiB. Retrying requires approval and verifies the source manifest and partial folder before copying any remaining files.
+
 ## [0.5.0-alpha.3] — Unreleased
 
 ### Added

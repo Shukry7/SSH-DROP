@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -7,6 +7,113 @@ import { Session } from '../../src/main/core/session';
 import type { SessionEvent } from '../../src/shared/contracts';
 import { testVault } from '../fixtures/backup-vault';
 import { sshFixture } from '../fixtures/ssh-server';
+
+it('continues a saved folder between files after restart and refuses changed sources or extra destination entries', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-folder-'));
+  const fixture = await sshFixture();
+  const journal = join(dir, 'journal');
+  const local = join(dir, 'download');
+  const remote = '/recovery-fixture';
+  const events: SessionEvent[] = [];
+  let interrupt = true;
+  let cancel = false;
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => {
+        events.push(event);
+        if (interrupt && event.type === 'transfer' && event.transfer.folderFiles?.copied === 1) {
+          interrupt = false;
+          session.disconnect();
+        }
+        if (cancel && event.type === 'transfer' && event.transfer.folderFiles?.copied === 1) {
+          cancel = false;
+          session.cancel(event.transfer.id);
+        }
+      },
+      undefined,
+      undefined,
+      undefined,
+      new TransferRecovery(testVault(journal)),
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  const failed = async (message: string) =>
+    vi.waitFor(async () => {
+      expect(events.at(-1)?.type).toBe('queue');
+      expect(
+        events.some(
+          (event) => event.type === 'transfer' && event.transfer.error?.includes(message),
+        ),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toHaveLength(1);
+    });
+  try {
+    fixture.directories.add(remote);
+    fixture.files.set(remote + '/a-sensitive.txt', Buffer.from('first private file'));
+    fixture.files.set(remote + '/b.txt', Buffer.from('second'));
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'download', local, remote, folder: true }]);
+    await vi.waitFor(() => expect(interrupt).toBe(false));
+    const first = join(local, 'a-sensitive.txt');
+    const second = join(local, 'b.txt');
+    expect(await readFile(first, 'utf8')).toBe('first private file');
+    await expect(readFile(second)).rejects.toMatchObject({ code: 'ENOENT' });
+    const encrypted = await readFile(join(journal, 'transfer-queue.enc'));
+    expect(encrypted.includes(Buffer.from('a-sensitive.txt'))).toBe(false);
+    expect(encrypted.includes(Buffer.from('first private file'))).toBe(false);
+    session = createSession();
+    await connect();
+    const [record] = await session.savedTransfers();
+    expect(record).toMatchObject({ folder: true, copiedFiles: 1, totalFiles: 2 });
+    await session.reviewSavedTransfer(record.id, 'retry', async () => false);
+    await expect(readFile(second)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    fixture.files.set(remote + '/b.txt', Buffer.from('edited'));
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await failed('source file changed');
+    await expect(readFile(second)).rejects.toMatchObject({ code: 'ENOENT' });
+    fixture.files.set(remote + '/b.txt', Buffer.from('second'));
+    const extra = join(local, 'extra.txt');
+    await writeFile(extra, 'keep');
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await failed('Unexpected entries');
+    expect(await readFile(extra, 'utf8')).toBe('keep');
+    await expect(readFile(second)).rejects.toMatchObject({ code: 'ENOENT' });
+    await unlink(extra);
+
+    cancel = true;
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some((event) => event.type === 'transfer' && event.transfer.status === 'cancelled'),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toHaveLength(1);
+    });
+    await expect(readFile(second)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    await vi.waitFor(() =>
+      expect(
+        events.some((event) => event.type === 'transfer' && event.transfer.status === 'completed'),
+      ).toBe(true),
+    );
+    await vi.waitFor(async () => expect(await session.savedTransfers()).toEqual([]));
+    expect(await readFile(first, 'utf8')).toBe('first private file');
+    expect(await readFile(second, 'utf8')).toBe('second');
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 20000);
 
 it('preserves an encrypted interrupted job and permits only a confirmed, unchanged retry', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-transfer-'));
