@@ -898,12 +898,12 @@ function registerAPI(): void {
     return currentWorkspace().session.reviewSavedTransfer(
       id,
       action,
-      async ({ direction, local, remote, folder, copiedFiles, totalFiles }) => {
+      async ({ direction, local, remote, folder, copiedFiles, skippedFiles, totalFiles }) => {
         const source = direction === 'upload' ? local : remote;
         const destination = direction === 'upload' ? remote : local;
         const details = retry
           ? folder
-            ? `${totalFiles === undefined ? 'No files have been recorded as copied.' : `${copiedFiles} of ${totalFiles} files recorded as copied.`} SSHDrop verifies the source and partial folder before continuing. Changed or unexpected entries stop the transfer. Existing files are never replaced.`
+            ? `${totalFiles === undefined ? 'No files have been recorded as copied.' : `${copiedFiles} of ${totalFiles} files recorded as copied.${skippedFiles === undefined ? '' : ` ${skippedFiles} skipped. Remaining conflicts require a decision.`}`} SSHDrop verifies the source and partial folder before continuing. Changed or unexpected entries stop the transfer. Existing files are never replaced.`
             : 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. If a verified partial file is available, it continues from that point.'
           : folder
             ? 'This removes the local record. Already copied files and folders stay at the destination.'

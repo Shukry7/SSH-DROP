@@ -117,6 +117,10 @@ export class TransferRecovery {
               folderCheckpoint?.entries.filter((entry) => entry.hash && entry.destinationKey)
                 .length ?? 0,
             totalFiles: folderCheckpoint?.entries.filter((entry) => entry.hash).length,
+            ...(folderCheckpoint?.merge && {
+              merge: true as const,
+              skippedFiles: folderCheckpoint.entries.filter((entry) => entry.skipped).length,
+            }),
           }),
         })),
     );

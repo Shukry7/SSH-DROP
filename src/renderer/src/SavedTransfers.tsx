@@ -72,15 +72,18 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
         {records.map((record) => (
           <div key={record.id} className="saved-transfer">
             <strong>
-              {record.folder
-                ? `Folder ${record.direction}`
-                : record.direction === 'upload'
-                  ? 'Upload'
-                  : 'Download'}
+              {record.merge
+                ? 'Folder download merge'
+                : record.folder
+                  ? `Folder ${record.direction}`
+                  : record.direction === 'upload'
+                    ? 'Upload'
+                    : 'Download'}
             </strong>
             {record.folder && record.totalFiles !== undefined && (
               <p>
                 {record.copiedFiles} of {record.totalFiles} files recorded as copied
+                {record.merge && ` · ${record.skippedFiles} skipped`}
               </p>
             )}
             <p>
@@ -96,11 +99,13 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
                 void perform(() => api.reviewSavedTransfer({ id: record.id, action: 'retry' }))
               }
             >
-              {record.folder
-                ? `Review folder ${record.direction}`
-                : record.direction === 'download'
-                  ? 'Review download resume'
-                  : 'Review upload resume'}
+              {record.merge
+                ? 'Review folder merge'
+                : record.folder
+                  ? `Review folder ${record.direction}`
+                  : record.direction === 'download'
+                    ? 'Review download resume'
+                    : 'Review upload resume'}
             </button>
             <button
               className="secondary compact"

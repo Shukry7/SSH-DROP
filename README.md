@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.5.0-alpha.5, early development preview.** Local Windows checks are available. Recent hosted CI runs failed before starting jobs. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.5.0-alpha.6, early development preview.** Local Windows checks are available. Recent hosted CI runs failed before starting jobs. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.5.0-alpha.6`** adds recovery for folder download merges. Saved merges preserve existing files and offer **Skip file** or **Keep both** for conflicts. See [saved merges](docs/TRANSFER_RECOVERY.md#folder-download-merge-recovery-in-050-alpha6).
 
 **Development source `0.5.0-alpha.5`** adds opt-in folder upload recovery to new remote destinations. SSHDrop verifies completed remote files and can continue an unfinished file from a verified remote temporary file. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
 

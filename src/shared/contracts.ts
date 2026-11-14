@@ -94,6 +94,8 @@ export interface SavedTransfer {
   created: string;
   folder?: true;
   copiedFiles?: number;
+  skippedFiles?: number;
+  merge?: true;
   totalFiles?: number;
 }
 export interface RecoveryView {

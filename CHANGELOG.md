@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.6] — Unreleased
+
+### Added
+
+- Recover interrupted folder download merges with explicit approval and verified checkpoints. Saved merges offer Skip file and Keep both for conflicts and preserve existing files.
+
 ## [0.5.0-alpha.5] — Unreleased
 
 ### Added

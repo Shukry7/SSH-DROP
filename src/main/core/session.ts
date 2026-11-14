@@ -736,6 +736,7 @@ export class Session {
       direction: 'upload' | 'download';
       folder?: true;
       copiedFiles?: number;
+      skippedFiles?: number;
       totalFiles?: number;
     }) => Promise<boolean>,
   ) {
@@ -749,6 +750,9 @@ export class Session {
           !(await confirm({
             ...record.file,
             copiedFiles: savedFiles?.filter((entry) => entry.destinationKey).length,
+            skippedFiles: record.folderCheckpoint?.merge
+              ? savedFiles?.filter((entry) => entry.skipped).length
+              : undefined,
             totalFiles: savedFiles?.length,
           }))
         )
