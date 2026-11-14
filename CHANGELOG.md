@@ -8,6 +8,11 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 - Opt-in folder upload recovery into a new remote folder up to 128 MiB. Review explicitly after reconnecting. SSHDrop verifies the source, completed files, and any recorded temporary upload before continuing.
 
+### Fixed
+
+- Keep local file handles open until transfer cleanup finishes, preventing descriptor errors when an upload or download verification is interrupted.
+- Unpack Linux image-preview libraries so the packaged app starts with its bundled native dependencies.
+
 ## [0.5.0-alpha.4] — Unreleased
 
 ### Added
