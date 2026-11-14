@@ -2,9 +2,21 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.3.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.4.0-alpha.4, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.4.0-alpha.4`** adds up to four independent SSH connection tabs. Each tab keeps its own file browser, terminals, drafts, transfer queue, and workflow runs. Saved profiles and workflow definitions remain shared across tabs. See [connection tabs](docs/RECONNECT.md#connection-tabs-in-040-alpha4).
+
+**Development source `0.4.0-alpha.3`** adds **Edit in terminal** for regular remote files. Choose Nano or Vim in the confirmation. The selected editor must be installed on the server and saves directly to the remote file. Use **Edit text** for verified saves and optional SSHDrop recovery backups.
+
+**Development source `0.4.0-alpha.2`** adds **Open shell folder**. If your shell reports its working directory, use this button to open it in Files on the same SSH connection. Enter a path manually when no report is available.
+
+**Development source `0.4.0-alpha.1`** adds up to four terminal tabs on one SSH connection. Use **New terminal** to start another shell. Tabs preserve separate scrollback and can be closed independently. Disconnecting or idle clearing removes all terminal tabs and their output.
+
+**Development source `0.3.0-alpha.5`** adds up to eight remote editor tabs. Use **Back to files** to browse while keeping drafts open. Each tab keeps its own undo history, comparison, and verified save baseline.
+
+**Development source `0.3.0-alpha.4`** adds read-only remote image previews for PNG, JPEG, WebP, and GIF (first frame only). Select **Preview image** in the explorer. Use fit, actual size, and zoom; closing, disconnecting, or idle protection removes the preview. Sources are limited to 10 MiB, 8,388,608 pixels and 8,192 pixels per side. See [image preview](docs/IMAGE_PREVIEW.md).
 
 **Development source `0.3.0-alpha.3`** adds editor line numbers and syntax highlighting for JavaScript, TypeScript, JSON, YAML, Python, and shell scripts. The filename selects the initial mode; **Highlighting** lets you change it or choose Plain text. This changes display only and never executes file contents.
 

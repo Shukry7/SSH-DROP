@@ -1,4 +1,11 @@
-import { test, expect, _electron as electron, type Locator } from '@playwright/test';
+import {
+  test,
+  expect,
+  _electron as electron,
+  type Locator,
+  type Page,
+  type ElectronApplication,
+} from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,10 +17,16 @@ async function expectDraft(contents: Locator, text: string) {
     .toBe(text);
 }
 
-test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
-  test.setTimeout(60000);
+async function withEditorWorkspace(
+  run: (
+    page: Page,
+    fixture: Awaited<ReturnType<typeof sshFixture>>,
+    application: ElectronApplication,
+  ) => Promise<void>,
+  exec?: NonNullable<Parameters<typeof sshFixture>[0]>['exec'],
+) {
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-editor-ui-'));
-  const fixture = await sshFixture({ atomicReplace: true });
+  const fixture = await sshFixture({ atomicReplace: true, exec });
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
@@ -29,11 +42,13 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
         Object.assign(globalThis, { editorWarning: options });
         return {
           response:
-            options.title === 'Save edited remote file'
+            options.title === 'Edit in terminal'
               ? 2
-              : options.title === 'Unsaved editor changes'
-                ? 0
-                : 1,
+              : options.title === 'Save edited remote file'
+                ? 2
+                : options.title === 'Unsaved editor changes'
+                  ? 0
+                  : 1,
           checkboxChecked: false,
         };
       };
@@ -44,6 +59,55 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await page.getByLabel('Username', { exact: true }).fill('tester');
     await page.getByLabel('Password', { exact: true }).fill('test-password');
     await page.getByRole('button', { name: 'Connect to server', exact: true }).click();
+    await run(page, fixture, application);
+  } finally {
+    await application.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().forEach((window) => window.destroy()),
+    );
+    await application.close();
+    await fixture.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+test('opens a confirmed Vim tab from Files and warns before closing it', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(
+    async (page, fixture, application) => {
+      const row = page
+        .getByRole('row')
+        .filter({ has: page.getByRole('cell', { name: /hello\.txt/ }) });
+      await row.getByRole('button', { name: 'Edit in terminal', exact: true }).click();
+      const terminal = page.getByRole('region', { name: 'Terminal panel' });
+      const vim = terminal.getByRole('tab', { name: /Vim.*hello\.txt/ });
+      await expect(vim).toHaveAttribute('aria-selected', 'true');
+      expect(
+        await application.evaluate(
+          () => (globalThis as unknown as { editorWarning: unknown }).editorWarning,
+        ),
+      ).toMatchObject({
+        title: 'Edit in terminal',
+        detail: expect.stringContaining('/hello.txt'),
+        defaultId: 0,
+        cancelId: 0,
+      });
+      await expect(terminal.getByRole('tabpanel')).toContainText('fixture-command-output');
+      await terminal.getByRole('button', { name: 'Close terminal' }).click();
+      await expect(terminal.getByRole('alert')).toContainText('Unsaved changes may be lost.');
+      await terminal.getByRole('button', { name: 'Close shell', exact: true }).click();
+      await expect(vim).toHaveCount(0);
+      await expect(terminal.getByRole('tab', { name: 'Terminal 1' })).toBeVisible();
+      expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
+    },
+    (_command, stream) => {
+      stream.write('fixture-command-output');
+    },
+  );
+});
+
+test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(async (page, fixture, application) => {
     const row = page
       .getByRole('row')
       .filter({ has: page.getByRole('cell', { name: /hello\.txt/ }) });
@@ -141,12 +205,52 @@ test('remote editor protects drafts, verifies saves and refuses external edits',
     await editor.getByRole('button', { name: 'Close editor' }).click();
     await editor.getByRole('button', { name: 'Discard draft' }).click();
     await expect(editor).not.toBeVisible();
-  } finally {
-    await application.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows().forEach((window) => window.destroy()),
-    );
-    await application.close();
-    await fixture.close();
-    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }
+  });
+});
+
+test('editor tabs preserve drafts when browsing and isolate saves and discards', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(async (page, fixture, application) => {
+    const dialog = page.getByRole('dialog', { name: 'Edit remote text file' });
+    const contents = dialog.getByRole('textbox', { name: 'Remote file contents' });
+    const openFile = (name: RegExp) =>
+      page
+        .getByRole('row')
+        .filter({ has: page.getByRole('cell', { name }) })
+        .getByRole('button', { name: 'Edit text' })
+        .click();
+    await openFile(/hello\.txt/);
+    await contents.fill('first tab draft');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await page.getByRole('button', { name: /▰\s*folder$/ }).click();
+    await openFile(/nested\.txt/);
+    await expectDraft(contents, 'nested\n');
+    await contents.fill('second tab save');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(dialog.getByRole('status')).toHaveText('No unsaved changes');
+    expect(fixture.files.get('/folder/nested.txt')?.toString()).toBe('second tab save');
+    expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await application.evaluate(({ app }) => app.quit());
+    await expect
+      .poll(() =>
+        application.evaluate(
+          () => (globalThis as unknown as { editorWarning: { title: string } }).editorWarning.title,
+        ),
+      )
+      .toBe('Unsaved editor changes');
+    await page.getByRole('button', { name: 'Open editors (2)' }).click();
+    const second = dialog.getByRole('tab', { name: '/folder/nested.txt' });
+    await second.focus();
+    await second.press('ArrowLeft');
+    await expect(dialog.getByRole('tab', { name: /hello\.txt.*Unsaved/ })).toBeFocused();
+    await expectDraft(contents, 'first tab draft');
+    await dialog.getByRole('button', { name: 'Close editor' }).click();
+    await dialog.getByRole('button', { name: 'Discard draft' }).click();
+    await expect(dialog.getByRole('tab')).toHaveCount(1);
+    await expectDraft(contents, 'second tab save');
+    await dialog.getByRole('button', { name: 'Back to files' }).click();
+    await openFile(/nested\.txt/);
+    await expect(dialog.getByRole('tab')).toHaveCount(1);
+  });
 });

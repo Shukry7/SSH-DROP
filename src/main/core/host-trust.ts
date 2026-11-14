@@ -13,12 +13,25 @@ export type ApproveHost = (identity: HostIdentity, signal?: AbortSignal) => Prom
 const storeSchema = z.record(z.string(), z.string().regex(/^SHA256:[A-Za-z0-9+/]+$/));
 
 export class HostTrust {
+  private pending: Promise<unknown> = Promise.resolve();
+
   constructor(
     private readonly file: string,
     private readonly approve: ApproveHost,
   ) {}
 
-  async verify(host: string, port: number, key: Buffer, signal?: AbortSignal): Promise<boolean> {
+  verify(host: string, port: number, key: Buffer, signal?: AbortSignal): Promise<boolean> {
+    const result = this.pending.then(() => this.verifyIdentity(host, port, key, signal));
+    this.pending = result.catch(() => undefined);
+    return result;
+  }
+
+  private async verifyIdentity(
+    host: string,
+    port: number,
+    key: Buffer,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     signal?.throwIfAborted();
     const fingerprint = `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`;
     const identity = JSON.stringify([host.toLowerCase(), port]);

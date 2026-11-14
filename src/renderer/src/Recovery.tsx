@@ -1,3 +1,4 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useRef, useState } from 'react';
 import type { RecoveryAction, RecoveryView } from '../../shared/contracts';
 import { portableBackupLimit } from '../../shared/portable-backup';
@@ -16,13 +17,14 @@ export function Recovery({
   setBusy(value: boolean): void;
   report(message: string): void;
 }) {
+  const { api } = useWorkspace();
   const [records, setRecords] = useState<RecoveryView[]>([]);
   const epoch = useRef(0);
   const lock = useRef(false);
   useEffect(() => {
     const generation = ++epoch.current;
     if (!connected) return;
-    void window.sshdrop.recovery().then((result) => {
+    void api.recovery().then((result) => {
       if (generation !== epoch.current) return;
       if (result.ok) setRecords(result.value);
       else report(result.error);
@@ -30,20 +32,20 @@ export function Recovery({
     return () => {
       epoch.current = generation + 1;
     };
-  }, [connected, revision, report]);
+  }, [api, connected, revision, report]);
   async function act(id: string, action: RecoveryAction['action']) {
     if (lock.current || busy) return;
     lock.current = true;
     setBusy(true);
     const generation = epoch.current;
     try {
-      const result = await window.sshdrop.recover({ id, action });
+      const result = await api.recover({ id, action });
       if (!result.ok) throw new Error(result.error);
     } catch (error) {
       report(error instanceof Error ? error.message : 'Recovery failed.');
     } finally {
       if (generation === epoch.current) {
-        const result = await window.sshdrop.recovery();
+        const result = await api.recovery();
         if (generation === epoch.current) {
           if (result.ok) setRecords(result.value);
           else report(result.error);

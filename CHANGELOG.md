@@ -2,6 +2,47 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.4.0-alpha.4] — Unreleased
+
+### Added
+
+- Open up to four independent SSH connection tabs, each with its own terminals, Files, editor drafts, image previews, transfers, and workflow runs. Switching tabs leaves ongoing operations on their original connection.
+
+## [0.4.0-alpha.3] — Unreleased
+
+### Added
+
+- Open a remote file in a dedicated Nano or Vim terminal tab after reviewing a confirmation. Both editors run on the connected server and share the four-tab limit.
+
+## [0.4.0-alpha.2] — Unreleased
+
+### Added
+
+- Open the selected terminal tab’s reported working directory in Files. Shell directory reports are tracked per tab, and navigation uses the current SFTP connection after the user clicks Open shell folder.
+
+## [0.4.0-alpha.1] — Unreleased
+
+### Added
+
+- Open up to four terminal tabs on one SSH connection. Tabs preserve separate output and scrollback, and closing a shell asks for confirmation. The file explorer and other shells remain available.
+
+## [0.3.0-alpha.5] — Unreleased
+
+### Added
+
+- Open up to eight remote text files in separate editor tabs. Return to the file explorer without losing drafts, undo history, search, or comparison state. Each tab uses its own verified save baseline and asks before discarding unsaved changes.
+
+## [0.3.0-alpha.4] — Unreleased
+
+### Added
+
+- Read-only PNG/JPEG/WebP/GIF image previews with dimensions, file size, zoom, fit and actual-size controls. Animated images show a still first frame.
+- Bounded SFTP reads and image decoding, validated request IDs, cancellation, metadata-stripped PNG display copies, and cleanup on close, disconnect and idle clearing. SVG and unsupported or oversized files are refused.
+
+### Limits
+
+- Preview sources are limited to 10 MiB, 8,388,608 pixels and 8,192 pixels per side. Images remain in memory; no local preview files are created. Native decoder packages require Linux/macOS packaging and device validation. Editor tabs remain planned.
+
 ## [0.3.0-alpha.3] — Unreleased
 
 ### Added

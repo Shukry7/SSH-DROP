@@ -1,14 +1,20 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 export function PortableBackup({ id, disabled = false }: { id?: string; disabled?: boolean }) {
+  const { api, active: workspaceActive } = useWorkspace();
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
-    if (open) dialog.current?.showModal();
-  }, [open]);
+    const element = dialog.current;
+    if (open && workspaceActive && !element?.open) element?.showModal();
+    return () => {
+      if (element?.open) element.close();
+    };
+  }, [open, workspaceActive]);
   const title = id ? 'Export encrypted backup' : 'Open portable backup';
   const close = () => {
     setOpen(false);
@@ -30,8 +36,8 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
     setError('');
     try {
       const result = id
-        ? await window.sshdrop.exportBackup({ id, passphrase })
-        : await window.sshdrop.openBackup(passphrase);
+        ? await api.exportBackup({ id, passphrase })
+        : await api.openBackup(passphrase);
       if (!result.ok) throw new Error(result.error);
       if (result.value)
         setNotice(id ? 'Encrypted backup exported.' : 'Restored to a new local copy.');

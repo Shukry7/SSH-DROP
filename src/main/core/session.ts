@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
 import type {
@@ -10,6 +10,7 @@ import type {
   TransferUpdate,
 } from '../../shared/contracts';
 import { remotePath } from '../../shared/validation';
+import { terminalTabLimit } from '../../shared/terminal-limits';
 import type { HostTrust } from './host-trust';
 import { readDirectory } from './directory';
 import { changeRemoteFile, type FileActionWarning } from './file-actions';
@@ -26,22 +27,38 @@ import { TransferQueue, type QueuedFile } from './transfer-queue';
 import { runFolderTransfer } from './folder-transfer';
 import { readDroppedFileFingerprint } from './dropped-files';
 import { RemoteEditor } from './remote-editor';
+import { readImagePreview } from './image-preview';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { runWorkflow } from './workflow-runner';
-import type { WorkflowPlan } from '../../shared/workflows';
+import { shellQuote, type WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
+
+interface TerminalShell {
+  channel: ClientChannel;
+  pendingBytes: number;
+}
+
+type TerminalEditor = 'nano' | 'vim';
+interface TerminalEdit {
+  path: string;
+  choose: (signal: AbortSignal) => Promise<TerminalEditor | undefined>;
+}
 
 export class Session {
   private client?: Client;
   private sftp?: SFTPWrapper;
-  private shell?: ClientChannel;
+  private readonly terminals = new Map<string, TerminalShell>();
+  private readonly closingTerminals = new Set<ClientChannel>();
+  private readonly exitedTerminals = new Set<string>();
+  private primaryTerminal?: string;
+  private openingTerminal?: AbortController;
   private transfers = new Map<string, AbortController>();
   private connecting = false;
   private setup?: AbortController;
-  private pendingOutput = new Map<number, number>();
-  private outputBytes = 0;
+  private pendingOutput = new Map<number, { terminal: TerminalShell; bytes: number }>();
   private outputId = 0;
   private fileAction?: AbortController;
+  private imageRequest?: { id: string; controller: AbortController };
   private identity?: ServerIdentity;
   private recoveryBusy = false;
   private workflow?: { id: string; controller: AbortController };
@@ -144,21 +161,7 @@ export class Session {
         throw new Error('Connection was cancelled.');
       }
       this.commandServer = `${config.username}@${config.host}:${config.port ?? 22}`;
-      this.shell = shell;
-      const decoder = new StringDecoder('utf8');
-      shell.on('data', (data: Buffer) => {
-        if (this.shell === shell) this.output(decoder.write(data));
-      });
-      shell.on('error', () => {
-        /* The close event reports shell termination. */
-      });
-      shell.on('close', () => {
-        if (this.shell !== shell) return;
-        const tail = decoder.end();
-        if (tail) this.output(tail);
-        this.shell = undefined;
-        this.emit({ type: 'terminal-exit' });
-      });
+      this.primaryTerminal = this.registerTerminal(shell);
       try {
         const sftp = await transferWait<SFTPWrapper>(
           (done) => client.sftp(done),
@@ -181,6 +184,7 @@ export class Session {
           if (this.sftp !== sftp) return;
           this.sftp = undefined;
           this.identity = undefined;
+          this.editor.clear();
           this.emit({ type: 'sftp-exit' });
         };
         sftp.on('error', filesClosed);
@@ -189,7 +193,7 @@ export class Session {
         setup.signal.throwIfAborted();
         if (this.client !== client) throw new Error('Connection was cancelled.');
       }
-      const terminal = !!this.shell;
+      const terminal = this.terminals.size > 0;
       const sftp = !!this.sftp;
       this.emit({
         type: 'status',
@@ -238,43 +242,188 @@ export class Session {
     for (const controller of this.transfers.values())
       controller.abort(new Error('Transfer interrupted by disconnection.'));
     this.transfers.clear();
+    this.openingTerminal?.abort();
+    this.openingTerminal = undefined;
     this.pendingOutput.clear();
-    this.outputBytes = 0;
+    this.terminals.clear();
+    this.closingTerminals.clear();
+    this.exitedTerminals.clear();
+    this.primaryTerminal = undefined;
     const client = this.client;
     this.client = undefined;
-    this.shell = undefined;
     this.sftp = undefined;
     this.identity = undefined;
     client?.end();
     this.emit({ type: 'terminal-reset' });
   }
 
-  private output(data: string): void {
+  private registerTerminal(
+    channel: ClientChannel,
+    editor?: { name: TerminalEditor; path: string },
+  ): string {
+    const terminalId = randomUUID();
+    const terminal = { channel, pendingBytes: 0 };
+    const decoder = new StringDecoder('utf8');
+    this.terminals.set(terminalId, terminal);
+    channel.on('data', (data: Buffer) => {
+      if (this.terminals.has(terminalId)) this.output(terminalId, terminal, decoder.write(data));
+    });
+    channel.on('error', () => {
+      /* The close event reports shell termination. */
+    });
+    channel.on('close', () => {
+      if (!this.terminals.has(terminalId)) return;
+      this.output(terminalId, terminal, decoder.end());
+      this.releaseTerminal(terminalId, terminal);
+      this.exitedTerminals.add(terminalId);
+      this.emit({ type: 'terminal-exit', terminalId });
+    });
+    this.emit({ type: 'terminal-opened', terminalId, ...(editor && { editor }) });
+    return terminalId;
+  }
+
+  async openTerminal(edit?: TerminalEdit): Promise<void> {
+    const client = this.client;
+    if (!client || this.connecting) throw new Error('Connect to a server first.');
+    if (this.openingTerminal) throw new Error('A terminal is already opening.');
+    if (
+      this.terminals.size + this.closingTerminals.size + this.exitedTerminals.size >=
+      terminalTabLimit
+    )
+      throw new Error('Close a terminal before opening another.');
+    const controller = new AbortController();
+    this.openingTerminal = controller;
+    let started = false;
+    let replied = false;
+    const release = () => {
+      if (this.openingTerminal === controller) this.openingTerminal = undefined;
+    };
+    try {
+      const sftp = edit && this.files();
+      const check = () => {
+        controller.signal.throwIfAborted();
+        if (this.client !== client || (sftp && sftp !== this.sftp))
+          throw new Error('The connection changed while opening a terminal.');
+      };
+      let editor: { name: TerminalEditor; path: string } | undefined;
+      if (edit && sftp) {
+        const path = remotePath(edit.path);
+        const name = await edit.choose(controller.signal);
+        check();
+        if (!name) return;
+        const parent = posix.dirname(path);
+        const canonical = await transferWait<string>(
+          (done) => sftp.realpath(parent, done),
+          this.setupTimeout,
+          controller.signal,
+        );
+        check();
+        if (canonical !== parent)
+          throw new Error('Refresh the file list and open the canonical folder.');
+        const stats = await transferWait<import('ssh2').Stats>(
+          (done) => sftp.lstat(path, done),
+          this.setupTimeout,
+          controller.signal,
+        );
+        check();
+        if (!stats.isFile()) throw new Error('Choose a regular remote file.');
+        editor = { name, path };
+      }
+      const pty = { term: 'xterm-256color', cols: 100, rows: 28 };
+      const channel = await transferWait<ClientChannel>(
+        (done) => {
+          const callback = (error: Error | undefined, channel: ClientChannel) => {
+            replied = true;
+            done(error, channel);
+            release();
+          };
+          started = true;
+          try {
+            if (editor) {
+              const command =
+                editor.name === 'nano' ? 'nano -I' : "vim --clean -n --cmd 'set nomodeline'";
+              client.exec(`exec ${command} -- ${shellQuote(editor.path)} 2>&1`, { pty }, callback);
+            } else {
+              client.shell(pty, callback);
+            }
+          } catch (error) {
+            started = false;
+            throw error;
+          }
+        },
+        this.setupTimeout,
+        controller.signal,
+        (late) => {
+          if (this.client === client) this.endTerminal(late);
+          else late.close();
+        },
+      );
+      try {
+        check();
+      } catch (error) {
+        if (this.client === client) this.endTerminal(channel);
+        else channel.close();
+        throw error;
+      }
+      this.registerTerminal(channel, editor);
+    } finally {
+      if (!started || replied) release();
+    }
+  }
+
+  private releaseTerminal(terminalId: string, terminal: TerminalShell): void {
+    this.terminals.delete(terminalId);
+    for (const [id, pending] of this.pendingOutput)
+      if (pending.terminal === terminal) this.pendingOutput.delete(id);
+  }
+
+  closeTerminal(terminalId: string): void {
+    this.exitedTerminals.delete(terminalId);
+    const terminal = this.terminals.get(terminalId);
+    if (!terminal) return;
+    this.releaseTerminal(terminalId, terminal);
+    this.endTerminal(terminal.channel);
+  }
+
+  private endTerminal(channel: ClientChannel): void {
+    this.closingTerminals.add(channel);
+    channel.on('error', () => {
+      /* The close event releases the channel slot. */
+    });
+    channel.once('close', () => this.closingTerminals.delete(channel));
+    channel.close();
+  }
+
+  private output(terminalId: string, terminal: TerminalShell, data: string): void {
     if (!data) return;
     const id = ++this.outputId;
     const bytes = Buffer.byteLength(data);
-    this.pendingOutput.set(id, bytes);
-    this.outputBytes += bytes;
-    if (this.outputBytes >= 512 * 1024) this.shell?.pause();
-    this.emit({ type: 'terminal', data, id });
+    this.pendingOutput.set(id, { terminal, bytes });
+    terminal.pendingBytes += bytes;
+    if (terminal.pendingBytes >= 512 * 1024) terminal.channel.pause();
+    this.emit({ type: 'terminal', terminalId, data, id });
   }
 
   acknowledge(id: number): void {
-    const bytes = this.pendingOutput.get(id);
-    if (bytes === undefined) return;
+    const pending = this.pendingOutput.get(id);
+    if (!pending) return;
     this.pendingOutput.delete(id);
-    this.outputBytes -= bytes;
-    if (this.outputBytes < 256 * 1024) this.shell?.resume();
+    pending.terminal.pendingBytes -= pending.bytes;
+    if (pending.terminal.pendingBytes < 256 * 1024) pending.terminal.channel.resume();
   }
 
-  input(data: string): void {
-    if (!this.shell) throw new Error('No active terminal.');
-    this.shell.write(data);
+  private terminal(terminalId = this.primaryTerminal): ClientChannel {
+    const terminal = terminalId && this.terminals.get(terminalId);
+    if (!terminal) throw new Error('No active terminal.');
+    return terminal.channel;
   }
 
-  resize(cols: number, rows: number): void {
-    if (!this.shell) throw new Error('No active terminal.');
-    this.shell.setWindow(rows, cols, 0, 0);
+  input(data: string, terminalId?: string): void {
+    this.terminal(terminalId).write(data);
+  }
+
+  resize(cols: number, rows: number, terminalId?: string): void {
+    this.terminal(terminalId).setWindow(rows, cols, 0, 0);
   }
 
   private files(): SFTPWrapper {
@@ -331,6 +480,56 @@ export class Session {
     const sftp = this.files();
     return readDirectory(sftp, path, () => this.sftp === sftp);
   }
+  cancelImage(requestId: string): void {
+    if (this.imageRequest?.id === requestId)
+      this.imageRequest.controller.abort(new Error('Image preview cancelled.'));
+  }
+  async previewImage(path: string, requestId: string) {
+    if (
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error('Finish the active operation before previewing an image.');
+    remotePath(path);
+    const sftp = this.files();
+    const controller = new AbortController();
+    this.fileAction = controller;
+    this.imageRequest = { id: requestId, controller };
+    const timer = setTimeout(
+      () =>
+        controller.abort(new Error('Image preview timed out. Try again on a stable connection.')),
+      60000,
+    );
+    try {
+      return await readImagePreview(path, {
+        sftp,
+        signal: controller.signal,
+        current: () => this.sftp === sftp,
+        invalidate: () => {
+          if (this.sftp !== sftp) return;
+          this.disconnect();
+          this.emit({
+            type: 'status',
+            connected: false,
+            lost: true,
+            message: 'Image preview interrupted. Reconnect to try again.',
+          });
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+      if (this.fileAction === controller) this.fileAction = undefined;
+      if (this.imageRequest?.controller === controller) this.imageRequest = undefined;
+    }
+  }
+  closeEditor(token: string): void {
+    if (this.fileAction) throw new Error('Wait for the active file operation to finish.');
+    this.editor.close(token);
+  }
+
   async editText(input: { path: string }): Promise<EditorDocument>;
   async editText(input: { token: string; text: string }): Promise<boolean>;
   async editText(input: { token: string; compare: true }): Promise<EditorComparison>;

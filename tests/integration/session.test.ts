@@ -47,6 +47,76 @@ describe('SSH and SFTP over a real loopback connection', () => {
     fixture = await sshFixture(options);
   }
 
+  it('starts a dedicated PTY editor with one quoted file argument and preserves the original shell', async () => {
+    const commands: string[] = [];
+    await replaceFixture({
+      exec: (command, stream) => {
+        commands.push(command);
+        stream.write('editor ready\r\n');
+        stream.on('data', (data: Buffer) => stream.write(data));
+      },
+    });
+    const path = "/space 'quote' 日本語.txt";
+    await connect();
+    await session.openTerminal({ path, choose: async () => undefined });
+    expect(commands).toEqual([]);
+    for (const name of ['nano', 'vim'] as const)
+      await session.openTerminal({ path, choose: async () => name });
+    expect(commands).toEqual([
+      `exec nano -I -- '/space '"'"'quote'"'"' 日本語.txt' 2>&1`,
+      `exec vim --clean -n --cmd 'set nomodeline' -- '/space '"'"'quote'"'"' 日本語.txt' 2>&1`,
+    ]);
+    const opened = events.filter((event) => event.type === 'terminal-opened');
+    expect(opened.map((event) => event.editor)).toEqual([
+      undefined,
+      { name: 'nano', path },
+      { name: 'vim', path },
+    ]);
+    session.input('editor input', opened[1].terminalId);
+    session.input('shell input');
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'terminal',
+          terminalId: opened[1].terminalId,
+          data: expect.stringContaining('editor input'),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'terminal',
+          terminalId: opened[0].terminalId,
+          data: expect.stringContaining('echo:shell input'),
+        }),
+      );
+    });
+  });
+
+  it('rejects non-files and an editor approval from a dropped connection', async () => {
+    const exec = vi.fn();
+    await replaceFixture({ exec });
+    fixture.symlinks.add('/link');
+    await connect();
+    await expect(
+      session.openTerminal({ path: '/folder', choose: async () => 'vim' }),
+    ).rejects.toThrow('regular');
+    await expect(
+      session.openTerminal({ path: '/link', choose: async () => 'nano' }),
+    ).rejects.toThrow('regular');
+    await expect(
+      session.openTerminal({
+        path: '/hello.txt',
+        choose: async () => {
+          session.disconnect();
+          await connect();
+          return 'vim';
+        },
+      }),
+    ).rejects.toThrow();
+    expect(exec).not.toHaveBeenCalled();
+    await session.openTerminal();
+  });
+
   it('connects, allocates a PTY, echoes input, and resizes the remote terminal', async () => {
     await connect();
     session.input('hello\r');
@@ -664,8 +734,56 @@ describe('SSH and SFTP over a real loopback connection', () => {
   it('reports a closed shell and disables input after it closes', async () => {
     await connect();
     fixture.closeShell();
-    await vi.waitFor(() => expect(events).toContainEqual({ type: 'terminal-exit' }));
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: 'terminal-exit',
+        terminalId: expect.any(String),
+      }),
+    );
     expect(() => session.input('data')).toThrow('No active terminal');
+  });
+  it('routes input to independent shells and rejects IDs from closed tabs and old connections', async () => {
+    await connect();
+    const opened = () =>
+      events.flatMap((event) => (event.type === 'terminal-opened' ? [event.terminalId] : []));
+    const [first] = opened();
+    await session.openTerminal();
+    const [, second] = opened();
+    expect(second).not.toBe(first);
+    session.input('first shell', first);
+    session.input('second shell', second);
+    await vi.waitFor(() => {
+      const output = (terminalId: string) =>
+        events
+          .flatMap((event) =>
+            event.type === 'terminal' && event.terminalId === terminalId ? [event.data] : [],
+          )
+          .join('');
+      expect(output(first)).toContain('echo:first shell');
+      expect(output(first)).not.toContain('second shell');
+      expect(output(second)).toContain('echo:second shell');
+      expect(output(second)).not.toContain('first shell');
+    });
+    session.closeTerminal(second);
+    expect(() => session.input('closed', second)).toThrow('No active terminal');
+    session.resize(80, 24, first);
+    expect((await session.list('/')).path).toBe('/');
+    session.disconnect();
+    await connect();
+    expect(() => session.resize(80, 24, first)).toThrow('No active terminal');
+    expect(opened().at(-1)).not.toBe(first);
+  });
+  it('caps open tabs even when a shell exits and releases its slot on close', async () => {
+    await connect();
+    for (let index = 0; index < 3; index++) await session.openTerminal();
+    await expect(session.openTerminal()).rejects.toThrow('Close a terminal');
+    fixture.closeShell();
+    const exit = () => events.find((event) => event.type === 'terminal-exit');
+    await vi.waitFor(() => expect(exit()).toBeDefined());
+    await expect(session.openTerminal()).rejects.toThrow('Close a terminal');
+    session.closeTerminal(exit()!.terminalId);
+    await session.openTerminal();
+    expect(fixture.shellRequests()).toBe(5);
   });
   it('preserves UTF-8 characters split across SSH packets', async () => {
     await connect();

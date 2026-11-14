@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import type {
   AppInfo,
   DirectoryListing,
@@ -8,15 +17,16 @@ import type {
   TransferUpdate,
   QueueState,
 } from '../../shared/contracts';
-import { Terminal } from './Terminal';
+import { TerminalTabs } from './TerminalTabs';
 import { ConnectionField, ConnectionGuide, connectionHelp } from './ConnectionHelp';
 import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
-import { RemoteEditor } from './RemoteEditor';
-import type { EditorDocument } from '../../shared/editor';
+import { EditorTabs, type EditorTab } from './EditorTabs';
+import { ImagePreview } from './ImagePreview';
+import { editorTabLimit } from '../../shared/editor-limits';
 
 function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.error);
@@ -33,13 +43,20 @@ function join(directory: string, name: string): string {
   return `${directory === '/' ? '' : directory}/${name}`;
 }
 
-export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
+export function App({
+  sessionProtection,
+  onServer,
+}: {
+  sessionProtection?: ReactNode;
+  onServer: (server: string) => void;
+}) {
+  const { api } = useWorkspace();
+  const fieldPrefix = useId();
   const [info, setInfo] = useState<AppInfo>();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [lost, setLost] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
   const [sftpOpen, setSftpOpen] = useState(false);
   const connectionAttempt = useRef(false);
   const [profileBusy, setProfileBusy] = useState(false);
@@ -66,12 +83,25 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
   const connectionEpoch = useRef(0);
   const actionLock = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [editor, setEditor] = useState<{ document: EditorDocument; epoch: number }>();
+  const [editorTabs, setEditorTabs] = useState<EditorTab[]>([]);
+  const [selectedEditor, setSelectedEditor] = useState('');
+  const [editorShown, setEditorShown] = useState(false);
+  const visibleEditor = editorTabs.some((tab) => tab.document.token === selectedEditor)
+    ? selectedEditor
+    : (editorTabs[0]?.document.token ?? '');
+  const [image, setImage] = useState<{ directory: string; name: string }>();
   const [dropActive, setDropActive] = useState(false);
   const [actionInput, setActionInput] = useState<Exclude<FileAction, { action: 'delete' }>>();
   const filesReady = connected && sftpOpen;
   const dropDirectory =
-    filesReady && !loading && !actionBusy && !actionInput && !editor ? listing?.path : undefined;
+    filesReady &&
+    !loading &&
+    !actionBusy &&
+    !actionInput &&
+    !(editorShown && visibleEditor) &&
+    !image
+      ? listing?.path
+      : undefined;
   const fileBusy =
     actionBusy ||
     loading ||
@@ -80,7 +110,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     transfers.some((transfer) => transfer.status === 'running' || transfer.status === 'queued');
 
   useEffect(() => {
-    void window.sshdrop.info().then((result) => {
+    void api.info().then((result) => {
       if (result.ok) setInfo(result.value);
       else setError(result.error);
     });
@@ -91,15 +121,15 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       setListing(undefined);
       setLoading(false);
     };
-    const stopDropErrors = window.sshdrop.onDropError(setError);
-    const stopEvents = window.sshdrop.onEvent((event) => {
+    const stopDropErrors = api.onDropError(setError);
+    const stopEvents = api.onEvent((event) => {
       if (event.type === 'status') {
         setConnected(event.connected);
         setLost(event.lost === true);
-        setTerminalOpen(event.connected && event.terminal !== false);
         setSftpOpen(event.connected && event.sftp !== false);
         setMessage(event.message);
         if (!event.connected) {
+          setImage(undefined);
           connectionEpoch.current++;
           setError('');
           setActionBusy(false);
@@ -109,8 +139,8 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           clearListing();
         }
       }
-      if (event.type === 'terminal-exit') setTerminalOpen(false);
       if (event.type === 'sftp-exit') {
+        setImage(undefined);
         setSftpOpen(false);
         setActionInput(undefined);
         clearListing();
@@ -133,7 +163,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           const directory = listingPath.current;
           const epoch = connectionEpoch.current;
           const request = ++navigation.current;
-          void window.sshdrop.list(directory).then((result) => {
+          void api.list(directory).then((result) => {
             if (epoch !== connectionEpoch.current || request !== navigation.current) return;
             if (result.ok) setListing(result.value);
             else
@@ -148,7 +178,35 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       stopDropErrors();
       stopEvents();
     };
-  }, []);
+  }, [api]);
+
+  async function openEditor(directory: string, name: string) {
+    const epoch = connectionEpoch.current;
+    const existing = editorTabs.find(
+      (tab) => tab.epoch === epoch && tab.document.path === join(directory, name),
+    );
+    if (existing) {
+      setSelectedEditor(existing.document.token);
+      setEditorShown(true);
+      return;
+    }
+    if (editorTabs.length >= editorTabLimit) {
+      setError('Close an editor tab before opening another file.');
+      return;
+    }
+    await run(async () => {
+      setActionBusy(true);
+      try {
+        const document = unwrap(await api.openEditor({ directory, name }));
+        if (epoch !== connectionEpoch.current) return;
+        setEditorTabs((tabs) => [...tabs, { document, epoch }]);
+        setSelectedEditor(document.token);
+        setEditorShown(true);
+      } finally {
+        if (epoch === connectionEpoch.current) setActionBusy(false);
+      }
+    });
+  }
 
   async function run(operation: () => Promise<unknown>) {
     setError('');
@@ -169,7 +227,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     const epoch = connectionEpoch.current;
     let changed = false;
     try {
-      changed = unwrap(await window.sshdrop.fileAction(input));
+      changed = unwrap(await api.fileAction(input));
       if (epoch !== connectionEpoch.current) return true;
       if (changed) {
         setMessage('Remote change completed.');
@@ -199,7 +257,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     const request = ++navigation.current;
     setLoading(true);
     try {
-      const result = unwrap(await window.sshdrop.list(destination));
+      const result = unwrap(await api.list(destination));
       if (request === navigation.current) {
         setListing(result);
         listingPath.current = result.path;
@@ -222,7 +280,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       );
       let established = false;
       try {
-        const attempt = window.sshdrop.connect({
+        const attempt = api.connect({
           host,
           port: Number(port),
           username,
@@ -233,6 +291,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
         setPassphrase('');
         const { sftp } = unwrap(await attempt);
         established = true;
+        onServer(`${username}@${host}:${port}`);
         if (sftp) await browse(path);
       } catch (failure) {
         if (failure instanceof Error && failure.message === 'Connection attempt cancelled.') {
@@ -356,10 +415,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           )}
           <form onSubmit={connect} className="connection-form">
             <fieldset disabled={connected || connecting || profileBusy}>
-              <ConnectionField id="connection-host" label="Host" help={connectionHelp.host}>
+              <ConnectionField
+                id={fieldPrefix + 'connection-host'}
+                label="Host"
+                help={connectionHelp.host}
+              >
                 <input
-                  id="connection-host"
-                  aria-describedby="connection-host-help"
+                  id={fieldPrefix + 'connection-host'}
+                  aria-describedby={fieldPrefix + 'connection-host-help'}
                   required
                   autoComplete="off"
                   placeholder="192.168.1.10"
@@ -369,13 +432,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               </ConnectionField>
               <div className="form-row">
                 <ConnectionField
-                  id="connection-username"
+                  id={fieldPrefix + 'connection-username'}
                   label="Username"
                   help={connectionHelp.username}
                 >
                   <input
-                    id="connection-username"
-                    aria-describedby="connection-username-help"
+                    id={fieldPrefix + 'connection-username'}
+                    aria-describedby={fieldPrefix + 'connection-username-help'}
                     required
                     autoComplete="off"
                     placeholder="deploy"
@@ -384,14 +447,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   />
                 </ConnectionField>
                 <ConnectionField
-                  id="connection-port"
+                  id={fieldPrefix + 'connection-port'}
                   label="Port"
                   help={connectionHelp.port}
                   className="port-field"
                 >
                   <input
-                    id="connection-port"
-                    aria-describedby="connection-port-help"
+                    id={fieldPrefix + 'connection-port'}
+                    aria-describedby={fieldPrefix + 'connection-port-help'}
                     required
                     type="number"
                     min="1"
@@ -402,13 +465,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </ConnectionField>
               </div>
               <ConnectionField
-                id="connection-auth"
+                id={fieldPrefix + 'connection-auth'}
                 label="Authentication"
                 help={connectionHelp.authentication}
               >
                 <select
-                  id="connection-auth"
-                  aria-describedby="connection-auth-help"
+                  id={fieldPrefix + 'connection-auth'}
+                  aria-describedby={fieldPrefix + 'connection-auth-help'}
                   value={auth}
                   onChange={(e) => {
                     setAuth(e.target.value as 'password' | 'key');
@@ -423,13 +486,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               </ConnectionField>
               {auth === 'password' ? (
                 <ConnectionField
-                  id="connection-password"
+                  id={fieldPrefix + 'connection-password'}
                   label="Password"
                   help={connectionHelp.password}
                 >
                   <input
-                    id="connection-password"
-                    aria-describedby="connection-password-help"
+                    id={fieldPrefix + 'connection-password'}
+                    aria-describedby={fieldPrefix + 'connection-password-help'}
                     required
                     type="password"
                     autoComplete="off"
@@ -441,31 +504,29 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               ) : (
                 <>
                   <ConnectionField
-                    id="connection-key"
+                    id={fieldPrefix + 'connection-key'}
                     label="Private key"
                     help={connectionHelp.privateKey}
                     labelInput={false}
                   >
                     <button
-                      id="connection-key"
-                      aria-describedby="connection-key-help"
+                      id={fieldPrefix + 'connection-key'}
+                      aria-describedby={fieldPrefix + 'connection-key-help'}
                       type="button"
                       className="secondary key-button"
-                      onClick={() =>
-                        void run(async () => setKey(unwrap(await window.sshdrop.chooseKey())))
-                      }
+                      onClick={() => void run(async () => setKey(unwrap(await api.chooseKey())))}
                     >
                       {key ? key.name : 'Choose private key…'}
                     </button>
                   </ConnectionField>
                   <ConnectionField
-                    id="connection-passphrase"
+                    id={fieldPrefix + 'connection-passphrase'}
                     label="Key passphrase"
                     help={connectionHelp.passphrase}
                   >
                     <input
-                      id="connection-passphrase"
-                      aria-describedby="connection-passphrase-help"
+                      id={fieldPrefix + 'connection-passphrase'}
+                      aria-describedby={fieldPrefix + 'connection-passphrase-help'}
                       type="password"
                       autoComplete="off"
                       value={passphrase}
@@ -476,13 +537,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </>
               )}
               <ConnectionField
-                id="connection-directory"
+                id={fieldPrefix + 'connection-directory'}
                 label="Starting directory"
                 help={connectionHelp.directory}
               >
                 <input
-                  id="connection-directory"
-                  aria-describedby="connection-directory-help"
+                  id={fieldPrefix + 'connection-directory'}
+                  aria-describedby={fieldPrefix + 'connection-directory-help'}
                   required
                   pattern="/.*"
                   value={path}
@@ -507,7 +568,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               disabled={cancelling}
               onClick={() => {
                 setCancelling(true);
-                void run(async () => unwrap(await window.sshdrop.cancelConnect())).finally(() =>
+                void run(async () => unwrap(await api.cancelConnect())).finally(() =>
                   setCancelling(false),
                 );
               }}
@@ -518,7 +579,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           {connected && (
             <button
               className="secondary disconnect-button"
-              onClick={() => void run(async () => unwrap(await window.sshdrop.disconnect()))}
+              onClick={() => void run(async () => unwrap(await api.disconnect()))}
             >
               Disconnect
             </button>
@@ -581,6 +642,11 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 <span className="panel-icon">▱</span> Files
               </h3>
               <div className="toolbar">
+                {editorTabs.length > 0 && (
+                  <button className="secondary compact" onClick={() => setEditorShown(true)}>
+                    Open editors ({editorTabs.length})
+                  </button>
+                )}
                 <button
                   className="secondary compact"
                   disabled={!filesReady || fileBusy}
@@ -600,9 +666,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 <button
                   className="secondary compact"
                   disabled={!filesReady || !listing || actionBusy || loading}
-                  onClick={() =>
-                    void run(async () => unwrap(await window.sshdrop.upload(listing!.path)))
-                  }
+                  onClick={() => void run(async () => unwrap(await api.upload(listing!.path)))}
                 >
                   ↑ Upload files
                 </button>
@@ -610,7 +674,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   className="secondary compact"
                   disabled={!filesReady || !listing || actionBusy || loading}
                   onClick={() =>
-                    void run(async () => unwrap(await window.sshdrop.uploadFolder(listing!.path)))
+                    void run(async () => unwrap(await api.uploadFolder(listing!.path)))
                   }
                 >
                   Upload folder
@@ -621,9 +685,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   onClick={() =>
                     void run(async () => {
                       unwrap(
-                        await window.sshdrop.downloadMany(
-                          selected.map((name) => join(listing!.path, name)),
-                        ),
+                        await api.downloadMany(selected.map((name) => join(listing!.path, name))),
                       );
                       setSelected([]);
                     })
@@ -783,10 +845,8 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                 void run(async () =>
                                   unwrap(
                                     await (entry.kind === 'directory'
-                                      ? window.sshdrop.downloadFolder(
-                                          join(listing.path, entry.name),
-                                        )
-                                      : window.sshdrop.download(join(listing.path, entry.name))),
+                                      ? api.downloadFolder(join(listing.path, entry.name))
+                                      : api.download(join(listing.path, entry.name))),
                                   ),
                                 )
                               }
@@ -796,32 +856,60 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                           )}
                           {(entry.kind === 'file' || entry.kind === 'directory') && (
                             <>
+                              {entry.kind === 'file' &&
+                                /\.(png|jpe?g|webp|gif)$/i.test(entry.name) && (
+                                  <button
+                                    className="text-button"
+                                    disabled={
+                                      !filesReady ||
+                                      fileBusy ||
+                                      (editorShown && !!visibleEditor) ||
+                                      !!image ||
+                                      entry.size > 10485760
+                                    }
+                                    onClick={() =>
+                                      setImage({ directory: listing.path, name: entry.name })
+                                    }
+                                  >
+                                    Preview image
+                                  </button>
+                                )}
                               {entry.kind === 'file' && (
                                 <button
                                   className="text-button"
                                   disabled={
-                                    !filesReady || fileBusy || !!editor || entry.size > 1048576
+                                    !filesReady ||
+                                    fileBusy ||
+                                    (editorShown && !!visibleEditor) ||
+                                    entry.size > 1048576
                                   }
-                                  onClick={() =>
+                                  onClick={() => void openEditor(listing.path, entry.name)}
+                                >
+                                  Edit text
+                                </button>
+                              )}
+                              {entry.kind === 'file' && (
+                                <button
+                                  className="text-button"
+                                  disabled={!filesReady || fileBusy}
+                                  onClick={() => {
                                     void run(async () => {
                                       const epoch = connectionEpoch.current;
                                       setActionBusy(true);
                                       try {
-                                        const document = unwrap(
-                                          await window.sshdrop.openEditor({
+                                        unwrap(
+                                          await api.openTerminalEditor({
                                             directory: listing.path,
                                             name: entry.name,
                                           }),
                                         );
-                                        if (epoch === connectionEpoch.current)
-                                          setEditor({ document, epoch });
                                       } finally {
-                                        setActionBusy(false);
+                                        if (epoch === connectionEpoch.current) setActionBusy(false);
                                       }
-                                    })
-                                  }
+                                    });
+                                  }}
                                 >
-                                  Edit text
+                                  Edit in terminal
                                 </button>
                               )}
                               <button
@@ -928,36 +1016,33 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               }}
             />
           )}
-          {editor && (
-            <RemoteEditor
-              document={editor.document}
-              active={filesReady && editor.epoch === connectionEpoch.current}
-              close={() => {
-                setEditor(undefined);
-                if (filesReady && listingPath.current) void run(() => browse(listingPath.current!));
+          {image && (
+            <ImagePreview
+              directory={image.directory}
+              name={image.name}
+              close={() => setImage(undefined)}
+            />
+          )}
+          {editorTabs.length > 0 && (
+            <EditorTabs
+              tabs={editorTabs}
+              selected={visibleEditor}
+              shown={editorShown}
+              isCurrent={(tab) => filesReady && tab.epoch === connectionEpoch.current}
+              select={setSelectedEditor}
+              hide={() => setEditorShown(false)}
+              close={(id) => {
+                setEditorTabs((tabs) => tabs.filter((tab) => tab.document.token !== id));
+                if (editorTabs.length === 1 && filesReady && listingPath.current)
+                  void run(() => browse(listingPath.current!));
               }}
             />
           )}
-          <section className="terminal-panel panel" aria-label="Terminal panel">
-            <div className="panel-heading">
-              <h3>
-                <span className="terminal-symbol">›_</span> Terminal{' '}
-                <span className="terminal-tab">shell 01</span>
-              </h3>
-              <span className="small-label">
-                {terminalOpen ? 'INTERACTIVE SSH' : connected ? 'SHELL CLOSED' : 'NOT CONNECTED'}
-              </span>
-            </div>
-            <div className="terminal-container">
-              <Terminal connected={connected && terminalOpen} />
-              {!connected && (
-                <div className="terminal-placeholder">
-                  <span>$</span> Your next command starts here.
-                  <i />
-                </div>
-              )}
-            </div>
-          </section>
+          <TerminalTabs
+            connected={connected}
+            canBrowse={filesReady && !fileBusy && !actionInput}
+            browse={(directory) => void run(() => browse(directory))}
+          />
           <Workflows connected={connected} />
           {transfers.length > 0 && (
             <section className="transfers panel" aria-label="File transfers">
@@ -972,7 +1057,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   <button
                     className="text-button"
                     disabled={queue.active || !queue.pending || actionBusy}
-                    onClick={() => void run(async () => unwrap(await window.sshdrop.resumeQueue()))}
+                    onClick={() => void run(async () => unwrap(await api.resumeQueue()))}
                   >
                     Continue queue
                   </button>
@@ -1007,9 +1092,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   {(transfer.status === 'running' || transfer.status === 'queued') && (
                     <button
                       className="text-button"
-                      onClick={() =>
-                        void run(async () => unwrap(await window.sshdrop.cancel(transfer.id)))
-                      }
+                      onClick={() => void run(async () => unwrap(await api.cancel(transfer.id)))}
                     >
                       Cancel
                     </button>

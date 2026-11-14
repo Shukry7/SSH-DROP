@@ -122,6 +122,52 @@ describe('bounded remote UTF-8 editor', () => {
     await expect(session.editText({ path: '/link' })).rejects.toThrow('regular files');
     expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
   });
+  it('keeps comparisons and save baselines separate and releases closed tabs', async () => {
+    const first = await open();
+    const second = await session.editText({ path: '/folder/nested.txt' });
+    fixture.files.set('/hello.txt', Buffer.from('external first'));
+    fixture.files.set('/folder/nested.txt', Buffer.from('external second'));
+    const firstReview = await session.editText({ token: first.token, compare: true });
+    const secondReview = await session.editText({ token: second.token, compare: true });
+    await expect(
+      session.editText({
+        token: first.token,
+        reviewToken: secondReview.reviewToken,
+        keepDraft: true,
+      }),
+    ).rejects.toThrow('comparison is no longer current');
+    const accepted = await session.editText({
+      token: first.token,
+      reviewToken: firstReview.reviewToken,
+      keepDraft: true,
+    });
+    expect(accepted?.text).toBe('external first');
+    await expect(session.editText({ token: accepted!.token, text: 'saved first' })).resolves.toBe(
+      true,
+    );
+    expect(fixture.files.get('/folder/nested.txt')?.toString()).toBe('external second');
+    await expect(
+      session.editText({
+        token: second.token,
+        reviewToken: secondReview.reviewToken,
+        keepDraft: false,
+      }),
+    ).resolves.toMatchObject({ text: 'external second', path: '/folder/nested.txt' });
+    session.closeEditor(accepted!.token);
+    await expect(session.editText({ token: accepted!.token, compare: true })).rejects.toThrow(
+      'closed',
+    );
+    expect(fixture.files.get('/hello.txt')?.toString()).toBe('saved first');
+  });
+  it('bounds simultaneous tabs and reuses capacity after close', async () => {
+    const first = await open();
+    for (let index = 1; index <= 8; index++)
+      fixture.files.set(`/tab-${index}.txt`, Buffer.from('tab'));
+    for (let index = 1; index < 8; index++) await session.editText({ path: `/tab-${index}.txt` });
+    await expect(session.editText({ path: '/tab-8.txt' })).rejects.toThrow('Close an editor tab');
+    session.closeEditor(first.token);
+    await expect(session.editText({ path: '/tab-8.txt' })).resolves.toMatchObject({ text: 'tab' });
+  });
   it('retains the recovery backup when publication loses its acknowledgment', async () => {
     session.disconnect();
     await fixture.close();

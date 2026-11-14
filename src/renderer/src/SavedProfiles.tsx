@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import { useEffect, useId, useState } from 'react';
 import type { LoadedProfile, ProfileInput, Result, ServerProfile } from '../../shared/contracts';
 
 function unwrap<T>(result: Result<T>): T {
@@ -21,6 +22,8 @@ export function SavedProfiles({
   onError: (message: string) => void;
   onBusy: (busy: boolean) => void;
 }) {
+  const { api } = useWorkspace();
+  const fieldPrefix = useId();
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
   const [selected, setSelected] = useState('');
   const [name, setName] = useState('');
@@ -30,7 +33,7 @@ export function SavedProfiles({
 
   useEffect(() => {
     let active = true;
-    void window.sshdrop
+    void api
       .profiles()
       .then((result) => {
         if (!active) return;
@@ -45,7 +48,7 @@ export function SavedProfiles({
     return () => {
       active = false;
     };
-  }, [onError]);
+  }, [api, onError]);
 
   async function run(operation: () => Promise<void>) {
     setBusy(true);
@@ -67,10 +70,10 @@ export function SavedProfiles({
       <fieldset disabled={disabled || busy || !ready}>
         <div className="connection-field">
           <div className="field-heading">
-            <label htmlFor="saved-profile">Saved server</label>
+            <label htmlFor={fieldPrefix + 'saved-profile'}>Saved server</label>
           </div>
           <select
-            id="saved-profile"
+            id={fieldPrefix + 'saved-profile'}
             value={selected}
             onChange={(event) => {
               const id = event.target.value;
@@ -82,7 +85,7 @@ export function SavedProfiles({
                 return;
               }
               void run(async () => {
-                const loaded = unwrap(await window.sshdrop.loadProfile(id));
+                const loaded = unwrap(await api.loadProfile(id));
                 onLoad(loaded);
                 setSelected(id);
                 setName(loaded.profile.name);
@@ -100,10 +103,10 @@ export function SavedProfiles({
             ))}
           </select>
         </div>
-        <label htmlFor="profile-name">
+        <label htmlFor={fieldPrefix + 'profile-name'}>
           Profile name
           <input
-            id="profile-name"
+            id={fieldPrefix + 'profile-name'}
             maxLength={80}
             value={name}
             placeholder="My development server"
@@ -117,7 +120,7 @@ export function SavedProfiles({
             onClick={() =>
               void run(async () => {
                 const saved = unwrap(
-                  await window.sshdrop.saveProfile({
+                  await api.saveProfile({
                     ...details,
                     name,
                     ...(selected ? { id: selected } : {}),
@@ -151,7 +154,7 @@ export function SavedProfiles({
                 className="secondary compact"
                 onClick={() =>
                   void run(async () => {
-                    if (!unwrap(await window.sshdrop.deleteProfile(selected))) return;
+                    if (!unwrap(await api.deleteProfile(selected))) return;
                     setProfiles((previous) => previous.filter((p) => p.id !== selected));
                     setSelected('');
                     setName('');

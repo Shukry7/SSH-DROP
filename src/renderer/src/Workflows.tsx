@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import { useEffect, useId, useState } from 'react';
 import type { Result } from '../../shared/contracts';
 import type { Workflow, WorkflowPlan, WorkflowUpdate } from '../../shared/workflows';
 const unwrap = <T,>(r: Result<T>): T => {
@@ -24,6 +25,8 @@ const exampleWorkflow = (): Workflow => ({
   steps: ['pwd', 'uname -s', "printf '%s\\n' {{message}}"],
 });
 export function Workflows({ connected }: { connected: boolean }) {
+  const { api } = useWorkspace();
+  const localId = useId();
   const [items, setItems] = useState<Workflow[]>([]);
   const [selected, setSelected] = useState('');
   const [editor, setEditor] = useState<Workflow>();
@@ -56,10 +59,10 @@ export function Workflows({ connected }: { connected: boolean }) {
         .toLocaleLowerCase()
         .includes(search.trim().toLocaleLowerCase()),
   );
-  const refresh = async () => setItems(unwrap(await window.sshdrop.workflows()));
+  const refresh = async () => setItems(unwrap(await api.workflows()));
   useEffect(() => {
     let alive = true;
-    void window.sshdrop
+    void api
       .workflows()
       .then((result) => {
         if (alive) setItems(unwrap(result));
@@ -67,7 +70,7 @@ export function Workflows({ connected }: { connected: boolean }) {
       .catch((e) => {
         if (alive) setError(String(e));
       });
-    const unsubscribe = window.sshdrop.onEvent((event) => {
+    const unsubscribe = api.onEvent((event) => {
       if (event.type === 'workflow-warning') setNotice(event.message);
       if (event.type === 'workflow-reset') {
         setPreview(undefined);
@@ -86,7 +89,7 @@ export function Workflows({ connected }: { connected: boolean }) {
       alive = false;
       unsubscribe();
     };
-  }, []);
+  }, [api]);
   const perform = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError('');
@@ -110,7 +113,7 @@ export function Workflows({ connected }: { connected: boolean }) {
   const start = async (value: NonNullable<typeof preview>) => {
     setPreview(undefined);
     setOutput('');
-    if (unwrap(await window.sshdrop.runWorkflow(value.token))) {
+    if (unwrap(await api.runWorkflow(value.token))) {
       setLastRun({ workflowId: value.workflowId, runId: value.token });
       setRerunReview(false);
     }
@@ -232,7 +235,7 @@ export function Workflows({ connected }: { connected: boolean }) {
             disabled={busy || !!editor}
             onClick={() =>
               void perform(async () => {
-                const imported = unwrap(await window.sshdrop.importWorkflow());
+                const imported = unwrap(await api.importWorkflow());
                 if (imported) edit(imported, true);
               })
             }
@@ -244,7 +247,7 @@ export function Workflows({ connected }: { connected: boolean }) {
             disabled={!current || busy}
             onClick={() =>
               void perform(async () => {
-                unwrap(await window.sshdrop.exportWorkflow(current!.id));
+                unwrap(await api.exportWorkflow(current!.id));
               })
             }
           >
@@ -255,7 +258,7 @@ export function Workflows({ connected }: { connected: boolean }) {
             disabled={!current || busy}
             onClick={() =>
               void perform(async () => {
-                unwrap(await window.sshdrop.deleteWorkflow(selected));
+                unwrap(await api.deleteWorkflow(selected));
                 setPreview(undefined);
                 await refresh();
                 setSearch('');
@@ -288,7 +291,7 @@ export function Workflows({ connected }: { connected: boolean }) {
                     };
                   });
                 const saved = unwrap(
-                  await window.sshdrop.saveWorkflow({
+                  await api.saveWorkflow({
                     ...editor,
                     steps: lines,
                     variables: defs as Workflow['variables'],
@@ -374,7 +377,7 @@ export function Workflows({ connected }: { connected: boolean }) {
               Maximum runtime per command (minutes, 1–120)
               <input
                 aria-label="Workflow timeout"
-                aria-describedby="workflow-timeout-help"
+                aria-describedby={localId}
                 type="number"
                 min={1}
                 max={120}
@@ -382,7 +385,7 @@ export function Workflows({ connected }: { connected: boolean }) {
                 onChange={(e) => setEditor({ ...editor, minutes: Number(e.target.value) })}
               />
             </label>
-            <p id="workflow-timeout-help">
+            <p id={localId}>
               Commands start immediately and continue to the next step as soon as they succeed. This
               is a time limit, not a delay. If it expires, later steps do not run; remote work may
               still continue. Follow-logs mode uses a separate 12-hour limit for the last step.
@@ -452,7 +455,7 @@ export function Workflows({ connected }: { connected: boolean }) {
               onClick={() =>
                 void perform(async () => {
                   setPreview({
-                    ...unwrap(await window.sshdrop.previewWorkflow({ id: current.id, values })),
+                    ...unwrap(await api.previewWorkflow({ id: current.id, values })),
                     workflowId: current.id,
                   });
                 })
@@ -517,7 +520,7 @@ export function Workflows({ connected }: { connected: boolean }) {
                   className="secondary"
                   onClick={() =>
                     void perform(async () => {
-                      unwrap(await window.sshdrop.stopWorkflow(run.id));
+                      unwrap(await api.stopWorkflow(run.id));
                     })
                   }
                 >
@@ -531,7 +534,7 @@ export function Workflows({ connected }: { connected: boolean }) {
                   onClick={() =>
                     void perform(async () => {
                       setPreview(undefined);
-                      const latest = unwrap(await window.sshdrop.workflows());
+                      const latest = unwrap(await api.workflows());
                       setItems(latest);
                       const workflow = latest.find((w) => w.id === lastRun.workflowId);
                       if (!workflow)
@@ -543,9 +546,7 @@ export function Workflows({ connected }: { connected: boolean }) {
                       setRerunReview(true);
                       if (!workflow.variables.length) {
                         const next = {
-                          ...unwrap(
-                            await window.sshdrop.previewWorkflow({ id: workflow.id, values: {} }),
-                          ),
+                          ...unwrap(await api.previewWorkflow({ id: workflow.id, values: {} })),
                           workflowId: workflow.id,
                         };
                         if (next.plan.confirmBeforeRun === false) await start(next);

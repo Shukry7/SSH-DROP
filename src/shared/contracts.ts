@@ -113,6 +113,7 @@ export type SessionEvent =
   | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
+  | { type: 'terminal-opened'; terminalId: string; editor?: { name: 'nano' | 'vim'; path: string } }
   | {
       type: 'status';
       connected: boolean;
@@ -121,13 +122,16 @@ export type SessionEvent =
       terminal?: boolean;
       sftp?: boolean;
     }
-  | { type: 'terminal'; data: string; id: number }
-  | { type: 'terminal-exit' }
+  | { type: 'terminal'; terminalId: string; data: string; id: number }
+  | { type: 'terminal-exit'; terminalId: string }
   | { type: 'sftp-exit' }
   | { type: 'transfer'; transfer: TransferUpdate }
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  createWorkspace(): Promise<Result<{ id: string; number: number }>>;
+  closeWorkspace(): Promise<Result<boolean>>;
+  forWorkspace(id: string): DesktopAPI;
   exportBackup(value: { id: string; passphrase: string }): Promise<Result<boolean>>;
   openBackup(passphrase: string): Promise<Result<boolean>>;
   idleStatus(): Promise<Result<import('./idle').IdleState>>;
@@ -161,11 +165,18 @@ export interface DesktopAPI {
   disconnect(): Promise<Result<void>>;
   list(path: string): Promise<Result<DirectoryListing>>;
   fileAction(input: FileAction): Promise<Result<boolean>>;
+  openImage(input: {
+    directory: string;
+    name: string;
+    requestId: string;
+  }): Promise<Result<import('./image-preview').ImagePreview>>;
+  cancelImage(requestId: string): Promise<Result<void>>;
   openEditor(input: {
     directory: string;
     name: string;
   }): Promise<Result<import('./editor').EditorDocument>>;
   saveEditor(input: { token: string; text: string }): Promise<Result<boolean>>;
+  closeEditor(token: string): Promise<Result<void>>;
   compareEditor(token: string): Promise<Result<import('./editor').EditorComparison>>;
   acceptEditorReview(input: {
     token: string;
@@ -181,9 +192,12 @@ export interface DesktopAPI {
   downloadMany(paths: string[]): Promise<Result<void>>;
   resumeQueue(): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;
-  input(data: string): Promise<Result<void>>;
+  openTerminal(): Promise<Result<void>>;
+  openTerminalEditor(input: { directory: string; name: string }): Promise<Result<void>>;
+  closeTerminal(terminalId: string): Promise<Result<void>>;
+  input(data: string, terminalId?: string): Promise<Result<void>>;
   acknowledge(id: number): Promise<Result<void>>;
-  resize(size: { cols: number; rows: number }): Promise<Result<void>>;
+  resize(size: { cols: number; rows: number; terminalId?: string }): Promise<Result<void>>;
   onEvent(listener: (event: SessionEvent) => void): () => void;
   onDropError(listener: (error: string) => void): () => void;
 }

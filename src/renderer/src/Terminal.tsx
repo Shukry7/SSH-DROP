@@ -1,11 +1,31 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import type { SessionEvent } from '../../shared/contracts';
+import { parseTerminalDirectory } from './terminal-directory';
 
-export function Terminal({ connected }: { connected: boolean }) {
+export type TerminalOutput = (
+  event: Extract<SessionEvent, { type: 'terminal' | 'terminal-exit' }>,
+) => void;
+
+export function Terminal({
+  id,
+  subscribe,
+  connected,
+  visible,
+  onDirectory,
+}: {
+  id?: string;
+  subscribe: (id: string, listener: TerminalOutput) => () => void;
+  connected: boolean;
+  visible: boolean;
+  onDirectory: (id: string, directory: string | undefined) => void;
+}) {
+  const { api, active: workspaceActive } = useWorkspace();
   const element = useRef<HTMLDivElement>(null);
-  const active = useRef(connected);
+  const active = useRef(connected && visible && workspaceActive);
   const terminal = useRef<XTerm | null>(null);
   const fit = useRef<FitAddon | null>(null);
 
@@ -31,9 +51,13 @@ export function Terminal({ connected }: { connected: boolean }) {
       fit.current = addon;
       view.loadAddon(addon);
       view.open(element.current!);
-      addon.fit();
+      if (element.current?.clientHeight && element.current.clientWidth) addon.fit();
       const subscription = view.onData((data) => {
-        if (active.current) void window.sshdrop.input(data);
+        if (active.current) void api.input(data, id);
+      });
+      const directoryReports = view.parser.registerOscHandler(7, (report) => {
+        if (id) onDirectory(id, parseTerminalDirectory(report));
+        return true;
       });
       let frame = 0;
       let disposed = false;
@@ -42,7 +66,7 @@ export function Terminal({ connected }: { connected: boolean }) {
         frame = requestAnimationFrame(() => {
           if (disposed || !element.current?.clientHeight || !element.current.clientWidth) return;
           addon.fit();
-          if (active.current) void window.sshdrop.resize({ cols: view.cols, rows: view.rows });
+          if (active.current) void api.resize({ cols: view.cols, rows: view.rows, terminalId: id });
         });
       };
       const observer = new ResizeObserver(resize);
@@ -57,6 +81,7 @@ export function Terminal({ connected }: { connected: boolean }) {
         cancelAnimationFrame(frame);
         window.removeEventListener('resize', resize);
         subscription.dispose();
+        directoryReports.dispose();
         observer.disconnect();
         view.dispose();
         terminal.current = null;
@@ -64,33 +89,47 @@ export function Terminal({ connected }: { connected: boolean }) {
       };
     };
     createView();
-    const unsubscribe = window.sshdrop.onEvent((event) => {
-      if (event.type === 'terminal-reset') createView();
-      if (event.type === 'terminal')
-        terminal.current?.write(event.data, () => {
-          void window.sshdrop.acknowledge(event.id);
-        });
-      if (event.type === 'terminal-exit') {
-        active.current = false;
-        terminal.current?.writeln(
-          '\r\n[Shell closed. Disconnect and reconnect for a fresh terminal.]',
-        );
-      }
-    });
+    const unsubscribe = id
+      ? subscribe(id, (event) => {
+          if (event.type === 'terminal')
+            terminal.current?.write(event.data, () => {
+              void api.acknowledge(event.id);
+            });
+          if (event.type === 'terminal-exit') {
+            active.current = false;
+            terminal.current?.writeln(
+              '\r\n[Shell closed. Open a new terminal to start another shell.]',
+            );
+          }
+        })
+      : undefined;
     return () => {
-      unsubscribe();
+      unsubscribe?.();
       disposeView();
     };
-  }, []);
+  }, [api, id, onDirectory, subscribe]);
 
   useEffect(() => {
-    active.current = connected;
-    if (connected && terminal.current) {
+    active.current = connected && visible && workspaceActive;
+    if (active.current && terminal.current) {
       fit.current?.fit();
-      void window.sshdrop.resize({ cols: terminal.current.cols, rows: terminal.current.rows });
-      terminal.current.focus();
+      void api.resize({
+        cols: terminal.current.cols,
+        rows: terminal.current.rows,
+        terminalId: id,
+      });
     }
-  }, [connected]);
+  }, [api, connected, id, visible, workspaceActive]);
 
-  return <div className="terminal-surface" ref={element} aria-label="Remote SSH terminal" />;
+  return (
+    <div
+      className="terminal-surface"
+      ref={element}
+      aria-label="Remote SSH terminal"
+      hidden={!visible}
+      role={id ? 'tabpanel' : undefined}
+      id={id ? `terminal-panel-${id}` : undefined}
+      aria-labelledby={id ? `terminal-tab-${id}` : undefined}
+    />
+  );
 }

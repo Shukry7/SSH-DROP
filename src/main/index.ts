@@ -52,6 +52,7 @@ import {
   acceptEditorReviewSchema,
 } from '../shared/editor';
 import { readWorkflowImport, writeWorkflowExport } from './core/workflow-library';
+import { openImageSchema, imageRequestSchema } from '../shared/image-preview';
 import { renderWorkflow, workflowSchema, workflowValuesSchema } from '../shared/workflows';
 import { IdleProtection } from './core/idle-protection';
 import { IdleSettingsStore } from './core/idle-settings';
@@ -61,8 +62,54 @@ import { portableExportRequest, portablePassphrase } from '../shared/validation'
 import { openPortable, sealPortable, writePortableCopy } from './core/portable-backup';
 
 let window: BrowserWindow | undefined;
-let session: Session | undefined;
-const keys = new Map<string, string>();
+const primaryWorkspace = 'primary';
+type WorkflowPreview = {
+  token: string;
+  expires: number;
+  definition: string;
+  id: string;
+  check: () => void;
+  server: string;
+  plan: ReturnType<typeof renderWorkflow>;
+};
+interface Workspace {
+  id: string;
+  number: number;
+  server?: string;
+  session: Session;
+  keys: Map<string, string>;
+  lifetime: AbortController;
+  pendingConnection?: AbortController;
+  preview?: WorkflowPreview;
+  previewTimer?: ReturnType<typeof setTimeout>;
+  confirmingWorkflow?: string;
+}
+const workspaces = new Map<string, Workspace>();
+let workspaceNumber = 0;
+let createWorkspace: (id: string) => Workspace;
+const requestWorkspace = new AsyncLocalStorage<Workspace | undefined>();
+function currentWorkspace(): Workspace {
+  const workspace = requestWorkspace.getStore();
+  if (!workspace || workspaces.get(workspace.id) !== workspace)
+    throw new Error('This connection tab is closed.');
+  return workspace;
+}
+function discardPreview(workspace: Workspace) {
+  workspace.preview = undefined;
+  if (workspace.previewTimer) clearTimeout(workspace.previewTimer);
+  workspace.previewTimer = undefined;
+}
+function closeWorkspace(workspace: Workspace) {
+  workspaces.delete(workspace.id);
+  workspace.lifetime.abort();
+  workspace.pendingConnection?.abort(new Error('Connection attempt cancelled.'));
+  discardPreview(workspace);
+  workspace.keys.clear();
+  workspace.session.disconnect();
+}
+function closeAllWorkspaces() {
+  for (const workspace of workspaces.values()) closeWorkspace(workspace);
+}
 let protection: IdleProtection;
 let idleStore: IdleSettingsStore;
 let idleSettingsError: string | undefined;
@@ -84,6 +131,7 @@ const protectionControls = new Set<string>([
 ]);
 function checkOperation(): void {
   operationLease.getStore()?.();
+  if (requestWorkspace.getStore()) currentWorkspace();
   protection.assertActive();
 }
 async function messageBox(options: MessageBoxOptions) {
@@ -91,10 +139,17 @@ async function messageBox(options: MessageBoxOptions) {
   const controller = new AbortController();
   nativeWarnings.add(controller);
   try {
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, controller.signal])
-      : controller.signal;
-    const result = await dialog.showMessageBox(window!, { ...options, signal });
+    const workspace = requestWorkspace.getStore();
+    const signal = AbortSignal.any([
+      controller.signal,
+      ...(options.signal ? [options.signal] : []),
+      ...(workspace ? [workspace.lifetime.signal] : []),
+    ]);
+    const detail =
+      workspace && workspaces.size > 1
+        ? `Connection ${workspace.number}${workspace.server ? ` · ${workspace.server}` : ''}\n\n${options.detail ?? ''}`
+        : options.detail;
+    const result = await dialog.showMessageBox(window!, { ...options, detail, signal });
     signal.throwIfAborted();
     checkOperation();
     return result;
@@ -147,15 +202,31 @@ function trustedSender(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>
 }
 
 function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | T): void {
-  ipcMain.handle(channel, async (event, value): Promise<Result<T>> => {
+  ipcMain.handle(channel, async (event, value, workspaceId): Promise<Result<T>> => {
     try {
       trustedSender(event);
       const lease = protectionControls.has(channel) ? undefined : protection.lease();
-      return await operationLease.run(lease ?? (() => undefined), async () => {
-        const result = await operation(value);
-        lease?.();
-        return { ok: true, value: result };
-      });
+      const id =
+        workspaceId === undefined ? primaryWorkspace : z.string().uuid().parse(workspaceId);
+      const workspace = workspaces.get(id);
+      if (workspaceId !== undefined && !workspace)
+        throw new Error('This connection tab is closed.');
+      const owner = window;
+      return await requestWorkspace.run(workspace, () =>
+        operationLease.run(lease ?? (() => undefined), async () => {
+          const result = await operation(value);
+          lease?.();
+          if (
+            channel !== channels.idleEnd &&
+            (window !== owner ||
+              (workspace &&
+                workspaces.get(id) !== workspace &&
+                channel !== channels.closeWorkspace))
+          )
+            throw new Error('The workspace changed.');
+          return { ok: true, value: result };
+        }),
+      );
     } catch (error) {
       return {
         ok: false,
@@ -170,11 +241,11 @@ function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | 
   });
 }
 
-function publish(event: SessionEvent): void {
+function publish(event: SessionEvent, workspace?: Workspace): void {
   if (event.type !== 'idle' && protection?.snapshot().phase === 'shielded') return;
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) {
     try {
-      window.webContents.send(channels.event, event);
+      window.webContents.send(channels.event, event, workspace?.id);
     } catch {
       /* Closing a renderer must not prevent session cleanup. */
     }
@@ -242,32 +313,34 @@ function registerAPI(): void {
   };
   const profiles = new ProfileStore(join(app.getPath('userData'), 'profiles.json'));
   const workflows = new WorkflowStore(join(app.getPath('userData'), 'workflows.json'));
-  let preview:
-    | {
-        token: string;
-        expires: number;
-        definition: string;
-        id: string;
-        check: () => void;
-        server: string;
-        plan: ReturnType<typeof renderWorkflow>;
-      }
-    | undefined;
-  let confirmingWorkflow: string | undefined;
-  let previewTimer: ReturnType<typeof setTimeout> | undefined;
-  let pendingConnection: AbortController | undefined;
-  const discardPreview = () => {
-    preview = undefined;
-    if (previewTimer) clearTimeout(previewTimer);
-    previewTimer = undefined;
-  };
   discardPendingRequests = () => {
-    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
-    pendingConnection = undefined;
     choosingFiles = undefined;
-    confirmingWorkflow = undefined;
-    discardPreview();
   };
+  handle(channels.createWorkspace, (value) => {
+    z.undefined().parse(value);
+    if (workspaces.size >= 4) throw new Error('Close a connection tab before opening another.');
+    const workspace = createWorkspace(randomUUID());
+    return { id: workspace.id, number: workspace.number };
+  });
+  handle(channels.closeWorkspace, async (value) => {
+    z.undefined().parse(value);
+    const workspace = currentWorkspace();
+    if (workspaces.size === 1) throw new Error('Keep at least one connection tab open.');
+    const approval = await messageBox({
+      type: 'warning',
+      title: 'Close connection tab',
+      message: 'Disconnect and close this connection tab?',
+      detail: 'Unsaved drafts will be lost. Running transfers and workflows may be interrupted.',
+      buttons: ['Cancel', 'Close connection'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (approval.response !== 1) return false;
+    if (workspaces.size === 1) throw new Error('Keep at least one connection tab open.');
+    closeWorkspace(workspace);
+    return true;
+  });
   const workflowId = z.string().uuid();
   handle(channels.workflows, (value) => {
     z.undefined().parse(value);
@@ -342,7 +415,7 @@ function registerAPI(): void {
         throw new Error('Workflow was not saved. Confirmation remains unchanged.');
     }
     const saved = await workflows.save(w);
-    discardPreview();
+    discardPreview(currentWorkspace());
     return saved;
   });
   handle(channels.deleteWorkflow, async (value) => {
@@ -362,18 +435,19 @@ function registerAPI(): void {
     });
     if (result.response === 1) {
       await workflows.delete(id);
-      discardPreview();
+      discardPreview(currentWorkspace());
     }
   });
   handle(channels.previewWorkflow, async (value) => {
     const input = z.object({ id: workflowId, values: workflowValuesSchema }).strict().parse(value);
-    const context = session!.workflowContext();
+    const workspace = currentWorkspace();
+    const context = workspace.session.workflowContext();
     const w = (await workflows.list()).find((w) => w.id === input.id);
     if (!w) throw new Error('Workflow not found.');
     context.check();
     const plan = renderWorkflow(w, input.values);
-    discardPreview();
-    preview = {
+    discardPreview(currentWorkspace());
+    const preview = {
       id: w.id,
       definition: JSON.stringify(w),
       token: randomUUID(),
@@ -382,21 +456,23 @@ function registerAPI(): void {
       server: context.server,
       plan,
     };
-    previewTimer = setTimeout(discardPreview, 300000);
+    workspace.preview = preview;
+    workspace.previewTimer = setTimeout(() => discardPreview(workspace), 300000);
     return { token: preview.token, server: preview.server, plan };
   });
   handle(channels.runWorkflow, async (value) => {
     const token = workflowId.parse(value);
-    const approved = preview;
+    const workspace = currentWorkspace();
+    const approved = workspace.preview;
     if (
-      confirmingWorkflow ||
+      workspace.confirmingWorkflow ||
       !approved ||
       approved.token !== token ||
       Date.now() > approved.expires
     )
       throw new Error('Preview expired or changed. Review the workflow again.');
-    discardPreview();
-    confirmingWorkflow = token;
+    discardPreview(currentWorkspace());
+    workspace.confirmingWorkflow = token;
     try {
       approved.check();
       if (
@@ -425,28 +501,33 @@ function registerAPI(): void {
       )
         throw new Error('Workflow changed or preview expired. Review again.');
       approved.check();
-      void session!.executeWorkflow(approved.plan, token).catch(() => {
+      void workspace.session.executeWorkflow(approved.plan, token).catch(() => {
         try {
           approved.check();
-          publish({
-            type: 'workflow',
-            update: {
-              id: token,
-              step: 0,
-              status: 'failed',
-              message: 'Could not start workflow. Finish active operations, then review again.',
+          publish(
+            {
+              type: 'workflow',
+              update: {
+                id: token,
+                step: 0,
+                status: 'failed',
+                message: 'Could not start workflow. Finish active operations, then review again.',
+              },
             },
-          });
+            workspace,
+          );
         } catch {
           /* Old connection is discarded. */
         }
       });
       return true;
     } finally {
-      if (confirmingWorkflow === token) confirmingWorkflow = undefined;
+      if (workspace.confirmingWorkflow === token) workspace.confirmingWorkflow = undefined;
     }
   });
-  handle(channels.stopWorkflow, (value) => session!.stopWorkflow(workflowId.parse(value)));
+  handle(channels.stopWorkflow, (value) =>
+    currentWorkspace().session.stopWorkflow(workflowId.parse(value)),
+  );
   handle(channels.info, () => ({
     name: 'SSHDrop',
     version: app.getVersion(),
@@ -460,8 +541,8 @@ function registerAPI(): void {
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const id = randomUUID();
-    keys.clear();
-    keys.set(id, result.filePaths[0]);
+    currentWorkspace().keys.clear();
+    currentWorkspace().keys.set(id, result.filePaths[0]);
     return { id, name: basename(result.filePaths[0]) };
   });
   handle(channels.profiles, (value) => {
@@ -470,7 +551,7 @@ function registerAPI(): void {
   });
   handle(channels.saveProfile, async (value) => {
     const { keyId, ...details } = profileInputSchema.parse(value);
-    const keyPath = keyId ? keys.get(keyId) : undefined;
+    const keyPath = keyId ? currentWorkspace().keys.get(keyId) : undefined;
     if (details.auth === 'key' && !keyPath) throw new Error('Select your private key again.');
     return profiles.save({ ...details, ...(keyPath ? { keyPath } : {}) });
   });
@@ -480,8 +561,8 @@ function registerAPI(): void {
     let key = null;
     if (keyPath) {
       const id = randomUUID();
-      keys.clear();
-      keys.set(id, keyPath);
+      currentWorkspace().keys.clear();
+      currentWorkspace().keys.set(id, keyPath);
       key = { id, name: basename(keyPath) };
     }
     return { profile, key };
@@ -506,15 +587,17 @@ function registerAPI(): void {
   });
   handle(channels.connect, async (value) => {
     const input = connectionSchema.parse(value);
-    if (pendingConnection) throw new Error('A connection attempt is already in progress.');
-    const owner = session!;
+    const workspace = currentWorkspace();
+    if (workspace.pendingConnection)
+      throw new Error('A connection attempt is already in progress.');
+    const owner = currentWorkspace().session;
     const ownerWindow = window;
     const attempt = new AbortController();
-    pendingConnection = attempt;
+    workspace.pendingConnection = attempt;
     let privateKey: Buffer | undefined;
     try {
       if (input.auth === 'key') {
-        const file = keys.get(input.keyId!);
+        const file = currentWorkspace().keys.get(input.keyId!);
         if (!file) throw new Error('Select your private key again.');
         const handle = await open(file, 'r').catch(() => {
           throw new Error(
@@ -538,8 +621,14 @@ function registerAPI(): void {
       }
       checkOperation();
       attempt.signal.throwIfAborted();
-      if (session !== owner || window !== ownerWindow || !ownerWindow || ownerWindow.isDestroyed())
+      if (
+        workspaces.get(workspace.id) !== workspace ||
+        window !== ownerWindow ||
+        !ownerWindow ||
+        ownerWindow.isDestroyed()
+      )
         throw new Error('The workspace changed. Connect again.');
+      workspace.server = `${input.username}@${input.host}:${input.port}`;
       return await owner.connect(
         {
           host: input.host,
@@ -553,26 +642,30 @@ function registerAPI(): void {
       );
     } finally {
       privateKey?.fill(0);
-      if (pendingConnection === attempt) pendingConnection = undefined;
+      if (workspace.pendingConnection === attempt) workspace.pendingConnection = undefined;
     }
   });
   handle(channels.cancelConnect, (value) => {
+    const workspace = currentWorkspace();
     z.undefined().parse(value);
-    if (!pendingConnection) throw new Error('No connection attempt is in progress.');
-    pendingConnection.abort(new Error('Connection attempt cancelled.'));
+    if (!workspace.pendingConnection) throw new Error('No connection attempt is in progress.');
+    workspace.pendingConnection.abort(new Error('Connection attempt cancelled.'));
   });
   handle(channels.disconnect, () => {
-    pendingConnection?.abort(new Error('Connection attempt cancelled.'));
-    discardPreview();
-    session!.disconnect();
-    publish({ type: 'status', connected: false, message: 'Disconnected.' });
+    const workspace = currentWorkspace();
+    workspace.pendingConnection?.abort(new Error('Connection attempt cancelled.'));
+    discardPreview(currentWorkspace());
+    currentWorkspace().session.disconnect();
+    publish({ type: 'status', connected: false, message: 'Disconnected.' }, workspace);
   });
-  handle(channels.list, (value) => session!.list(remotePathSchema.parse(value)));
+  handle(channels.list, (value) => currentWorkspace().session.list(remotePathSchema.parse(value)));
   handle(channels.recovery, (value) => {
     z.undefined().parse(value);
-    return session!.recovery();
+    return currentWorkspace().session.recovery();
   });
-  handle(channels.recover, (value) => session!.recover(recoveryActionSchema.parse(value)));
+  handle(channels.recover, (value) =>
+    currentWorkspace().session.recover(recoveryActionSchema.parse(value)),
+  );
   // Keep the memory-hard KDF serialized even if the renderer is replaced mid-operation.
   let portableBusy = false;
   const portableOperation = async <T>(operation: (check: () => void) => Promise<T>) => {
@@ -591,7 +684,7 @@ function registerAPI(): void {
   handle(channels.exportBackup, async (value) => {
     const { id, passphrase } = portableExportRequest.parse(value);
     const owner = window;
-    return session!.withBackupExport(id, async (record, store, connection) => {
+    return currentWorkspace().session.withBackupExport(id, async (record, store, connection) => {
       if (record.previous.size > portableBackupLimit)
         throw new Error('Portable export supports backups up to 32 MiB.');
       return selectFiles(async () => {
@@ -678,7 +771,7 @@ function registerAPI(): void {
     });
   });
   handle(channels.fileAction, (value) =>
-    session!.changeFile(fileActionSchema.parse(value), async (warning) => {
+    currentWorkspace().session.changeFile(fileActionSchema.parse(value), async (warning) => {
       const result = await messageBox({
         type:
           warning.button === 'Delete permanently' ||
@@ -699,27 +792,79 @@ function registerAPI(): void {
   );
   handle(channels.openEditor, async (value) => {
     const { directory, name } = openEditorSchema.parse(value);
-    return session!.editText({ path: childPath(directory, name) });
+    return currentWorkspace().session.editText({ path: childPath(directory, name) });
   });
-  handle(channels.saveEditor, (value) => session!.editText(saveEditorSchema.parse(value)));
+  handle(channels.openImage, (value) => {
+    const { directory, name, requestId } = openImageSchema.parse(value);
+    return currentWorkspace().session.previewImage(childPath(directory, name), requestId);
+  });
+  handle(channels.cancelImage, (value) =>
+    currentWorkspace().session.cancelImage(imageRequestSchema.parse(value)),
+  );
+  handle(channels.saveEditor, (value) =>
+    currentWorkspace().session.editText(saveEditorSchema.parse(value)),
+  );
+  handle(channels.closeEditor, (value) =>
+    currentWorkspace().session.closeEditor(editorTokenSchema.parse(value)),
+  );
   handle(channels.compareEditor, (value) =>
-    session!.editText({ token: editorTokenSchema.parse(value), compare: true }),
+    currentWorkspace().session.editText({ token: editorTokenSchema.parse(value), compare: true }),
   );
   handle(channels.acceptEditorReview, (value) =>
-    session!.editText(acceptEditorReviewSchema.parse(value)),
+    currentWorkspace().session.editText(acceptEditorReviewSchema.parse(value)),
   );
-  handle(channels.input, (value) => session!.input(terminalInputSchema.parse(value)));
+  handle(channels.openTerminal, (value) => {
+    z.undefined().parse(value);
+    return currentWorkspace().session.openTerminal();
+  });
+  handle(channels.openTerminalEditor, (value) => {
+    const { directory, name } = openEditorSchema.parse(value);
+    const path = childPath(directory, name);
+    if (Buffer.byteLength(path) > 4096) throw new Error('The remote path is too long.');
+    return currentWorkspace().session.openTerminal({
+      path,
+      choose: async (signal) => {
+        const { response } = await messageBox({
+          type: 'warning',
+          title: 'Edit in terminal',
+          message: 'Open this remote file in a terminal editor?',
+          detail: `${path}\n\nNano and Vim write directly to the server. SSHDrop’s verified save checks and recovery backups do not apply.\n\nChoose an editor installed on the server.`,
+          buttons: ['Cancel', 'Open Nano', 'Open Vim'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          signal,
+        });
+        return response === 1 ? 'nano' : response === 2 ? 'vim' : undefined;
+      },
+    });
+  });
+  handle(channels.closeTerminal, (value) =>
+    currentWorkspace().session.closeTerminal(z.string().uuid().parse(value)),
+  );
+  handle(channels.input, (value) => {
+    const { data, terminalId } = z
+      .object({
+        data: terminalInputSchema,
+        terminalId: z.string().uuid().optional(),
+      })
+      .strict()
+      .parse(value);
+    currentWorkspace().session.input(data, terminalId);
+  });
   handle(channels.acknowledge, (value) =>
-    session!.acknowledge(z.number().int().positive().parse(value)),
+    currentWorkspace().session.acknowledge(z.number().int().positive().parse(value)),
   );
   handle(channels.resize, (value) => {
     const size = terminalSizeSchema.parse(value);
-    session!.resize(size.cols, size.rows);
+    currentWorkspace().session.resize(size.cols, size.rows, size.terminalId);
   });
-  handle(channels.cancel, (value) => session!.cancel(transferIdSchema.parse(value)));
+  handle(channels.cancel, (value) =>
+    currentWorkspace().session.cancel(transferIdSchema.parse(value)),
+  );
   handle(channels.resumeQueue, async (value) => {
     z.undefined().parse(value);
-    await session!.resumeQueue(
+    await currentWorkspace().session.resumeQueue(
       async () =>
         (
           await messageBox({
@@ -739,7 +884,7 @@ function registerAPI(): void {
   handle(channels.upload, (value) =>
     selectFiles(async () => {
       const directory = remotePathSchema.parse(value);
-      const lease = session!.lease();
+      const lease = currentWorkspace().session.lease();
       const result = await openDialog({
         title: 'Upload file',
         properties: ['openFile', 'multiSelections'],
@@ -748,7 +893,7 @@ function registerAPI(): void {
       if (!result.canceled && result.filePaths.length > 100)
         throw new Error('Select at most 100 files per upload batch.');
       if (!result.canceled && result.filePaths.length)
-        session!.enqueue(
+        currentWorkspace().session.enqueue(
           result.filePaths.map((local) => ({
             direction: 'upload',
             local,
@@ -759,7 +904,7 @@ function registerAPI(): void {
   );
   handle(channels.dropUpload, (value) =>
     selectFiles(async () => {
-      const owner = session!;
+      const owner = currentWorkspace().session;
       const lease = owner.lease();
       const { directory, jobs } = await inspectDroppedFiles(value);
       lease();
@@ -796,7 +941,7 @@ function registerAPI(): void {
   handle(channels.uploadFolder, (value) =>
     selectFiles(async () => {
       const directory = actionDirectorySchema.parse(value);
-      const lease = session!.lease();
+      const lease = currentWorkspace().session.lease();
       const result = await openDialog({
         title: 'Choose upload folder',
         properties: ['openDirectory'],
@@ -807,13 +952,13 @@ function registerAPI(): void {
       const remote = childPath(directory, folderName(basename(local)));
       if (!(await confirmFolder(local, remote))) return;
       lease();
-      session!.enqueue([{ direction: 'upload', local, remote, folder: true }]);
+      currentWorkspace().session.enqueue([{ direction: 'upload', local, remote, folder: true }]);
     }),
   );
   handle(channels.downloadFolder, (value) =>
     selectFiles(async () => {
       const remote = downloadSelectionSchema.parse([value])[0];
-      const lease = session!.lease();
+      const lease = currentWorkspace().session.lease();
       const result = await openDialog({
         title: 'Choose parent folder for download',
         properties: ['openDirectory'],
@@ -824,13 +969,13 @@ function registerAPI(): void {
       const local = join(result.filePaths[0], name);
       if (!(await confirmFolder(remote, local))) return;
       lease();
-      session!.enqueue([{ direction: 'download', local, remote, folder: true }]);
+      currentWorkspace().session.enqueue([{ direction: 'download', local, remote, folder: true }]);
     }),
   );
   handle(channels.download, (value) =>
     selectFiles(async () => {
       const remote = remotePathSchema.parse(value);
-      const lease = session!.lease();
+      const lease = currentWorkspace().session.lease();
       const result = await saveDialog({
         title: 'Download file',
         defaultPath: remote.split('/').pop(),
@@ -838,23 +983,28 @@ function registerAPI(): void {
       });
       lease();
       if (!result.canceled && result.filePath)
-        session!.enqueue([{ direction: 'download', local: result.filePath, remote }]);
+        currentWorkspace().session.enqueue([
+          { direction: 'download', local: result.filePath, remote },
+        ]);
     }),
   );
   handle(channels.downloadMany, (value) =>
     selectFiles(async () => {
       const paths = downloadSelectionSchema.parse(value);
-      const lease = session!.lease();
+      const lease = currentWorkspace().session.lease();
       const result = await openDialog({
         title: 'Choose download folder',
         properties: ['openDirectory'],
       });
       lease();
       if (!result.canceled && result.filePaths[0])
-        session!.enqueue(downloadSelection(result.filePaths[0], paths));
+        currentWorkspace().session.enqueue(downloadSelection(result.filePaths[0], paths));
     }),
   );
 }
+
+let recoveryStore: RecoveryStore;
+let hostTrust: HostTrust | undefined;
 
 function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: boolean }): void {
   Menu.setApplicationMenu(null);
@@ -890,7 +1040,7 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
   createdWindow.webContents.on('before-mouse-event', (_event, input) => {
     if (['mouseDown', 'mouseWheel'].includes(input.type)) protection.activity();
   });
-  const trust = new HostTrust(
+  const trust = (hostTrust ??= new HostTrust(
     join(app.getPath('userData'), 'known-hosts.json'),
     async ({ host, port, fingerprint }, signal) => {
       const result = await messageBox({
@@ -906,34 +1056,42 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
       });
       return result.response === 1;
     },
-  );
-  const createdSession = new Session(
-    trust,
-    (event) => {
-      if (session === createdSession) publish(event);
-    },
-    undefined,
-    {
-      store: new RecoveryStore(
-        join(app.getPath('userData'), 'backups'),
-        new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
+  ));
+  createWorkspace = (id) => {
+    const workspace: Workspace = {
+      id,
+      number: ++workspaceNumber,
+      lifetime: new AbortController(),
+      keys: new Map(),
+      session: new Session(
+        trust,
+        (event) => {
+          if (workspaces.get(id) === workspace) publish(event, workspace);
+        },
+        undefined,
+        {
+          store: recoveryStore,
+          confirm: async (approval) => {
+            const result = await messageBox({
+              type: 'warning',
+              title: approval.title,
+              message: approval.title,
+              detail: approval.detail,
+              buttons: approval.buttons,
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true,
+            });
+            return result.response;
+          },
+        },
       ),
-      confirm: async (approval) => {
-        const result = await messageBox({
-          type: 'warning',
-          title: approval.title,
-          message: approval.title,
-          detail: approval.detail,
-          buttons: approval.buttons,
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-        return result.response;
-      },
-    },
-  );
-  session = createdSession;
+    };
+    workspaces.set(id, workspace);
+    return workspace;
+  };
+  workspaceNumber = 0;
+  createWorkspace(primaryWorkspace);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   let askingToDiscard = false;
@@ -943,8 +1101,8 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
     void messageBox({
       type: 'warning',
       title: 'Unsaved editor changes',
-      message: 'Discard the editor draft and close SSHDrop?',
-      detail: 'The draft is held in memory and has not been saved to the server.',
+      message: 'Discard unsaved editor changes and close SSHDrop?',
+      detail: 'Any unsaved changes in open tabs will be lost.',
       buttons: ['Keep editing', 'Discard and close'],
       defaultId: 0,
       cancelId: 0,
@@ -963,8 +1121,10 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
   );
   window.webContents.session.setPermissionCheckHandler(() => false);
   window.on('closed', () => {
-    createdSession.disconnect();
-    keys.clear();
+    if (window === createdWindow) {
+      discardPendingRequests();
+      closeAllWorkspaces();
+    }
     if (window === createdWindow) window = undefined;
   });
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL)
@@ -1032,8 +1192,7 @@ void app.whenReady().then(async () => {
     () => {
       discardPendingRequests();
       for (const controller of nativeWarnings) controller.abort();
-      session?.disconnect();
-      keys.clear();
+      closeAllWorkspaces();
       const old = window;
       if (!old || old.isDestroyed()) return;
       const reset = {
@@ -1056,6 +1215,10 @@ void app.whenReady().then(async () => {
   powerMonitor.on('lock-screen', () => protection.systemEvent('os-lock'));
   powerMonitor.on('suspend', () => protection.systemEvent('sleep'));
   powerMonitor.on('resume', () => protection.tick());
+  recoveryStore = new RecoveryStore(
+    join(app.getPath('userData'), 'backups'),
+    new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
+  );
   registerAPI();
   createWindow();
   app.on('activate', () => {

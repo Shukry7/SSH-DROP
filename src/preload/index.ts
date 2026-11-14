@@ -10,8 +10,9 @@ const activity = (event: Event) => {
 for (const name of ['keydown', 'pointerdown', 'wheel'])
   window.addEventListener(name, activity, { capture: true, passive: true });
 
-const dropErrors = new Set<(error: string) => void>();
-const reportDropError = (error: string) => dropErrors.forEach((listener) => listener(error));
+const dropErrors = new Map<string | undefined, Set<(error: string) => void>>();
+const reportDropError = (workspace: string | undefined, error: string) =>
+  dropErrors.get(workspace)?.forEach((listener) => listener(error));
 
 window.addEventListener(
   'dragover',
@@ -31,81 +32,103 @@ window.addEventListener(
       .closest('[data-sshdrop-upload-directory]')
       ?.getAttribute('data-sshdrop-upload-directory');
     if (!directory) return;
+    const workspace =
+      event.target.closest('[data-sshdrop-workspace]')?.getAttribute('data-sshdrop-workspace') ||
+      undefined;
     activity(event);
     if (transfer.files.length < 1 || transfer.files.length > 100) {
-      reportDropError('Drop between 1 and 100 files.');
+      reportDropError(workspace, 'Drop between 1 and 100 files.');
       return;
     }
     // Paths come only from the native drop in this isolated world and never cross the public bridge.
     const files = Array.from(transfer.files, (file) => webUtils.getPathForFile(file));
     if (files.some((file) => !file)) {
-      reportDropError('Drop files from your file manager or use Upload files.');
+      reportDropError(workspace, 'Drop files from your file manager or use Upload files.');
       return;
     }
-    reportDropError('');
-    void ipcRenderer.invoke(channels.dropUpload, { directory, files }).then(
+    reportDropError(workspace, '');
+    void ipcRenderer.invoke(channels.dropUpload, { directory, files }, workspace).then(
       (result: Result<void>) => {
-        if (!result.ok) reportDropError(result.error);
+        if (!result.ok) reportDropError(workspace, result.error);
       },
-      () => reportDropError('Could not review the dropped files.'),
+      () => reportDropError(workspace, 'Could not review the dropped files.'),
     );
   },
   true,
 );
 
-const api: DesktopAPI = {
-  exportBackup: (value) => ipcRenderer.invoke(channels.exportBackup, value),
-  openBackup: (passphrase) => ipcRenderer.invoke(channels.openBackup, passphrase),
-  idleStatus: () => ipcRenderer.invoke(channels.idleStatus),
-  idleSettings: (value) => ipcRenderer.invoke(channels.idleSettings, value),
-  idleStayActive: () => ipcRenderer.invoke(channels.idleStayActive),
-  idleEnd: () => ipcRenderer.invoke(channels.idleEnd),
-  idleReturn: () => ipcRenderer.invoke(channels.idleReturn),
-  workflows: () => ipcRenderer.invoke(channels.workflows),
-  importWorkflow: () => ipcRenderer.invoke(channels.importWorkflow),
-  exportWorkflow: (id) => ipcRenderer.invoke(channels.exportWorkflow, id),
-  saveWorkflow: (value) => ipcRenderer.invoke(channels.saveWorkflow, value),
-  deleteWorkflow: (id) => ipcRenderer.invoke(channels.deleteWorkflow, id),
-  previewWorkflow: (value) => ipcRenderer.invoke(channels.previewWorkflow, value),
-  runWorkflow: (token) => ipcRenderer.invoke(channels.runWorkflow, token),
-  stopWorkflow: (id) => ipcRenderer.invoke(channels.stopWorkflow, id),
-  info: () => ipcRenderer.invoke(channels.info),
-  chooseKey: () => ipcRenderer.invoke(channels.chooseKey),
-  profiles: () => ipcRenderer.invoke(channels.profiles),
-  saveProfile: (input) => ipcRenderer.invoke(channels.saveProfile, input),
-  loadProfile: (id) => ipcRenderer.invoke(channels.loadProfile, id),
-  deleteProfile: (id) => ipcRenderer.invoke(channels.deleteProfile, id),
-  connect: (input) => ipcRenderer.invoke(channels.connect, input),
-  cancelConnect: () => ipcRenderer.invoke(channels.cancelConnect),
-  disconnect: () => ipcRenderer.invoke(channels.disconnect),
-  list: (path) => ipcRenderer.invoke(channels.list, path),
-  fileAction: (input) => ipcRenderer.invoke(channels.fileAction, input),
-  openEditor: (input) => ipcRenderer.invoke(channels.openEditor, input),
-  saveEditor: (input) => ipcRenderer.invoke(channels.saveEditor, input),
-  compareEditor: (token) => ipcRenderer.invoke(channels.compareEditor, token),
-  acceptEditorReview: (input) => ipcRenderer.invoke(channels.acceptEditorReview, input),
-  recovery: () => ipcRenderer.invoke(channels.recovery),
-  recover: (input) => ipcRenderer.invoke(channels.recover, input),
-  upload: (directory) => ipcRenderer.invoke(channels.upload, directory),
-  uploadFolder: (directory) => ipcRenderer.invoke(channels.uploadFolder, directory),
-  downloadFolder: (path) => ipcRenderer.invoke(channels.downloadFolder, path),
-  download: (path) => ipcRenderer.invoke(channels.download, path),
-  downloadMany: (paths) => ipcRenderer.invoke(channels.downloadMany, paths),
-  resumeQueue: () => ipcRenderer.invoke(channels.resumeQueue),
-  cancel: (id) => ipcRenderer.invoke(channels.cancel, id),
-  input: (data) => ipcRenderer.invoke(channels.input, data),
-  acknowledge: (id) => ipcRenderer.invoke(channels.acknowledge, id),
-  resize: (size) => ipcRenderer.invoke(channels.resize, size),
-  onEvent: (listener) => {
-    const callback = (_event: IpcRendererEvent, value: SessionEvent) => listener(value);
-    ipcRenderer.on(channels.event, callback);
-    return () => ipcRenderer.removeListener(channels.event, callback);
-  },
-  onDropError: (listener) => {
-    dropErrors.add(listener);
-    return () => {
-      dropErrors.delete(listener);
-    };
-  },
-};
-contextBridge.exposeInMainWorld('sshdrop', api);
+function makeAPI(workspace?: string): DesktopAPI {
+  const invoke = (channel: string, value?: unknown) =>
+    ipcRenderer.invoke(channel, value, workspace);
+  return {
+    createWorkspace: () => invoke(channels.createWorkspace),
+    closeWorkspace: () => invoke(channels.closeWorkspace),
+    forWorkspace: (id) => makeAPI(id),
+    exportBackup: (value) => invoke(channels.exportBackup, value),
+    openBackup: (passphrase) => invoke(channels.openBackup, passphrase),
+    idleStatus: () => invoke(channels.idleStatus),
+    idleSettings: (value) => invoke(channels.idleSettings, value),
+    idleStayActive: () => invoke(channels.idleStayActive),
+    idleEnd: () => invoke(channels.idleEnd),
+    idleReturn: () => invoke(channels.idleReturn),
+    workflows: () => invoke(channels.workflows),
+    importWorkflow: () => invoke(channels.importWorkflow),
+    exportWorkflow: (id) => invoke(channels.exportWorkflow, id),
+    saveWorkflow: (value) => invoke(channels.saveWorkflow, value),
+    deleteWorkflow: (id) => invoke(channels.deleteWorkflow, id),
+    previewWorkflow: (value) => invoke(channels.previewWorkflow, value),
+    runWorkflow: (token) => invoke(channels.runWorkflow, token),
+    stopWorkflow: (id) => invoke(channels.stopWorkflow, id),
+    info: () => invoke(channels.info),
+    chooseKey: () => invoke(channels.chooseKey),
+    profiles: () => invoke(channels.profiles),
+    saveProfile: (input) => invoke(channels.saveProfile, input),
+    loadProfile: (id) => invoke(channels.loadProfile, id),
+    deleteProfile: (id) => invoke(channels.deleteProfile, id),
+    connect: (input) => invoke(channels.connect, input),
+    cancelConnect: () => invoke(channels.cancelConnect),
+    disconnect: () => invoke(channels.disconnect),
+    list: (path) => invoke(channels.list, path),
+    fileAction: (input) => invoke(channels.fileAction, input),
+    openEditor: (input) => invoke(channels.openEditor, input),
+    closeEditor: (token) => invoke(channels.closeEditor, token),
+    openImage: (input) => invoke(channels.openImage, input),
+    cancelImage: (requestId) => invoke(channels.cancelImage, requestId),
+    saveEditor: (input) => invoke(channels.saveEditor, input),
+    compareEditor: (token) => invoke(channels.compareEditor, token),
+    acceptEditorReview: (input) => invoke(channels.acceptEditorReview, input),
+    recovery: () => invoke(channels.recovery),
+    recover: (input) => invoke(channels.recover, input),
+    upload: (directory) => invoke(channels.upload, directory),
+    uploadFolder: (directory) => invoke(channels.uploadFolder, directory),
+    downloadFolder: (path) => invoke(channels.downloadFolder, path),
+    download: (path) => invoke(channels.download, path),
+    downloadMany: (paths) => invoke(channels.downloadMany, paths),
+    resumeQueue: () => invoke(channels.resumeQueue),
+    cancel: (id) => invoke(channels.cancel, id),
+    openTerminal: () => invoke(channels.openTerminal),
+    openTerminalEditor: (input) => invoke(channels.openTerminalEditor, input),
+    closeTerminal: (terminalId) => invoke(channels.closeTerminal, terminalId),
+    input: (data, terminalId) => invoke(channels.input, { data, terminalId }),
+    acknowledge: (id) => invoke(channels.acknowledge, id),
+    resize: (size) => invoke(channels.resize, size),
+    onEvent: (listener) => {
+      const callback = (_event: IpcRendererEvent, value: SessionEvent, owner?: string) => {
+        if (owner === (workspace ?? 'primary') || (owner === undefined && value.type === 'idle'))
+          listener(value);
+      };
+      ipcRenderer.on(channels.event, callback);
+      return () => ipcRenderer.removeListener(channels.event, callback);
+    },
+    onDropError: (listener) => {
+      const listeners = dropErrors.get(workspace) ?? new Set();
+      dropErrors.set(workspace, listeners);
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) dropErrors.delete(workspace);
+      };
+    },
+  };
+}
+contextBridge.exposeInMainWorld('sshdrop', makeAPI());

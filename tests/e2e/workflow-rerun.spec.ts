@@ -40,7 +40,7 @@ test('run again reviews latest definitions, clears values and never bypasses con
     await expect(
       page.getByText('Maximum runtime per command (minutes, 1–120)', { exact: true }),
     ).toBeVisible();
-    await expect(page.locator('#workflow-timeout-help')).toContainText('not a delay');
+    await expect(page.getByText(/not a delay/)).toBeVisible();
     await page.getByRole('button', { name: 'Save workflow', exact: true }).click();
     await page.getByLabel('Variable message').fill('first value');
     await page.getByRole('button', { name: 'Preview workflow', exact: true }).click();

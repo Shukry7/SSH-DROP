@@ -1,31 +1,38 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
 import type { SFTPWrapper } from 'ssh2';
-import { editorLimit, type EditorDocument, type EditorComparison } from '../../shared/editor';
+import {
+  editorLimit,
+  editorTabLimit,
+  type EditorDocument,
+  type EditorComparison,
+} from '../../shared/editor';
 import { Replacements, equalFile, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
 import type { FileSnapshot, RecoveryStore, ServerIdentity } from './recovery-store';
 import { transferWait } from './transfer-wait';
 
-export class RemoteEditor {
-  private document?: {
+interface OpenDocument {
+  path: string;
+  snapshot: FileSnapshot;
+  crlf: boolean;
+  bom: boolean;
+  review?: {
     token: string;
-    path: string;
-    snapshot: FileSnapshot;
-    crlf: boolean;
-    bom: boolean;
-  };
-  private review?: {
-    token: string;
-    document: NonNullable<RemoteEditor['document']>;
     snapshot: FileSnapshot;
     crlf: boolean;
     bom: boolean;
     text: string;
   };
+}
+
+export class RemoteEditor {
+  private readonly documents = new Map<string, OpenDocument>();
   clear() {
-    this.document = undefined;
-    this.review = undefined;
+    this.documents.clear();
+  }
+  close(token: string) {
+    this.documents.delete(token);
   }
   async operate<T>(
     options: {
@@ -105,16 +112,22 @@ export class RemoteEditor {
     io: ReturnType<typeof replacementIO>,
     guard: (path: string) => Promise<void>,
   ): Promise<EditorDocument> {
+    const previous = [...this.documents].find(([, document]) => document.path === path);
+    if (!previous && this.documents.size >= editorTabLimit)
+      throw new Error('Close an editor tab before opening another file.');
     const { text, ...file } = await this.read(path, io, guard);
     const token = randomUUID();
-    this.document = { token, ...file };
-    this.review = undefined;
+    if (previous) this.close(previous[0]);
+    this.documents.set(token, file);
     return { token, path, text };
   }
   private current(token: string) {
-    if (!this.document || this.document.token !== token)
-      throw new Error('The editor belongs to an old session. Copy the draft and reopen the file.');
-    return this.document;
+    const document = this.documents.get(token);
+    if (!document)
+      throw new Error(
+        'The editor tab was closed or belongs to an old session. Copy the draft and reopen the file.',
+      );
+    return document;
   }
   async compare(
     token: string,
@@ -124,9 +137,9 @@ export class RemoteEditor {
     const document = this.current(token);
     const file = await this.read(document.path, io, guard);
     if (this.current(token) !== document) throw new Error('The editor session changed.');
-    this.review = { token: randomUUID(), document, ...file };
+    document.review = { token: randomUUID(), ...file };
     return {
-      reviewToken: this.review.token,
+      reviewToken: document.review.token,
       text: file.text,
       changed:
         !equalFile(file.snapshot, document.snapshot) ||
@@ -144,8 +157,8 @@ export class RemoteEditor {
     confirm: (approval: ReplacementApproval) => Promise<number>,
   ): Promise<EditorDocument | null> {
     const document = this.current(token);
-    const review = this.review;
-    if (!review || review.token !== reviewToken || review.document !== document)
+    const review = document.review;
+    if (!review || review.token !== reviewToken)
       throw new Error('This comparison is no longer current. Compare with the server again.');
     const approval = await confirm({
       title: 'Use reviewed remote version',
@@ -159,17 +172,16 @@ export class RemoteEditor {
       throw new Error(
         'The server changed again after the comparison. Refresh the comparison before continuing.',
       );
-    if (this.current(token) !== document || this.review !== review)
+    if (this.current(token) !== document || document.review !== review)
       throw new Error('The editor session changed.');
     const nextToken = randomUUID();
-    this.document = {
-      token: nextToken,
+    this.close(token);
+    this.documents.set(nextToken, {
       path: document.path,
       snapshot: review.snapshot,
       crlf: review.crlf,
       bom: review.bom,
-    };
-    this.review = undefined;
+    });
     return { token: nextToken, path: document.path, text: review.text };
   }
   async save(
@@ -197,7 +209,7 @@ export class RemoteEditor {
     };
     const check = () => {
       recovery.check();
-      if (this.document !== document) throw new Error('The editor session changed.');
+      if (this.current(token) !== document) throw new Error('The editor session changed.');
     };
     const verifyOriginal = async () => {
       check();
@@ -234,7 +246,7 @@ export class RemoteEditor {
         );
       check();
       document.snapshot = snapshot!;
-      this.review = undefined;
+      document.review = undefined;
     }
     return saved;
   }
