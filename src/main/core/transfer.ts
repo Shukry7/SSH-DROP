@@ -29,6 +29,7 @@ const metadata = (stats: Stats | LocalStats) => {
 
 export async function runTransfer(options: {
   beforePublish?: () => Promise<void>;
+  expectedSourceHash?: string;
   sourceFingerprint?: string;
   sftp: SFTPWrapper;
   direction: 'upload' | 'download';
@@ -345,6 +346,8 @@ export async function runTransfer(options: {
     publish();
     touch();
     const expected = sourceHash.digest('hex');
+    if (options.expectedSourceHash && options.expectedSourceHash !== expected)
+      throw new TransferFailure('The saved transfer source changed. Nothing was published.');
     const destinationHash = createHash('sha256');
     let verified = 0;
     let verification: Readable;

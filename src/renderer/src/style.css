@@ -824,6 +824,14 @@ input[type='checkbox'] {
   color: #9baec3;
   line-height: 1.6;
 }
+.saved-transfer {
+  padding: 12px 0;
+  border-top: 1px solid #344253;
+  overflow-wrap: anywhere;
+}
+.saved-transfer button + button {
+  margin-left: 8px;
+}
 .workflow-content label {
   display: block;
   margin: 12px 0;

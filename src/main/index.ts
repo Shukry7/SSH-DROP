@@ -1,3 +1,4 @@
+import { TransferRecovery } from './core/transfer-recovery';
 import {
   app,
   BrowserWindow,
@@ -881,6 +882,41 @@ function registerAPI(): void {
         ).response === 1,
     );
   });
+  handle(channels.transferMemory, (value) =>
+    currentWorkspace().session.setTransferMemory(z.boolean().parse(value)),
+  );
+  handle(channels.savedTransfers, (value) => {
+    z.undefined().parse(value);
+    return currentWorkspace().session.savedTransfers();
+  });
+  handle(channels.reviewSavedTransfer, (value) => {
+    const { id, action } = z
+      .object({ id: z.string().uuid(), action: z.enum(['retry', 'forget']) })
+      .strict()
+      .parse(value);
+    const retry = action === 'retry';
+    return currentWorkspace().session.reviewSavedTransfer(
+      id,
+      action,
+      async ({ direction, local, remote }) => {
+        const source = direction === 'upload' ? local : remote;
+        const destination = direction === 'upload' ? remote : local;
+        const approval = await messageBox({
+          type: 'warning',
+          title: retry ? 'Retry saved transfer' : 'Forget saved transfer',
+          message: retry
+            ? 'Retry this transfer from the beginning?'
+            : 'Remove this transfer from the recovery list?',
+          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination.' : 'This removes the local record only. Inspect any files left at the destination separately.'}`,
+          buttons: ['Cancel', retry ? 'Retry transfer' : 'Forget transfer'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+        return approval.response === 1;
+      },
+    );
+  });
   handle(channels.upload, (value) =>
     selectFiles(async () => {
       const directory = remotePathSchema.parse(value);
@@ -893,7 +929,7 @@ function registerAPI(): void {
       if (!result.canceled && result.filePaths.length > 100)
         throw new Error('Select at most 100 files per upload batch.');
       if (!result.canceled && result.filePaths.length)
-        currentWorkspace().session.enqueue(
+        await currentWorkspace().session.queueFiles(
           result.filePaths.map((local) => ({
             direction: 'upload',
             local,
@@ -921,7 +957,7 @@ function registerAPI(): void {
         noLink: true,
       });
       lease();
-      if (approval.response === 1) owner.enqueue(jobs);
+      if (approval.response === 1) await owner.queueFiles(jobs);
     }),
   );
   const confirmFolder = async (source: string, destination: string) =>
@@ -952,7 +988,9 @@ function registerAPI(): void {
       const remote = childPath(directory, folderName(basename(local)));
       if (!(await confirmFolder(local, remote))) return;
       lease();
-      currentWorkspace().session.enqueue([{ direction: 'upload', local, remote, folder: true }]);
+      await currentWorkspace().session.queueFiles([
+        { direction: 'upload', local, remote, folder: true },
+      ]);
     }),
   );
   handle(channels.downloadFolder, (value) =>
@@ -969,7 +1007,9 @@ function registerAPI(): void {
       const local = join(result.filePaths[0], name);
       if (!(await confirmFolder(remote, local))) return;
       lease();
-      currentWorkspace().session.enqueue([{ direction: 'download', local, remote, folder: true }]);
+      await currentWorkspace().session.queueFiles([
+        { direction: 'download', local, remote, folder: true },
+      ]);
     }),
   );
   handle(channels.download, (value) =>
@@ -983,7 +1023,7 @@ function registerAPI(): void {
       });
       lease();
       if (!result.canceled && result.filePath)
-        currentWorkspace().session.enqueue([
+        await currentWorkspace().session.queueFiles([
           { direction: 'download', local: result.filePath, remote },
         ]);
     }),
@@ -998,12 +1038,13 @@ function registerAPI(): void {
       });
       lease();
       if (!result.canceled && result.filePaths[0])
-        currentWorkspace().session.enqueue(downloadSelection(result.filePaths[0], paths));
+        await currentWorkspace().session.queueFiles(downloadSelection(result.filePaths[0], paths));
     }),
   );
 }
 
 let recoveryStore: RecoveryStore;
+let transferRecovery: TransferRecovery;
 let hostTrust: HostTrust | undefined;
 
 function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: boolean }): void {
@@ -1085,6 +1126,8 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
             return result.response;
           },
         },
+        undefined,
+        transferRecovery,
       ),
     };
     workspaces.set(id, workspace);
@@ -1218,6 +1261,12 @@ void app.whenReady().then(async () => {
   recoveryStore = new RecoveryStore(
     join(app.getPath('userData'), 'backups'),
     new BackupVault(join(app.getPath('userData'), 'backups'), osKeyProtection(safeStorage)),
+  );
+  transferRecovery = new TransferRecovery(
+    new BackupVault(
+      join(app.getPath('userData'), 'transfer-recovery'),
+      osKeyProtection(safeStorage),
+    ),
   );
   registerAPI();
   createWindow();

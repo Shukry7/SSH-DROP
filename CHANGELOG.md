@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.1] — Unreleased
+
+### Added
+
+- Opt-in encrypted recovery for individual queued transfers. Reconnect to the original verified server and account to review an interrupted transfer, retry it from the beginning into an empty destination, or forget its local record.
+
 ## [0.4.0-alpha.4] — Unreleased
 
 ### Added

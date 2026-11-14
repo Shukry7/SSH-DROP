@@ -24,6 +24,7 @@ import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
 import { Workflows } from './Workflows';
+import { SavedTransfers } from './SavedTransfers';
 import { EditorTabs, type EditorTab } from './EditorTabs';
 import { ImagePreview } from './ImagePreview';
 import { editorTabLimit } from '../../shared/editor-limits';
@@ -1044,6 +1045,7 @@ export function App({
             browse={(directory) => void run(() => browse(directory))}
           />
           <Workflows connected={connected} />
+          {filesReady && <SavedTransfers blocked={fileBusy} />}
           {transfers.length > 0 && (
             <section className="transfers panel" aria-label="File transfers">
               <div className="panel-heading">

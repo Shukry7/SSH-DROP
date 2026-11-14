@@ -26,3 +26,5 @@ recovery.json
 recovery.enc
 *.bak.enc
 backups/
+
+transfer-queue.enc

@@ -32,6 +32,11 @@ import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { runWorkflow } from './workflow-runner';
 import { shellQuote, type WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
+import {
+  TransferRecovery,
+  checkRecoverablePaths,
+  fingerprintRecoverableFile,
+} from './transfer-recovery';
 
 interface TerminalShell {
   channel: ClientChannel;
@@ -63,20 +68,15 @@ export class Session {
   private recoveryBusy = false;
   private workflow?: { id: string; controller: AbortController };
   private commandServer = '';
+  private rememberTransfers = false;
   private readonly editor = new RemoteEditor();
   private readonly queue = new TransferQueue(
-    (job) =>
-      this.transfer(
-        job.direction,
-        job.local,
-        job.remote,
-        undefined,
-        job.id,
-        job.folder,
-        job.sourceFingerprint,
-      ),
+    (job) => this.runQueuedTransfer(job),
     (transfer) => this.emit({ type: 'transfer', transfer }),
     (queue) => this.emit({ type: 'queue', queue }),
+    (job, cancelled) => {
+      if (job.recoveryId) void this.settleSavedTransfer(job.recoveryId, cancelled);
+    },
   );
 
   constructor(
@@ -88,6 +88,7 @@ export class Session {
       confirm: (approval: ReplacementApproval) => Promise<number>;
     },
     private readonly setupTimeout = 30000,
+    private readonly transferRecovery?: TransferRecovery,
   ) {}
 
   async connect(config: ConnectConfig, signal?: AbortSignal): Promise<{ sftp: boolean }> {
@@ -654,6 +655,139 @@ export class Session {
       throw new Error('Wait for the active file or recovery operation to finish.');
     this.queue.enqueue(files);
   }
+  setTransferMemory(enabled: boolean): void {
+    this.rememberTransfers = enabled;
+  }
+
+  async queueFiles(files: QueuedFile[]): Promise<void> {
+    if (!this.rememberTransfers || files.some((file) => file.folder)) return this.enqueue(files);
+    const store = this.savedTransferStore();
+    if (files.length > 8)
+      throw new Error('Queue up to eight files at a time with transfer recovery enabled.');
+    await this.withIdleTransferSlot(async (sftp, identity, signal) => {
+      const batch = [];
+      for (const file of this.queue.validate(files))
+        batch.push({ file, hash: await fingerprintRecoverableFile(sftp, file, signal) });
+      const records = await store.add(identity, batch);
+      try {
+        signal.throwIfAborted();
+        if (this.sftp !== sftp) throw new Error('The connection changed.');
+        this.queue.enqueue(
+          records.map((record) => ({
+            ...record.file,
+            recoveryId: record.id,
+            expectedSourceHash: record.hash,
+          })),
+          false,
+        );
+      } catch (error) {
+        for (const { id } of records) store.release(id);
+        throw error;
+      }
+    });
+  }
+
+  private savedTransferStore() {
+    if (!this.transferRecovery) throw new Error('Saved transfers are unavailable.');
+    return this.transferRecovery;
+  }
+
+  private async withIdleTransferSlot<T>(
+    action: (sftp: SFTPWrapper, identity: ServerIdentity, signal: AbortSignal) => Promise<T>,
+  ) {
+    const sftp = this.files();
+    const identity = this.identity;
+    if (
+      !identity ||
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error('Finish queued transfers and other file operations first.');
+    const controller = new AbortController();
+    this.fileAction = controller;
+    try {
+      return await action(sftp, identity, controller.signal);
+    } finally {
+      if (this.fileAction === controller) this.fileAction = undefined;
+      this.queue.start();
+    }
+  }
+
+  async savedTransfers() {
+    const check = this.lease();
+    const records = await this.savedTransferStore().list(this.identity!);
+    check();
+    return records;
+  }
+
+  async reviewSavedTransfer(
+    id: string,
+    action: 'retry' | 'forget',
+    confirm: (record: {
+      local: string;
+      remote: string;
+      direction: 'upload' | 'download';
+    }) => Promise<boolean>,
+  ) {
+    const store = this.savedTransferStore();
+    await this.withIdleTransferSlot(async (sftp, identity, signal) => {
+      const record = await store.claim(identity, id);
+      let queued = false;
+      try {
+        if (!(await confirm(record.file))) return;
+        signal.throwIfAborted();
+        if (this.sftp !== sftp) throw new Error('The connection changed.');
+        if (action === 'forget') return await store.finish(id);
+        if ((await fingerprintRecoverableFile(sftp, record.file, signal)) !== record.hash)
+          throw new Error('The saved transfer source changed. Select the file again.');
+        signal.throwIfAborted();
+        if (this.sftp !== sftp) throw new Error('The connection changed.');
+        this.queue.enqueue(
+          [{ ...record.file, recoveryId: id, expectedSourceHash: record.hash }],
+          false,
+        );
+        queued = true;
+      } finally {
+        if (!queued) store.release(id);
+      }
+    });
+  }
+
+  private async settleSavedTransfer(id: string, remove: boolean) {
+    if (!remove) return this.transferRecovery?.release(id);
+    try {
+      await this.transferRecovery?.finish(id);
+    } catch {
+      this.emit({
+        type: 'transfer-warning',
+        message:
+          'Could not clear a saved transfer. Inspect the destination before reviewing it again.',
+      });
+    }
+  }
+
+  private async runQueuedTransfer(job: import('./transfer-queue').QueuedJob) {
+    const sftp = this.sftp;
+    let finished = false;
+    try {
+      await this.transfer(
+        job.direction,
+        job.local,
+        job.remote,
+        undefined,
+        job.id,
+        job.folder,
+        job.sourceFingerprint,
+        job.expectedSourceHash,
+      );
+      finished = !!sftp && sftp === this.sftp;
+    } finally {
+      if (job.recoveryId) await this.settleSavedTransfer(job.recoveryId, finished);
+    }
+  }
   async resumeQueue(confirm: () => Promise<boolean>): Promise<void> {
     if (this.transfers.size || this.fileAction || this.recoveryBusy)
       throw new Error('Wait for the active operation before continuing the queue.');
@@ -725,6 +859,7 @@ export class Session {
     queueId?: string,
     folder = false,
     sourceFingerprint?: string,
+    expectedSourceHash?: string,
   ): Promise<void> {
     if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     if (
@@ -836,7 +971,7 @@ export class Session {
         });
         return;
       }
-      if (replacements) {
+      if (replacements && !expectedSourceHash) {
         this.recoveryBusy = true;
         const check = () => {
           controller.signal.throwIfAborted();
@@ -892,6 +1027,10 @@ export class Session {
         local,
         remote: path,
         sourceFingerprint,
+        expectedSourceHash,
+        beforePublish: expectedSourceHash
+          ? () => checkRecoverablePaths(sftp, { direction, local, remote: path }, controller.signal)
+          : undefined,
         signal: controller.signal,
         current: () => this.sftp === sftp,
         update,

@@ -86,6 +86,13 @@ export interface QueueState {
   active: boolean;
   paused: boolean;
 }
+export interface SavedTransfer {
+  id: string;
+  local: string;
+  remote: string;
+  direction: 'upload' | 'download';
+  created: string;
+}
 export interface RecoveryView {
   encrypted: boolean;
   id: string;
@@ -191,6 +198,9 @@ export interface DesktopAPI {
   download(path: string): Promise<Result<void>>;
   downloadMany(paths: string[]): Promise<Result<void>>;
   resumeQueue(): Promise<Result<void>>;
+  transferMemory(enabled: boolean): Promise<Result<void>>;
+  savedTransfers(): Promise<Result<SavedTransfer[]>>;
+  reviewSavedTransfer(input: { id: string; action: 'retry' | 'forget' }): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;
   openTerminal(): Promise<Result<void>>;
   openTerminalEditor(input: { directory: string; name: string }): Promise<Result<void>>;
