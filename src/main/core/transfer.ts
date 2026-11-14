@@ -8,6 +8,7 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { transferWait, TransferFailure } from './transfer-wait';
 import { droppedFileFingerprint } from './dropped-files';
+import type { UploadStage } from './transfer-recovery';
 
 export const transferLimits = { request: 30000, inactivity: 120000, cleanup: 3000 };
 export const transferWarning =
@@ -30,6 +31,11 @@ const metadata = (stats: Stats | LocalStats) => {
 export async function runTransfer(options: {
   beforePublish?: () => Promise<void>;
   expectedSourceHash?: string;
+  uploadCheckpoint?: {
+    maxBytes: number;
+    load: () => Promise<UploadStage | undefined>;
+    save: (stage: UploadStage) => Promise<void>;
+  };
   downloadCheckpoint?: {
     maxBytes: number;
     load: () => Promise<Buffer>;
@@ -62,11 +68,12 @@ export async function runTransfer(options: {
   let unknownRemoteOpen = false;
   let attemptedTemporary = false;
   let publishing = false;
+  let recordedUpload = false;
   let lastUpdate = 0;
   let cleanupDeadline = Infinity;
   let position = 0;
   const temporaryName = `.sshdrop-${randomUUID()}.part`;
-  const temporary =
+  let temporary =
     direction === 'upload'
       ? posix.join(posix.dirname(remote), temporaryName)
       : join(dirname(local), temporaryName);
@@ -168,6 +175,23 @@ export async function runTransfer(options: {
       throw error;
     }
   };
+  const stageInfo = (info: Stats, stage: UploadStage) => {
+    if (
+      !info.isFile() ||
+      (info.mode & 0o7777) !== 0o600 ||
+      info.uid !== stage.uid ||
+      info.gid !== stage.gid ||
+      !Number.isSafeInteger(info.size) ||
+      info.size < 0 ||
+      info.size > update.total
+    )
+      throw new TransferFailure('The saved upload temporary file is unsafe or has changed.');
+    return info;
+  };
+  const requireStagePath = async (path: string) => {
+    const resolved = await request<string>((cb) => sftp.realpath(path, cb));
+    if (resolved !== path) throw new TransferFailure('The saved upload temporary file moved.');
+  };
   const reader = (handle: Buffer, total: number, start = 0) => {
     let position = start;
     return new Readable({
@@ -236,7 +260,7 @@ export async function runTransfer(options: {
         () =>
           open(
             local,
-            fingerprint
+            fingerprint || options.uploadCheckpoint
               ? constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
               : 'r',
           ),
@@ -303,17 +327,92 @@ export async function runTransfer(options: {
       offset += count;
     }
     check();
+    const sourceHash = createHash('sha256');
     attemptedTemporary = true;
-    if (direction === 'upload') targetRemote = await openRemote(temporary, 'wx');
-    else targetLocal = await localCall(() => open(temporary, 'wx+', 0o600), closeLocalLate);
-    ownsTemporary = true;
+    let uploadStage: UploadStage | undefined;
+    if (direction === 'upload') {
+      const checkpoint = options.uploadCheckpoint;
+      if (checkpoint) {
+        if (update.total > checkpoint.maxBytes)
+          throw new TransferFailure('The saved upload exceeds the recovery limit.');
+        uploadStage = await checkpoint.load();
+        if (uploadStage) {
+          const stage = uploadStage;
+          const path = posix.join(posix.dirname(remote), stage.name);
+          let info: Stats | undefined;
+          try {
+            info = await request<Stats>((cb) => sftp.lstat(path, cb));
+          } catch (error) {
+            if (code(error) !== 2) throw error;
+          }
+          if (info) {
+            stageInfo(info, stage);
+            await requireStagePath(path);
+            targetRemote = await request<Buffer>(
+              (cb) => sftp.open(path, 'r+', cb),
+              false,
+              (handle) => {
+                if (current()) sftp.close(handle, () => {});
+              },
+            );
+            const opened = stageInfo(await remoteInfo(targetRemote), stage);
+            await requireStagePath(path);
+            if (metadata(info) !== metadata(opened))
+              throw new TransferFailure(
+                'The saved upload temporary file changed while opening it.',
+              );
+            const size = opened.size;
+            for (let offset = 0; offset < size;) {
+              const buffer = Buffer.alloc(Math.min(65536, size - offset));
+              const count = await request<number>((cb) =>
+                sftp.read(targetRemote!, buffer, 0, buffer.length, offset, (error, count) =>
+                  cb(error, count),
+                ),
+              );
+              if (!Number.isInteger(count) || count <= 0 || count > buffer.length)
+                throw new TransferFailure('Could not read the saved upload prefix.');
+              const localBytes = Buffer.alloc(count);
+              const { bytesRead } = await localCall(() =>
+                sourceLocal!.read(localBytes, 0, count, offset),
+              );
+              if (bytesRead !== count || !buffer.subarray(0, count).equals(localBytes))
+                throw new TransferFailure('The saved upload prefix does not match the local file.');
+              sourceHash.update(localBytes);
+              offset += count;
+            }
+            if (metadata(stageInfo(await remoteInfo(targetRemote), stage)) !== metadata(opened))
+              throw new TransferFailure('The saved upload temporary file changed during review.');
+            temporary = path;
+            position = size;
+            ownsTemporary = true;
+            recordedUpload = true;
+          }
+        }
+      }
+      if (!targetRemote) {
+        targetRemote = await openRemote(temporary, 'wx');
+        ownsTemporary = true;
+        if (checkpoint) {
+          const info = await remoteInfo(targetRemote);
+          uploadStage = { name: temporaryName, uid: info.uid, gid: info.gid };
+          if (stageInfo(info, uploadStage).size !== 0)
+            throw new TransferFailure('The new upload temporary file is not empty.');
+          await checkpoint.save(uploadStage);
+          recordedUpload = true;
+        }
+      }
+    } else {
+      targetLocal = await localCall(() => open(temporary, 'wx+', 0o600), closeLocalLate);
+      ownsTemporary = true;
+    }
     check();
+    update.transferred = position;
     update.phase = 'transferring';
     publish();
     touch();
     const source =
       direction === 'upload'
-        ? createReadStream(local, { fd: sourceLocal!.fd, autoClose: false, start: 0 })
+        ? createReadStream(local, { fd: sourceLocal!.fd, autoClose: false, start: position })
         : prefix.length
           ? Readable.from(
               (async function* () {
@@ -324,8 +423,7 @@ export async function runTransfer(options: {
               { objectMode: false },
             )
           : reader(sourceRemote!, update.total);
-    const sourceHash = createHash('sha256');
-    let counted = 0;
+    let counted = position;
     const meter = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         counted += chunk.length;
@@ -389,11 +487,14 @@ export async function runTransfer(options: {
       throw new TransferFailure('The saved transfer source changed. Nothing was published.');
     const destinationHash = createHash('sha256');
     let verified = 0;
+    let verifiedUploadMetadata: string | undefined;
     let verification: Readable;
     if (direction === 'upload') {
+      if (uploadStage) await requireStagePath(temporary);
       verifyRemote = await openRemote(temporary, 'r');
-      if ((await remoteInfo(verifyRemote)).size !== update.total)
-        throw new TransferFailure('Destination verification failed.');
+      const info = await remoteInfo(verifyRemote);
+      if (uploadStage) verifiedUploadMetadata = metadata(stageInfo(info, uploadStage));
+      if (info.size !== update.total) throw new TransferFailure('Destination verification failed.');
       verification = reader(verifyRemote, update.total);
     } else
       verification = createReadStream(temporary, {
@@ -426,6 +527,11 @@ export async function runTransfer(options: {
     if (metadata(finalSource) !== initial)
       throw new TransferFailure('The source changed during verification.');
     if (verifyRemote) {
+      if (
+        uploadStage &&
+        metadata(stageInfo(await remoteInfo(verifyRemote), uploadStage)) !== verifiedUploadMetadata
+      )
+        throw new TransferFailure('The upload temporary file changed during verification.');
       const handle = verifyRemote;
       verifyRemote = undefined;
       await request<void>((cb) => sftp.close(handle, cb));
@@ -445,6 +551,12 @@ export async function runTransfer(options: {
     update.phase = 'finalizing';
     publish();
     await options.beforePublish?.();
+    if (uploadStage) {
+      await requireStagePath(temporary);
+      const info = stageInfo(await request<Stats>((cb) => sftp.lstat(temporary, cb)), uploadStage);
+      if (info.size !== update.total || metadata(info) !== verifiedUploadMetadata)
+        throw new TransferFailure('The upload temporary file changed after verification.');
+    }
     check();
     publishing = true;
     try {
@@ -545,7 +657,7 @@ export async function runTransfer(options: {
             (error: Error) => cb(error),
           );
         });
-    if (ownsTemporary && !publishing) {
+    if (ownsTemporary && !publishing && (!recordedUpload || update.status === 'cancelled')) {
       if (direction === 'upload') await cleanup((cb) => sftp.unlink(temporary, cb), true);
       else
         await cleanup((cb) => {

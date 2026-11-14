@@ -907,9 +907,9 @@ function registerAPI(): void {
           message: retry
             ? direction === 'download'
               ? 'Continue this saved download?'
-              : 'Retry this upload from the beginning?'
+              : 'Continue this saved upload?'
             : 'Remove this transfer from the recovery list?',
-          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. Downloads continue from a verified checkpoint when one exists.' : 'This removes the local record and any encrypted checkpoint. Inspect files left at the destination separately.'}`,
+          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. If a verified partial file is available, it continues from that point.' : 'This removes the local record and any encrypted download checkpoint. A partial upload can remain on the server for inspection.'}`,
           buttons: ['Cancel', retry ? 'Retry transfer' : 'Forget transfer'],
           defaultId: 0,
           cancelId: 0,

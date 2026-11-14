@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.3] — Unreleased
+
+### Added
+
+- Saved uploads can continue from an SSHDrop temporary file after explicit approval. SSHDrop compares the remote prefix with the local source, verifies the full staged file, and publishes into an empty destination.
+
 ## [0.5.0-alpha.2] — Unreleased
 
 ### Added

@@ -25,6 +25,7 @@ export async function sshFixture(
     dropAfterChange?: boolean;
     stall?: string[];
     stallReadAt?: (offset: number) => boolean;
+    stallWriteAt?: (offset: number) => boolean;
     corruptReadback?: boolean;
     atomicReplace?: boolean;
     dropAfterReplace?: boolean;
@@ -252,7 +253,7 @@ export async function sshFixture(
             else respond();
           });
           sftp.on('WRITE', (id, raw, offset, data) => {
-            if (options.stall?.includes('WRITE')) return;
+            if (options.stall?.includes('WRITE') || options.stallWriteAt?.(offset)) return;
             const entry = handles.get(raw.toString());
             if (!entry || options.failWrites) return sftp.status(id, status.PERMISSION_DENIED);
             const old = files.get(entry.path)!;
