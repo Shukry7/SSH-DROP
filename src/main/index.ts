@@ -905,9 +905,11 @@ function registerAPI(): void {
           type: 'warning',
           title: retry ? 'Retry saved transfer' : 'Forget saved transfer',
           message: retry
-            ? 'Retry this transfer from the beginning?'
+            ? direction === 'download'
+              ? 'Continue this saved download?'
+              : 'Retry this upload from the beginning?'
             : 'Remove this transfer from the recovery list?',
-          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination.' : 'This removes the local record only. Inspect any files left at the destination separately.'}`,
+          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. Downloads continue from a verified checkpoint when one exists.' : 'This removes the local record and any encrypted checkpoint. Inspect files left at the destination separately.'}`,
           buttons: ['Cancel', retry ? 'Retry transfer' : 'Forget transfer'],
           defaultId: 0,
           cancelId: 0,

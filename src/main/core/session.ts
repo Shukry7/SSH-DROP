@@ -36,6 +36,7 @@ import {
   TransferRecovery,
   checkRecoverablePaths,
   fingerprintRecoverableFile,
+  savedTransferByteLimit,
 } from './transfer-recovery';
 
 interface TerminalShell {
@@ -741,8 +742,11 @@ export class Session {
         signal.throwIfAborted();
         if (this.sftp !== sftp) throw new Error('The connection changed.');
         if (action === 'forget') return await store.finish(id);
-        if ((await fingerprintRecoverableFile(sftp, record.file, signal)) !== record.hash)
+        if (record.file.direction === 'download') {
+          await checkRecoverablePaths(sftp, record.file, signal);
+        } else if ((await fingerprintRecoverableFile(sftp, record.file, signal)) !== record.hash) {
           throw new Error('The saved transfer source changed. Select the file again.');
+        }
         signal.throwIfAborted();
         if (this.sftp !== sftp) throw new Error('The connection changed.');
         this.queue.enqueue(
@@ -782,6 +786,7 @@ export class Session {
         job.folder,
         job.sourceFingerprint,
         job.expectedSourceHash,
+        job.recoveryId,
       );
       finished = !!sftp && sftp === this.sftp;
     } finally {
@@ -860,6 +865,7 @@ export class Session {
     folder = false,
     sourceFingerprint?: string,
     expectedSourceHash?: string,
+    recoveryId?: string,
   ): Promise<void> {
     if (this.workflow) throw new Error('Stop the running workflow before transferring files.');
     if (
@@ -1028,6 +1034,15 @@ export class Session {
         remote: path,
         sourceFingerprint,
         expectedSourceHash,
+        downloadCheckpoint:
+          recoveryId && direction === 'download' && this.transferRecovery
+            ? {
+                maxBytes: savedTransferByteLimit,
+                load: () => this.savedTransferStore().readDownloadPrefix(recoveryId),
+                save: (bytes, size) =>
+                  this.savedTransferStore().saveDownloadPrefix(recoveryId, bytes, size),
+              }
+            : undefined,
         beforePublish: expectedSourceHash
           ? () => checkRecoverablePaths(sftp, { direction, local, remote: path }, controller.signal)
           : undefined,

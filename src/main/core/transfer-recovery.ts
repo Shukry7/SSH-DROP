@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rename, unlink } from 'node:fs/promises';
 import { dirname, join, posix, relative } from 'node:path';
 import type { SFTPWrapper, Stats } from 'ssh2';
 import { z } from 'zod';
@@ -7,9 +7,11 @@ import { BackupVault, privateFile } from './backup-vault';
 import { identitySchema, sameIdentity, type ServerIdentity } from './recovery-store';
 import { replacementIO } from './replacement-io';
 import { queuedFileSchema, type QueuedFile } from './transfer-queue';
-import { transferWait } from './transfer-wait';
+import { TransferFailure, transferWait } from './transfer-wait';
 
 const journal = 'transfer-queue.enc';
+export const savedTransferByteLimit = 32 * 1024 * 1024;
+const checkpointName = (id: string) => `${z.string().uuid().parse(id)}.download.enc`;
 const recordSchema = z
   .object({
     id: z.string().uuid(),
@@ -116,9 +118,45 @@ export class TransferRecovery {
     this.claimed.delete(id);
   }
 
+  async readDownloadPrefix(id: string): Promise<Buffer> {
+    const name = checkpointName(id);
+    try {
+      await privateFile(join(this.vault.directory, name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return Buffer.alloc(0);
+      throw error;
+    }
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of this.vault.read(name, savedTransferByteLimit)) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    } catch {
+      throw new TransferFailure(
+        'Could not verify the saved partial download. Forget it to download again.',
+      );
+    }
+  }
+
+  async saveDownloadPrefix(id: string, bytes: AsyncIterable<Buffer>, size: number) {
+    if (!this.claimed.has(id) || size <= 0 || size > savedTransferByteLimit) return;
+    const name = checkpointName(id);
+    const temporary = `${randomUUID()}.download.tmp.enc`;
+    try {
+      await this.vault.seal(temporary, bytes, undefined, name);
+      await rename(join(this.vault.directory, temporary), join(this.vault.directory, name));
+    } finally {
+      await unlink(join(this.vault.directory, temporary)).catch(() => undefined);
+    }
+  }
+
   async finish(id: string) {
     try {
       await this.queue(async (records) => {
+        await unlink(join(this.vault.directory, checkpointName(id))).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+          },
+        );
         await this.write(records.filter((item) => item.id !== id));
       });
     } finally {
@@ -179,7 +217,7 @@ export async function fingerprintRecoverableFile(
     signal,
     () => !signal.aborted,
     () => {},
-    32 * 1024 * 1024,
+    savedTransferByteLimit,
   );
   const source = await io.snapshot(sourceRemote ? file.remote : file.local);
   if (!source) throw new Error('The transfer source could not be found.');

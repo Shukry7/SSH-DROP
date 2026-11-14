@@ -133,6 +133,7 @@ describe('tracked-file secret detection', () => {
     'backups/recovery.json',
     'backups/recovery.enc',
     'transfer-recovery/transfer-queue.enc',
+    'transfer-recovery/a1b2c3d4-a1b2-4321-a987-a1b2c3d4e5f6.download.enc',
     'backups/12345678-1234-1234-1234-123456789abc.bak',
     'backups/12345678-1234-1234-1234-123456789abc.bak.enc',
     '.env',
