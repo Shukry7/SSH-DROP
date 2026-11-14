@@ -23,3 +23,11 @@ python3 -c 'import os, urllib.parse; print("\033]7;file://" + urllib.parse.quote
 ```
 
 If the shell does not report a path or the directory is unavailable through SFTP, enter a path in **Files** and choose **Go**. A failed lookup leaves the current listing in place. Directory reports clear when the shell closes or the connection ends.
+
+## Connection tabs in 0.4.0-alpha.4
+
+Choose **New connection tab** to open a separate workspace and connect to another server or account. Up to four tabs can be open. The tab shows the server and port after connecting. Use the arrow keys in the tab strip to switch connections. Use **Back to files** before switching from an open text editor dialog.
+
+Each tab owns its terminals, file browser, drafts, transfer queue, and workflow runs. Switching tabs keeps ongoing work on its original connection. Native confirmations identify the connection when several tabs are open. Saved profiles and workflow definitions are shared. Recovery records retain their existing server and account scoping.
+
+**Disconnect** ends the connection in the current tab. **Close connection tab** asks before disconnecting and discarding that tab’s workspace. Idle protection disconnects every tab and clears the entire workspace.

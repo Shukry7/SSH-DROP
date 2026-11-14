@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { EditorDocument } from '../../shared/editor';
 import { RemoteEditor } from './RemoteEditor';
 
@@ -24,6 +25,8 @@ export function EditorTabs({
   hide: () => void;
   close: (id: string) => void;
 }) {
+  const { active: workspaceActive } = useWorkspace();
+  const localId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const currentEditor = useRef<{ requestClose: () => void }>(null);
   const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
@@ -32,22 +35,24 @@ export function EditorTabs({
   }, []);
   useEffect(() => {
     const element = dialog.current;
-    if (shown && !element?.open) element?.showModal();
-    if (!shown && element?.open) element.close();
-  }, [shown]);
+    if (shown && workspaceActive && !element?.open) element?.showModal();
+    return () => {
+      if (element?.open) element.close();
+    };
+  }, [shown, workspaceActive]);
 
   return (
     <dialog
       ref={dialog}
       className="remote-editor-dialog"
-      aria-labelledby="remote-editor-title"
+      aria-labelledby={localId}
       onCancel={(event) => {
         event.preventDefault();
         currentEditor.current?.requestClose();
       }}
     >
       <div className="editor-tab-heading">
-        <h3 id="remote-editor-title">Edit remote text file</h3>
+        <h3 id={localId}>Edit remote text file</h3>
         <button className="secondary compact" onClick={hide}>
           Back to files
         </button>

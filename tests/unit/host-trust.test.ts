@@ -75,6 +75,21 @@ describe('server host trust', () => {
     await trust.verify('host', 2222, Buffer.from('second'));
     expect(approve).toHaveBeenCalledTimes(2);
   });
+  it('persists simultaneous approvals without losing either fingerprint', async () => {
+    const approve = vi.fn().mockResolvedValue(true);
+    const trust = new HostTrust(file, approve);
+    await expect(
+      Promise.all([
+        trust.verify('first', 22, Buffer.from('key-one')),
+        trust.verify('second', 22, Buffer.from('key-two')),
+      ]),
+    ).resolves.toEqual([true, true]);
+    const repeatApproval = vi.fn().mockResolvedValue(false);
+    const reopened = new HostTrust(file, repeatApproval);
+    expect(await reopened.verify('first', 22, Buffer.from('key-one'))).toBe(true);
+    expect(await reopened.verify('second', 22, Buffer.from('key-two'))).toBe(true);
+    expect(repeatApproval).not.toHaveBeenCalled();
+  });
   it.each(['not json', '{"host":7}'])('fails closed on corrupt trust data %s', async (contents) => {
     await writeFile(file, contents);
     await expect(

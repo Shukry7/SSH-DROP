@@ -1,4 +1,6 @@
 export const channels = {
+  createWorkspace: 'workspace:create',
+  closeWorkspace: 'workspace:close',
   exportBackup: 'recovery:export-portable',
   openBackup: 'recovery:open-portable',
   idleActivity: 'idle:activity',

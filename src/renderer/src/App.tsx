@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import type {
   AppInfo,
   DirectoryListing,
@@ -34,7 +43,15 @@ function join(directory: string, name: string): string {
   return `${directory === '/' ? '' : directory}/${name}`;
 }
 
-export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
+export function App({
+  sessionProtection,
+  onServer,
+}: {
+  sessionProtection?: ReactNode;
+  onServer: (server: string) => void;
+}) {
+  const { api } = useWorkspace();
+  const fieldPrefix = useId();
   const [info, setInfo] = useState<AppInfo>();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -93,7 +110,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     transfers.some((transfer) => transfer.status === 'running' || transfer.status === 'queued');
 
   useEffect(() => {
-    void window.sshdrop.info().then((result) => {
+    void api.info().then((result) => {
       if (result.ok) setInfo(result.value);
       else setError(result.error);
     });
@@ -104,8 +121,8 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       setListing(undefined);
       setLoading(false);
     };
-    const stopDropErrors = window.sshdrop.onDropError(setError);
-    const stopEvents = window.sshdrop.onEvent((event) => {
+    const stopDropErrors = api.onDropError(setError);
+    const stopEvents = api.onEvent((event) => {
       if (event.type === 'status') {
         setConnected(event.connected);
         setLost(event.lost === true);
@@ -146,7 +163,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           const directory = listingPath.current;
           const epoch = connectionEpoch.current;
           const request = ++navigation.current;
-          void window.sshdrop.list(directory).then((result) => {
+          void api.list(directory).then((result) => {
             if (epoch !== connectionEpoch.current || request !== navigation.current) return;
             if (result.ok) setListing(result.value);
             else
@@ -161,7 +178,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       stopDropErrors();
       stopEvents();
     };
-  }, []);
+  }, [api]);
 
   async function openEditor(directory: string, name: string) {
     const epoch = connectionEpoch.current;
@@ -180,7 +197,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     await run(async () => {
       setActionBusy(true);
       try {
-        const document = unwrap(await window.sshdrop.openEditor({ directory, name }));
+        const document = unwrap(await api.openEditor({ directory, name }));
         if (epoch !== connectionEpoch.current) return;
         setEditorTabs((tabs) => [...tabs, { document, epoch }]);
         setSelectedEditor(document.token);
@@ -210,7 +227,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     const epoch = connectionEpoch.current;
     let changed = false;
     try {
-      changed = unwrap(await window.sshdrop.fileAction(input));
+      changed = unwrap(await api.fileAction(input));
       if (epoch !== connectionEpoch.current) return true;
       if (changed) {
         setMessage('Remote change completed.');
@@ -240,7 +257,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
     const request = ++navigation.current;
     setLoading(true);
     try {
-      const result = unwrap(await window.sshdrop.list(destination));
+      const result = unwrap(await api.list(destination));
       if (request === navigation.current) {
         setListing(result);
         listingPath.current = result.path;
@@ -263,7 +280,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
       );
       let established = false;
       try {
-        const attempt = window.sshdrop.connect({
+        const attempt = api.connect({
           host,
           port: Number(port),
           username,
@@ -274,6 +291,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
         setPassphrase('');
         const { sftp } = unwrap(await attempt);
         established = true;
+        onServer(`${username}@${host}:${port}`);
         if (sftp) await browse(path);
       } catch (failure) {
         if (failure instanceof Error && failure.message === 'Connection attempt cancelled.') {
@@ -397,10 +415,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           )}
           <form onSubmit={connect} className="connection-form">
             <fieldset disabled={connected || connecting || profileBusy}>
-              <ConnectionField id="connection-host" label="Host" help={connectionHelp.host}>
+              <ConnectionField
+                id={fieldPrefix + 'connection-host'}
+                label="Host"
+                help={connectionHelp.host}
+              >
                 <input
-                  id="connection-host"
-                  aria-describedby="connection-host-help"
+                  id={fieldPrefix + 'connection-host'}
+                  aria-describedby={fieldPrefix + 'connection-host-help'}
                   required
                   autoComplete="off"
                   placeholder="192.168.1.10"
@@ -410,13 +432,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               </ConnectionField>
               <div className="form-row">
                 <ConnectionField
-                  id="connection-username"
+                  id={fieldPrefix + 'connection-username'}
                   label="Username"
                   help={connectionHelp.username}
                 >
                   <input
-                    id="connection-username"
-                    aria-describedby="connection-username-help"
+                    id={fieldPrefix + 'connection-username'}
+                    aria-describedby={fieldPrefix + 'connection-username-help'}
                     required
                     autoComplete="off"
                     placeholder="deploy"
@@ -425,14 +447,14 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   />
                 </ConnectionField>
                 <ConnectionField
-                  id="connection-port"
+                  id={fieldPrefix + 'connection-port'}
                   label="Port"
                   help={connectionHelp.port}
                   className="port-field"
                 >
                   <input
-                    id="connection-port"
-                    aria-describedby="connection-port-help"
+                    id={fieldPrefix + 'connection-port'}
+                    aria-describedby={fieldPrefix + 'connection-port-help'}
                     required
                     type="number"
                     min="1"
@@ -443,13 +465,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </ConnectionField>
               </div>
               <ConnectionField
-                id="connection-auth"
+                id={fieldPrefix + 'connection-auth'}
                 label="Authentication"
                 help={connectionHelp.authentication}
               >
                 <select
-                  id="connection-auth"
-                  aria-describedby="connection-auth-help"
+                  id={fieldPrefix + 'connection-auth'}
+                  aria-describedby={fieldPrefix + 'connection-auth-help'}
                   value={auth}
                   onChange={(e) => {
                     setAuth(e.target.value as 'password' | 'key');
@@ -464,13 +486,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               </ConnectionField>
               {auth === 'password' ? (
                 <ConnectionField
-                  id="connection-password"
+                  id={fieldPrefix + 'connection-password'}
                   label="Password"
                   help={connectionHelp.password}
                 >
                   <input
-                    id="connection-password"
-                    aria-describedby="connection-password-help"
+                    id={fieldPrefix + 'connection-password'}
+                    aria-describedby={fieldPrefix + 'connection-password-help'}
                     required
                     type="password"
                     autoComplete="off"
@@ -482,31 +504,29 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               ) : (
                 <>
                   <ConnectionField
-                    id="connection-key"
+                    id={fieldPrefix + 'connection-key'}
                     label="Private key"
                     help={connectionHelp.privateKey}
                     labelInput={false}
                   >
                     <button
-                      id="connection-key"
-                      aria-describedby="connection-key-help"
+                      id={fieldPrefix + 'connection-key'}
+                      aria-describedby={fieldPrefix + 'connection-key-help'}
                       type="button"
                       className="secondary key-button"
-                      onClick={() =>
-                        void run(async () => setKey(unwrap(await window.sshdrop.chooseKey())))
-                      }
+                      onClick={() => void run(async () => setKey(unwrap(await api.chooseKey())))}
                     >
                       {key ? key.name : 'Choose private key…'}
                     </button>
                   </ConnectionField>
                   <ConnectionField
-                    id="connection-passphrase"
+                    id={fieldPrefix + 'connection-passphrase'}
                     label="Key passphrase"
                     help={connectionHelp.passphrase}
                   >
                     <input
-                      id="connection-passphrase"
-                      aria-describedby="connection-passphrase-help"
+                      id={fieldPrefix + 'connection-passphrase'}
+                      aria-describedby={fieldPrefix + 'connection-passphrase-help'}
                       type="password"
                       autoComplete="off"
                       value={passphrase}
@@ -517,13 +537,13 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 </>
               )}
               <ConnectionField
-                id="connection-directory"
+                id={fieldPrefix + 'connection-directory'}
                 label="Starting directory"
                 help={connectionHelp.directory}
               >
                 <input
-                  id="connection-directory"
-                  aria-describedby="connection-directory-help"
+                  id={fieldPrefix + 'connection-directory'}
+                  aria-describedby={fieldPrefix + 'connection-directory-help'}
                   required
                   pattern="/.*"
                   value={path}
@@ -548,7 +568,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
               disabled={cancelling}
               onClick={() => {
                 setCancelling(true);
-                void run(async () => unwrap(await window.sshdrop.cancelConnect())).finally(() =>
+                void run(async () => unwrap(await api.cancelConnect())).finally(() =>
                   setCancelling(false),
                 );
               }}
@@ -559,7 +579,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
           {connected && (
             <button
               className="secondary disconnect-button"
-              onClick={() => void run(async () => unwrap(await window.sshdrop.disconnect()))}
+              onClick={() => void run(async () => unwrap(await api.disconnect()))}
             >
               Disconnect
             </button>
@@ -646,9 +666,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                 <button
                   className="secondary compact"
                   disabled={!filesReady || !listing || actionBusy || loading}
-                  onClick={() =>
-                    void run(async () => unwrap(await window.sshdrop.upload(listing!.path)))
-                  }
+                  onClick={() => void run(async () => unwrap(await api.upload(listing!.path)))}
                 >
                   ↑ Upload files
                 </button>
@@ -656,7 +674,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   className="secondary compact"
                   disabled={!filesReady || !listing || actionBusy || loading}
                   onClick={() =>
-                    void run(async () => unwrap(await window.sshdrop.uploadFolder(listing!.path)))
+                    void run(async () => unwrap(await api.uploadFolder(listing!.path)))
                   }
                 >
                   Upload folder
@@ -667,9 +685,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   onClick={() =>
                     void run(async () => {
                       unwrap(
-                        await window.sshdrop.downloadMany(
-                          selected.map((name) => join(listing!.path, name)),
-                        ),
+                        await api.downloadMany(selected.map((name) => join(listing!.path, name))),
                       );
                       setSelected([]);
                     })
@@ -829,10 +845,8 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                 void run(async () =>
                                   unwrap(
                                     await (entry.kind === 'directory'
-                                      ? window.sshdrop.downloadFolder(
-                                          join(listing.path, entry.name),
-                                        )
-                                      : window.sshdrop.download(join(listing.path, entry.name))),
+                                      ? api.downloadFolder(join(listing.path, entry.name))
+                                      : api.download(join(listing.path, entry.name))),
                                   ),
                                 )
                               }
@@ -884,7 +898,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                       setActionBusy(true);
                                       try {
                                         unwrap(
-                                          await window.sshdrop.openTerminalEditor({
+                                          await api.openTerminalEditor({
                                             directory: listing.path,
                                             name: entry.name,
                                           }),
@@ -1043,7 +1057,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   <button
                     className="text-button"
                     disabled={queue.active || !queue.pending || actionBusy}
-                    onClick={() => void run(async () => unwrap(await window.sshdrop.resumeQueue()))}
+                    onClick={() => void run(async () => unwrap(await api.resumeQueue()))}
                   >
                     Continue queue
                   </button>
@@ -1078,9 +1092,7 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                   {(transfer.status === 'running' || transfer.status === 'queued') && (
                     <button
                       className="text-button"
-                      onClick={() =>
-                        void run(async () => unwrap(await window.sshdrop.cancel(transfer.id)))
-                      }
+                      onClick={() => void run(async () => unwrap(await api.cancel(transfer.id)))}
                     >
                       Cancel
                     </button>

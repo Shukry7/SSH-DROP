@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.4.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.4.0-alpha.4, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.4.0-alpha.4`** adds up to four independent SSH connection tabs. Each tab keeps its own file browser, terminals, drafts, transfer queue, and workflow runs. Saved profiles and workflow definitions remain shared across tabs. See [connection tabs](docs/RECONNECT.md#connection-tabs-in-040-alpha4).
 
 **Development source `0.4.0-alpha.3`** adds **Edit in terminal** for regular remote files. Choose Nano or Vim in the confirmation. The selected editor must be installed on the server and saves directly to the remote file. Use **Edit text** for verified saves and optional SSHDrop recovery backups.
 

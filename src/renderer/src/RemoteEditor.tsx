@@ -1,3 +1,4 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { findEditorMatches } from '../../shared/editor-search';
@@ -21,6 +22,7 @@ export function RemoteEditor({
   ref?: Ref<{ requestClose: () => void }>;
   close: () => void;
 }) {
+  const { api } = useWorkspace();
   const draft = useRef<EditorSurfaceHandle>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const [language, setLanguage] = useState(() => detectEditorLanguage(document.path));
@@ -51,7 +53,7 @@ export function RemoteEditor({
     setBusy(true);
     setError('');
     try {
-      const result = await window.sshdrop.closeEditor(token);
+      const result = await api.closeEditor(token);
       if (!result.ok) throw new Error(result.error);
       close();
     } catch (failure) {
@@ -71,7 +73,7 @@ export function RemoteEditor({
     setBusy(true);
     setError('');
     try {
-      const result = await window.sshdrop.saveEditor({ token, text });
+      const result = await api.saveEditor({ token, text });
       if (!result.ok) throw new Error(result.error);
       if (result.value) {
         setSaved(text);
@@ -88,7 +90,7 @@ export function RemoteEditor({
     setBusy(true);
     setError('');
     try {
-      const result = await window.sshdrop.compareEditor(token);
+      const result = await api.compareEditor(token);
       if (!result.ok) throw new Error(result.error);
       setComparison(result.value);
     } catch (failure) {
@@ -104,7 +106,7 @@ export function RemoteEditor({
     setBusy(true);
     setError('');
     try {
-      const result = await window.sshdrop.acceptEditorReview({
+      const result = await api.acceptEditorReview({
         token,
         reviewToken: comparison.reviewToken,
         keepDraft,

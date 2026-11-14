@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ImagePreview as Preview } from '../../shared/image-preview';
 
 export function ImagePreview({
@@ -10,15 +11,23 @@ export function ImagePreview({
   name: string;
   close: () => void;
 }) {
+  const { api, active: workspaceActive } = useWorkspace();
+  const localId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    if (workspaceActive && !element?.open) element?.showModal();
+    return () => {
+      if (element?.open) element.close();
+    };
+  }, [workspaceActive]);
   const [preview, setPreview] = useState<Preview>();
   const [error, setError] = useState('');
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
   useEffect(() => {
-    dialog.current?.showModal();
     const requestId = crypto.randomUUID();
     let current = true;
-    void window.sshdrop
+    void api
       .openImage({ directory, name, requestId })
       .then((result) => {
         if (!current) return;
@@ -30,21 +39,21 @@ export function ImagePreview({
       });
     return () => {
       current = false;
-      void window.sshdrop.cancelImage(requestId).catch(() => undefined);
+      void api.cancelImage(requestId).catch(() => undefined);
     };
-  }, [directory, name]);
+  }, [api, directory, name]);
   const loading = !preview && !error;
   return (
     <dialog
       ref={dialog}
       className="image-preview-dialog"
-      aria-labelledby="image-preview-title"
+      aria-labelledby={localId}
       onCancel={(event) => {
         event.preventDefault();
         close();
       }}
     >
-      <h3 id="image-preview-title">Image preview</h3>
+      <h3 id={localId}>Image preview</h3>
       <p>
         <bdi>
           {directory === '/' ? '' : directory}/{name}

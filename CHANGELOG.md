@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.4.0-alpha.4] — Unreleased
+
+### Added
+
+- Open up to four independent SSH connection tabs, each with its own terminals, Files, editor drafts, image previews, transfers, and workflow runs. Switching tabs leaves ongoing operations on their original connection.
+
 ## [0.4.0-alpha.3] — Unreleased
 
 ### Added

@@ -48,6 +48,34 @@ button {
   display: flex;
   flex-direction: column;
 }
+.connection-workspaces {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.connection-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: #101720;
+  border-bottom: 1px solid #222b36;
+}
+.connection-tabbar .editor-tabs {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.connection-tabbar > button {
+  flex-shrink: 0;
+}
+.connection-workspace {
+  flex: 1;
+  min-height: 0;
+}
+.connection-workspace .app-shell {
+  height: 100%;
+}
 .topbar {
   height: 70px;
   flex-shrink: 0;

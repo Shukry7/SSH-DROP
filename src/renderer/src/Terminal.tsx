@@ -1,3 +1,4 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -22,8 +23,9 @@ export function Terminal({
   visible: boolean;
   onDirectory: (id: string, directory: string | undefined) => void;
 }) {
+  const { api, active: workspaceActive } = useWorkspace();
   const element = useRef<HTMLDivElement>(null);
-  const active = useRef(connected && visible);
+  const active = useRef(connected && visible && workspaceActive);
   const terminal = useRef<XTerm | null>(null);
   const fit = useRef<FitAddon | null>(null);
 
@@ -51,7 +53,7 @@ export function Terminal({
       view.open(element.current!);
       if (element.current?.clientHeight && element.current.clientWidth) addon.fit();
       const subscription = view.onData((data) => {
-        if (active.current) void window.sshdrop.input(data, id);
+        if (active.current) void api.input(data, id);
       });
       const directoryReports = view.parser.registerOscHandler(7, (report) => {
         if (id) onDirectory(id, parseTerminalDirectory(report));
@@ -64,8 +66,7 @@ export function Terminal({
         frame = requestAnimationFrame(() => {
           if (disposed || !element.current?.clientHeight || !element.current.clientWidth) return;
           addon.fit();
-          if (active.current)
-            void window.sshdrop.resize({ cols: view.cols, rows: view.rows, terminalId: id });
+          if (active.current) void api.resize({ cols: view.cols, rows: view.rows, terminalId: id });
         });
       };
       const observer = new ResizeObserver(resize);
@@ -92,7 +93,7 @@ export function Terminal({
       ? subscribe(id, (event) => {
           if (event.type === 'terminal')
             terminal.current?.write(event.data, () => {
-              void window.sshdrop.acknowledge(event.id);
+              void api.acknowledge(event.id);
             });
           if (event.type === 'terminal-exit') {
             active.current = false;
@@ -106,19 +107,19 @@ export function Terminal({
       unsubscribe?.();
       disposeView();
     };
-  }, [id, onDirectory, subscribe]);
+  }, [api, id, onDirectory, subscribe]);
 
   useEffect(() => {
-    active.current = connected && visible;
-    if (connected && visible && terminal.current) {
+    active.current = connected && visible && workspaceActive;
+    if (active.current && terminal.current) {
       fit.current?.fit();
-      void window.sshdrop.resize({
+      void api.resize({
         cols: terminal.current.cols,
         rows: terminal.current.rows,
         terminalId: id,
       });
     }
-  }, [connected, id, visible]);
+  }, [api, connected, id, visible, workspaceActive]);
 
   return (
     <div

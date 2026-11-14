@@ -129,6 +129,9 @@ export type SessionEvent =
   | { type: 'transfer-warning'; message: string };
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopAPI {
+  createWorkspace(): Promise<Result<{ id: string; number: number }>>;
+  closeWorkspace(): Promise<Result<boolean>>;
+  forWorkspace(id: string): DesktopAPI;
   exportBackup(value: { id: string; passphrase: string }): Promise<Result<boolean>>;
   openBackup(passphrase: string): Promise<Result<boolean>>;
   idleStatus(): Promise<Result<import('./idle').IdleState>>;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { App } from './App';
+import { ConnectionTabs } from './ConnectionTabs';
 import type { IdleSettings, IdleState } from '../../shared/idle';
 import type { Result } from '../../shared/contracts';
 
@@ -266,7 +266,7 @@ export function IdleProtection() {
     );
   return (
     <>
-      <App
+      <ConnectionTabs
         sessionProtection={
           <button
             className="secondary compact idle-indicator"

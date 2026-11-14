@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useWorkspace } from './WorkspaceContext';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { FileAction } from '../../shared/contracts';
 
 export function FileActionDialog({
@@ -14,7 +15,16 @@ export function FileActionDialog({
   submit: (input: FileAction) => Promise<boolean>;
   close: () => void;
 }) {
+  const { active: workspaceActive } = useWorkspace();
+  const localId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    if (workspaceActive && !element?.open) element?.showModal();
+    return () => {
+      if (element?.open) element.close();
+    };
+  }, [workspaceActive]);
   const relocating = 'destinationDirectory' in input;
   const editingPermissions = input.action === 'permissions';
   const [name, setName] = useState(input.action === 'rename' ? input.name : '');
@@ -22,9 +32,6 @@ export function FileActionDialog({
   const [operation, setOperation] = useState<'copy' | 'move'>('copy');
   const [mode, setMode] = useState(editingPermissions ? input.expectedMode : 0);
   const proposedMode = mode.toString(8).padStart(3, '0');
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   const title = relocating
     ? 'Copy or move remote file'
     : editingPermissions
@@ -38,7 +45,7 @@ export function FileActionDialog({
     <dialog
       ref={dialog}
       className="file-action-dialog"
-      aria-labelledby="file-action-title"
+      aria-labelledby={localId}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) close();
@@ -60,7 +67,7 @@ export function FileActionDialog({
           });
         }}
       >
-        <h3 id="file-action-title">{title}</h3>
+        <h3 id={localId}>{title}</h3>
         {error && (
           <p role="alert" className="error-banner">
             {error}

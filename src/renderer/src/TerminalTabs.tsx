@@ -1,3 +1,4 @@
+import { useWorkspace } from './WorkspaceContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionEvent } from '../../shared/contracts';
 import { terminalTabLimit } from '../../shared/terminal-limits';
@@ -21,6 +22,7 @@ export function TerminalTabs({
   canBrowse: boolean;
   browse: (directory: string) => void;
 }) {
+  const { api } = useWorkspace();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [selected, setSelected] = useState('');
   const [opening, setOpening] = useState(false);
@@ -37,7 +39,7 @@ export function TerminalTabs({
 
   useEffect(
     () =>
-      window.sshdrop.onEvent((event) => {
+      api.onEvent((event) => {
         if (event.type === 'terminal-reset') {
           generation.current++;
           sequence.current = 0;
@@ -72,7 +74,7 @@ export function TerminalTabs({
             );
         }
       }),
-    [],
+    [api],
   );
 
   const subscribe = useCallback((id: string, listener: TerminalOutput) => {
@@ -99,7 +101,7 @@ export function TerminalTabs({
     setOpening(true);
     setError('');
     try {
-      const result = await window.sshdrop.openTerminal();
+      const result = await api.openTerminal();
       if (!result.ok) throw new Error(result.error);
     } catch (failure) {
       if (current === generation.current)
@@ -112,7 +114,7 @@ export function TerminalTabs({
   async function close(id: string) {
     const current = generation.current;
     try {
-      const result = await window.sshdrop.closeTerminal(id);
+      const result = await api.closeTerminal(id);
       if (!result.ok) throw new Error(result.error);
       if (current !== generation.current) return;
       outlets.current.delete(id);
