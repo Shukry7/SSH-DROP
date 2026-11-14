@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.4.0-alpha.4, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.5.0-alpha.1, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.5.0-alpha.1`** adds opt-in encrypted recovery for individual transfers. Find **Saved transfers** after connecting. Retry starts from the beginning after explicit confirmation and checks the original source hash and destination. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
 
 **Development source `0.4.0-alpha.4`** adds up to four independent SSH connection tabs. Each tab keeps its own file browser, terminals, drafts, transfer queue, and workflow runs. Saved profiles and workflow definitions remain shared across tabs. See [connection tabs](docs/RECONNECT.md#connection-tabs-in-040-alpha4).
 

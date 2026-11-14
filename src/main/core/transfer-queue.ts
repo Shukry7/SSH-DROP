@@ -10,6 +10,8 @@ export interface QueuedFile {
   remote: string;
   folder?: true;
   sourceFingerprint?: string;
+  recoveryId?: string;
+  expectedSourceHash?: string;
 }
 export interface QueuedJob extends QueuedFile {
   id: string;
@@ -17,7 +19,7 @@ export interface QueuedJob extends QueuedFile {
 const safeDisplayPath = (s: string) =>
   !Array.from(s).some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) &&
   !/[\u202a-\u202e\u2066-\u2069]/.test(s);
-const fileSchema = z
+export const queuedFileSchema = z
   .object({
     direction: z.enum(['upload', 'download']),
     local: z.string().max(4096).refine(isAbsolute).refine(safeDisplayPath),
@@ -28,11 +30,16 @@ const fileSchema = z
       .max(160)
       .regex(/^\d+:\d+:\d+:-?\d+:-?\d+$/)
       .optional(),
+    recoveryId: z.string().uuid().optional(),
+    expectedSourceHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict()
   .refine((job) => !job.sourceFingerprint || (job.direction === 'upload' && !job.folder));
 
-// Only main owns paths. Nothing is persisted or automatically replayed after a failure.
+// Only main owns paths. Recovery records never enter the queue automatically.
 export class TransferQueue {
   private waiting: QueuedJob[] = [];
   private active?: QueuedJob;
@@ -43,6 +50,7 @@ export class TransferQueue {
     private readonly run: (job: QueuedJob) => Promise<void>,
     private readonly update: (item: TransferUpdate) => void,
     private readonly changed: (state: QueueState) => void,
+    private readonly removed: (job: QueuedJob, cancelled: boolean) => void = () => {},
   ) {}
   get size() {
     return this.waiting.length + Number(!!this.active);
@@ -56,8 +64,8 @@ export class TransferQueue {
   private state() {
     this.changed({ pending: this.waiting.length, active: !!this.active, paused: this.paused });
   }
-  enqueue(input: QueuedFile[]): void {
-    const files = z.array(fileSchema).min(1).max(100).parse(input);
+  validate(input: QueuedFile[]): QueuedFile[] {
+    const files = z.array(queuedFileSchema).min(1).max(100).parse(input);
     if (this.size + files.length > 100)
       throw new Error('Queue limit reached: at most 100 active and waiting files.');
     // Reject ambiguous duplicate destinations within a selection, even on case-insensitive servers.
@@ -70,7 +78,10 @@ export class TransferQueue {
       throw new Error(
         'The selection contains colliding destination names. Select those files separately.',
       );
-    const jobs = files.map((file) => ({ ...file, id: randomUUID() }));
+    return files;
+  }
+  enqueue(input: QueuedFile[], start = true): void {
+    const jobs = this.validate(input).map((file) => ({ ...file, id: randomUUID() }));
     this.waiting.push(...jobs);
     this.revision++;
     for (const job of jobs)
@@ -83,12 +94,16 @@ export class TransferQueue {
         status: 'queued',
       });
     this.state();
+    if (start) this.pump();
+  }
+  start(): void {
     this.pump();
   }
   cancel(id: string): boolean {
     const index = this.waiting.findIndex((job) => job.id === id);
     if (index < 0) return false;
     const [job] = this.waiting.splice(index, 1);
+    this.removed(job, true);
     this.revision++;
     this.update({
       id: job.id,
@@ -111,6 +126,7 @@ export class TransferQueue {
   clear(): void {
     this.generation++;
     this.revision++;
+    for (const job of this.waiting) this.removed(job, false);
     this.waiting = [];
     this.active = undefined;
     this.paused = false;

@@ -156,12 +156,12 @@ export class BackupVault {
     if (size !== expected.size || hash.digest('hex') !== expected.hash)
       throw new Error('Backup SHA-256 verification failed.');
   }
-  async metadata(): Promise<string> {
+  async metadata(purpose = 'recovery.enc'): Promise<string> {
     const chunks: Buffer[] = [];
-    for await (const chunk of this.read('recovery.enc', 1024 * 1024)) chunks.push(chunk);
+    for await (const chunk of this.read(purpose, 1024 * 1024)) chunks.push(chunk);
     return Buffer.concat(chunks).toString('utf8');
   }
-  async writeMetadata(contents: string): Promise<void> {
+  async writeMetadata(contents: string, purpose = 'recovery.enc'): Promise<void> {
     const temporary = `${randomUUID()}.tmp.enc`;
     try {
       // Bind metadata to its stable purpose, even while writing a temporary filename.
@@ -172,19 +172,19 @@ export class BackupVault {
           yield Buffer.from(contents);
         })(),
         undefined,
-        'recovery.enc',
+        purpose,
       );
       const verified: Buffer[] = [];
       for await (const chunk of this.read(
         temporary,
         Buffer.byteLength(contents),
         undefined,
-        'recovery.enc',
+        purpose,
       ))
         verified.push(chunk);
       if (!Buffer.concat(verified).equals(Buffer.from(contents)))
         throw new Error('Encrypted recovery metadata verification failed.');
-      await rename(original, join(this.directory, 'recovery.enc'));
+      await rename(original, join(this.directory, purpose));
     } finally {
       await unlink(join(this.directory, temporary)).catch(() => undefined);
     }
