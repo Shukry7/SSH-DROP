@@ -8,7 +8,7 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { transferWait, TransferFailure } from './transfer-wait';
 import { droppedFileFingerprint } from './dropped-files';
-import type { UploadStage } from './transfer-recovery';
+import type { UploadStage } from './folder-checkpoint';
 
 export const transferLimits = { request: 30000, inactivity: 120000, cleanup: 3000 };
 export const transferWarning =

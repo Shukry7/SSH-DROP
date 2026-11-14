@@ -906,14 +906,14 @@ function registerAPI(): void {
             ? `${totalFiles === undefined ? 'No files have been recorded as copied.' : `${copiedFiles} of ${totalFiles} files recorded as copied.`} SSHDrop verifies the source and partial folder before continuing. Changed or unexpected entries stop the transfer. Existing files are never replaced.`
             : 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. If a verified partial file is available, it continues from that point.'
           : folder
-            ? 'This removes the local record. Files and folders already copied stay on disk.'
+            ? 'This removes the local record. Already copied files and folders stay at the destination.'
             : 'This removes the local record and any encrypted download checkpoint. A partial upload can remain on the server for inspection.';
         const approval = await messageBox({
           type: 'warning',
           title: retry ? 'Retry saved transfer' : 'Forget saved transfer',
           message: retry
             ? folder
-              ? 'Continue this saved folder download?'
+              ? `Continue this saved folder ${direction}?`
               : direction === 'download'
                 ? 'Continue this saved download?'
                 : 'Continue this saved upload?'

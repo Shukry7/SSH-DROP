@@ -1,6 +1,15 @@
 import { z } from 'zod';
 import { actionNameSchema } from '../../shared/validation';
 
+export const uploadStageSchema = z
+  .object({
+    name: z.string().regex(/^\.sshdrop-[a-f0-9-]{36}\.part$/),
+    uid: z.number().int().nonnegative(),
+    gid: z.number().int().nonnegative(),
+  })
+  .strict();
+export type UploadStage = z.infer<typeof uploadStageSchema>;
+
 const entry = z
   .object({
     parts: z.array(actionNameSchema).max(16),
@@ -10,8 +19,10 @@ const entry = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     destinationKey: z.string().max(256).optional(),
+    uploadStage: uploadStageSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((item) => !item.uploadStage || (!!item.hash && !item.destinationKey));
 
 export const folderCheckpointSchema = z
   .object({

@@ -661,8 +661,7 @@ export class Session {
   }
 
   async queueFiles(files: QueuedFile[]): Promise<void> {
-    if (!this.rememberTransfers || files.some((file) => file.folder && file.direction === 'upload'))
-      return this.enqueue(files);
+    if (!this.rememberTransfers) return this.enqueue(files);
     const store = this.savedTransferStore();
     if (files.length > 8)
       throw new Error('Queue up to eight files at a time with transfer recovery enabled.');

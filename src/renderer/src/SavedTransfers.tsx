@@ -56,11 +56,11 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
               });
             }}
           />
-          Remember new file transfers and folder downloads in this connection
+          Remember new file and folder transfers in this connection
         </label>
         <p>
           SSHDrop encrypts the paths and file hashes on this computer. With recovery enabled, queue
-          up to eight individual files at a time, up to 32 MiB each. Folder downloads up to 128 MiB
+          up to eight individual files at a time, up to 32 MiB each. Folder transfers up to 128 MiB
           can also be saved. Choose a new destination for each transfer.
         </p>
         {error && (
@@ -73,7 +73,7 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
           <div key={record.id} className="saved-transfer">
             <strong>
               {record.folder
-                ? 'Folder download'
+                ? `Folder ${record.direction}`
                 : record.direction === 'upload'
                   ? 'Upload'
                   : 'Download'}
@@ -97,7 +97,7 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
               }
             >
               {record.folder
-                ? 'Review folder download'
+                ? `Review folder ${record.direction}`
                 : record.direction === 'download'
                   ? 'Review download resume'
                   : 'Review upload resume'}

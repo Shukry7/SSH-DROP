@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.5] — Unreleased
+
+### Added
+
+- Opt-in folder upload recovery into a new remote folder up to 128 MiB. Review explicitly after reconnecting. SSHDrop verifies the source, completed files, and any recorded temporary upload before continuing.
+
 ## [0.5.0-alpha.4] — Unreleased
 
 ### Added
