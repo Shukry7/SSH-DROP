@@ -898,18 +898,27 @@ function registerAPI(): void {
     return currentWorkspace().session.reviewSavedTransfer(
       id,
       action,
-      async ({ direction, local, remote }) => {
+      async ({ direction, local, remote, folder, copiedFiles, totalFiles }) => {
         const source = direction === 'upload' ? local : remote;
         const destination = direction === 'upload' ? remote : local;
+        const details = retry
+          ? folder
+            ? `${totalFiles === undefined ? 'No files have been recorded as copied.' : `${copiedFiles} of ${totalFiles} files recorded as copied.`} SSHDrop verifies the source and partial folder before continuing. Changed or unexpected entries stop the transfer. Existing files are never replaced.`
+            : 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. If a verified partial file is available, it continues from that point.'
+          : folder
+            ? 'This removes the local record. Files and folders already copied stay on disk.'
+            : 'This removes the local record and any encrypted download checkpoint. A partial upload can remain on the server for inspection.';
         const approval = await messageBox({
           type: 'warning',
           title: retry ? 'Retry saved transfer' : 'Forget saved transfer',
           message: retry
-            ? direction === 'download'
-              ? 'Continue this saved download?'
-              : 'Continue this saved upload?'
+            ? folder
+              ? 'Continue this saved folder download?'
+              : direction === 'download'
+                ? 'Continue this saved download?'
+                : 'Continue this saved upload?'
             : 'Remove this transfer from the recovery list?',
-          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${retry ? 'Inspect both locations first. SSHDrop checks the original content hash and requires an empty destination. If a verified partial file is available, it continues from that point.' : 'This removes the local record and any encrypted download checkpoint. A partial upload can remain on the server for inspection.'}`,
+          detail: `Source: ${JSON.stringify(source)}\nDestination: ${JSON.stringify(destination)}\n\n${details}`,
           buttons: ['Cancel', retry ? 'Retry transfer' : 'Forget transfer'],
           defaultId: 0,
           cancelId: 0,

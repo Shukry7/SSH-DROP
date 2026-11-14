@@ -92,6 +92,9 @@ export interface SavedTransfer {
   remote: string;
   direction: 'upload' | 'download';
   created: string;
+  folder?: true;
+  copiedFiles?: number;
+  totalFiles?: number;
 }
 export interface RecoveryView {
   encrypted: boolean;

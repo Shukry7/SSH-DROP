@@ -8,6 +8,7 @@ import { identitySchema, sameIdentity, type ServerIdentity } from './recovery-st
 import { replacementIO } from './replacement-io';
 import { queuedFileSchema, type QueuedFile } from './transfer-queue';
 import { TransferFailure, transferWait } from './transfer-wait';
+import { folderCheckpointSchema, type FolderCheckpoint } from './folder-checkpoint';
 
 const journal = 'transfer-queue.enc';
 export const savedTransferByteLimit = 32 * 1024 * 1024;
@@ -16,10 +17,12 @@ const recordSchema = z
   .object({
     id: z.string().uuid(),
     identity: identitySchema,
-    file: queuedFileSchema.refine(
-      (file) => !file.folder && !file.recoveryId && !file.expectedSourceHash,
-    ),
-    hash: z.string().regex(/^[a-f0-9]{64}$/),
+    file: queuedFileSchema.refine((file) => !file.recoveryId && !file.expectedSourceHash),
+    hash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    folderCheckpoint: folderCheckpointSchema.optional(),
     uploadStage: z
       .object({
         name: z.string().regex(/^\.sshdrop-[a-f0-9-]{36}\.part$/),
@@ -30,7 +33,12 @@ const recordSchema = z
       .optional(),
     created: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .refine((item) =>
+    item.file.folder
+      ? item.file.direction === 'download' && !item.hash && !item.uploadStage
+      : !!item.hash && !item.folderCheckpoint,
+  );
 type Record = z.infer<typeof recordSchema>;
 export type UploadStage = NonNullable<Record['uploadStage']>;
 const schema = z
@@ -82,7 +90,7 @@ export class TransferRecovery {
     await this.vault.writeMetadata(contents, journal);
   }
 
-  add(identity: ServerIdentity, batch: { file: QueuedFile; hash: string }[]) {
+  add(identity: ServerIdentity, batch: { file: QueuedFile; hash?: string }[]) {
     return this.queue(async (records) => {
       if (records.length + batch.length > 100)
         throw new Error('Saved transfer limit reached. Forget old transfers before adding more.');
@@ -102,12 +110,19 @@ export class TransferRecovery {
     return this.queue((records) =>
       records
         .filter((item) => sameIdentity(item.identity, identity) && !this.claimed.has(item.id))
-        .map(({ id, file: { local, remote, direction }, created }) => ({
+        .map(({ id, file: { local, remote, direction, folder }, created, folderCheckpoint }) => ({
           id,
           local,
           remote,
           direction,
           created,
+          ...(folder && {
+            folder,
+            copiedFiles:
+              folderCheckpoint?.entries.filter((entry) => entry.hash && entry.destinationKey)
+                .length ?? 0,
+            totalFiles: folderCheckpoint?.entries.filter((entry) => entry.hash).length,
+          }),
         })),
     );
   }
@@ -125,6 +140,24 @@ export class TransferRecovery {
 
   release(id: string) {
     this.claimed.delete(id);
+  }
+
+  private folderRecord(records: Record[], id: string) {
+    const record = records.find((item) => item.id === id && item.file.folder);
+    if (!record || !this.claimed.has(id))
+      throw new TransferFailure('The saved folder download is unavailable.');
+    return record;
+  }
+
+  readFolderCheckpoint(id: string) {
+    return this.queue((records) => this.folderRecord(records, id).folderCheckpoint);
+  }
+
+  saveFolderCheckpoint(id: string, checkpoint: FolderCheckpoint) {
+    return this.queue(async (records) => {
+      this.folderRecord(records, id).folderCheckpoint = checkpoint;
+      await this.write(records);
+    });
   }
 
   private uploadRecord(records: Record[], id: string) {

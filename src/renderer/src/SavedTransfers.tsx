@@ -56,11 +56,12 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
               });
             }}
           />
-          Remember new individual transfers in this connection
+          Remember new file transfers and folder downloads in this connection
         </label>
         <p>
           SSHDrop encrypts the paths and file hashes on this computer. With recovery enabled, queue
-          up to eight files at a time, up to 32 MiB each, and choose destinations that do not exist.
+          up to eight individual files at a time, up to 32 MiB each. Folder downloads up to 128 MiB
+          can also be saved. Choose a new destination for each transfer.
         </p>
         {error && (
           <p role="alert" className="error-banner">
@@ -70,7 +71,18 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
         {records.length === 0 && <p>No saved transfers to review for this server and account.</p>}
         {records.map((record) => (
           <div key={record.id} className="saved-transfer">
-            <strong>{record.direction === 'upload' ? 'Upload' : 'Download'}</strong>
+            <strong>
+              {record.folder
+                ? 'Folder download'
+                : record.direction === 'upload'
+                  ? 'Upload'
+                  : 'Download'}
+            </strong>
+            {record.folder && record.totalFiles !== undefined && (
+              <p>
+                {record.copiedFiles} of {record.totalFiles} files recorded as copied
+              </p>
+            )}
             <p>
               From <bdi>{record.direction === 'upload' ? record.local : record.remote}</bdi>
             </p>
@@ -84,7 +96,11 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
                 void perform(() => api.reviewSavedTransfer({ id: record.id, action: 'retry' }))
               }
             >
-              {record.direction === 'download' ? 'Review download resume' : 'Review upload resume'}
+              {record.folder
+                ? 'Review folder download'
+                : record.direction === 'download'
+                  ? 'Review download resume'
+                  : 'Review upload resume'}
             </button>
             <button
               className="secondary compact"
