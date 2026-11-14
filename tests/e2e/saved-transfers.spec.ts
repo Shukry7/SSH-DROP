@@ -50,7 +50,7 @@ test('reviews a saved upload after restart and requires a separate retry confirm
     let page = await connect();
     await page
       .getByRole('checkbox', {
-        name: 'Remember new file transfers and folder downloads in this connection',
+        name: 'Remember new file and folder transfers in this connection',
       })
       .check();
     await page.getByRole('button', { name: /Upload files/ }).click();

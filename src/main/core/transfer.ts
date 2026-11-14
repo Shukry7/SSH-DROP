@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, createReadStream, type Stats as LocalStats } from 'node:fs';
+import { constants, type Stats as LocalStats } from 'node:fs';
 import { link, lstat, open, unlink, type FileHandle } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
@@ -8,7 +8,7 @@ import type { SFTPWrapper, Stats } from 'ssh2';
 import type { TransferUpdate } from '../../shared/contracts';
 import { transferWait, TransferFailure } from './transfer-wait';
 import { droppedFileFingerprint } from './dropped-files';
-import type { UploadStage } from './transfer-recovery';
+import type { UploadStage } from './folder-checkpoint';
 
 export const transferLimits = { request: 30000, inactivity: 120000, cleanup: 3000 };
 export const transferWarning =
@@ -222,6 +222,23 @@ export async function runTransfer(options: {
       },
     });
   };
+  // The transfer owns the FileHandle through verification and cleanup. A stream
+  // destroyed by pipeline must never close the numeric descriptor behind it.
+  const localReader = (handle: FileHandle, start: number) =>
+    Readable.from(
+      (async function* () {
+        for (let offset = start; ;) {
+          const buffer = Buffer.alloc(65536);
+          const { bytesRead } = await localCall(() =>
+            handle.read(buffer, 0, buffer.length, offset),
+          );
+          if (!bytesRead) return;
+          offset += bytesRead;
+          yield buffer.subarray(0, bytesRead);
+        }
+      })(),
+      { objectMode: false },
+    );
   const closeTarget = async () => {
     if (targetRemote) {
       const handle = targetRemote;
@@ -412,7 +429,7 @@ export async function runTransfer(options: {
     touch();
     const source =
       direction === 'upload'
-        ? createReadStream(local, { fd: sourceLocal!.fd, autoClose: false, start: position })
+        ? localReader(sourceLocal!, position)
         : prefix.length
           ? Readable.from(
               (async function* () {
@@ -496,12 +513,7 @@ export async function runTransfer(options: {
       if (uploadStage) verifiedUploadMetadata = metadata(stageInfo(info, uploadStage));
       if (info.size !== update.total) throw new TransferFailure('Destination verification failed.');
       verification = reader(verifyRemote, update.total);
-    } else
-      verification = createReadStream(temporary, {
-        fd: targetLocal!.fd,
-        autoClose: false,
-        start: 0,
-      });
+    } else verification = localReader(targetLocal!, 0);
     await pipeline(
       verification,
       new Writable({

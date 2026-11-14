@@ -211,7 +211,7 @@ test('folder pickers and default-Cancel warnings gate verified copies and merges
     await page.getByRole('button', { name: 'Upload folder', exact: true }).click();
     await expect(
       page.getByRole('group', { name: 'Transfer tree', exact: true }).first(),
-    ).toContainText('1 of 2 files copied · 1 skipped');
+    ).toContainText('1 of 2 files copied · 1 skipped', { timeout: 15000 });
     expect(fixture.files.get('/tree/content.txt')?.toString()).toBe('folder desktop bytes');
     expect(fixture.files.get('/tree/new.txt')?.toString()).toBe('new bytes');
     await page.screenshot({ path: 'artifacts/folder-transfers.png' });

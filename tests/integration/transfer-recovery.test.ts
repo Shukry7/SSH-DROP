@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -7,6 +7,108 @@ import { Session } from '../../src/main/core/session';
 import type { SessionEvent } from '../../src/shared/contracts';
 import { testVault } from '../fixtures/backup-vault';
 import { sshFixture } from '../fixtures/ssh-server';
+
+it('recovers a folder upload using only verified remote files and a verified partial file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-folder-upload-'));
+  const local = join(dir, 'source');
+  const remote = '/saved-folder-upload';
+  const original = Buffer.alloc(256 * 1024, 42);
+  const offsets: number[] = [];
+  let stall = true;
+  const fixture = await sshFixture({
+    stallWriteAt: (offset) => {
+      offsets.push(offset);
+      return stall && offset >= 65536;
+    },
+  });
+  const events: SessionEvent[] = [];
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      undefined,
+      undefined,
+      new TransferRecovery(testVault(join(dir, 'journal'))),
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  const first = remote + '/a.txt';
+  const second = remote + '/b.bin';
+  try {
+    await mkdir(join(local, 'empty'), { recursive: true });
+    await writeFile(join(local, 'a.txt'), 'first');
+    await writeFile(join(local, 'b.bin'), original);
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'upload', local, remote, folder: true }]);
+    await vi.waitFor(() => expect(offsets).toContain(65536));
+    expect(fixture.files.get(first)?.toString()).toBe('first');
+    const stage = [...fixture.files.keys()].find((name) => name.endsWith('.part'))!;
+    expect(fixture.files.get(stage)).toEqual(original.subarray(0, 65536));
+    fixture.drop();
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === 'status' && event.lost)).toBe(true),
+    );
+    session = createSession();
+    await connect();
+    const [record] = await session.savedTransfers();
+    expect(record).toMatchObject({
+      direction: 'upload',
+      folder: true,
+      copiedFiles: 1,
+      totalFiles: 2,
+    });
+    stall = false;
+    offsets.length = 0;
+    const retry = () => session.reviewSavedTransfer(record.id, 'retry', async () => true);
+    const rejectsRetry = async (message: string) => {
+      await retry();
+      await vi.waitFor(async () => {
+        expect(
+          events.some(
+            (event) => event.type === 'transfer' && event.transfer.error?.includes(message),
+          ),
+        ).toBe(true);
+        expect(await session.savedTransfers()).toHaveLength(1);
+      });
+      expect(fixture.files.has(second)).toBe(false);
+      expect(offsets).toEqual([]);
+    };
+    const extra = remote + '/unexpected.txt';
+    fixture.files.set(extra, Buffer.from('preserve'));
+    await rejectsRetry('Unexpected entries');
+    expect(fixture.files.get(extra)?.toString()).toBe('preserve');
+    fixture.files.delete(extra);
+    fixture.files.set(first, Buffer.from('other'));
+    await rejectsRetry('completed destination file changed');
+    fixture.files.set(first, Buffer.from('first'));
+    fixture.files.set(stage, Buffer.alloc(65536, 99));
+    await rejectsRetry('prefix does not match');
+    fixture.files.set(stage, original.subarray(0, 65536));
+    await retry();
+    await vi.waitFor(() => expect(fixture.files.get(second)).toEqual(original));
+    expect(offsets[0]).toBe(65536);
+    expect(fixture.files.has(stage)).toBe(false);
+    await vi.waitFor(() =>
+      expect(
+        events.some((event) => event.type === 'transfer' && event.transfer.status === 'completed'),
+      ).toBe(true),
+    );
+    expect(fixture.directories.has(remote + '/empty')).toBe(true);
+    await vi.waitFor(async () => expect(await session.savedTransfers()).toEqual([]));
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+}, 20000);
 
 it('continues a saved folder between files after restart and refuses changed sources or extra destination entries', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-folder-'));

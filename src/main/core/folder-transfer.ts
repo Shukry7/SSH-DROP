@@ -80,8 +80,7 @@ export async function runFolderTransfer(options: {
   limits?: typeof transferLimits;
 }): Promise<void> {
   const { signal, current, sftp, update, publish, checkpoint } = options;
-  if (checkpoint && options.direction !== 'download')
-    throw new Error('Folder recovery supports downloads only.');
+  const uploading = options.direction === 'upload';
   let scanDeadline = Infinity;
   const check = () => {
     signal.throwIfAborted();
@@ -224,7 +223,7 @@ export async function runFolderTransfer(options: {
     bytes += info.isFile() ? info.size : 0;
     if (bytes > folderLimits.bytes) throw new Error('Folder size limit exceeded (10 GiB).');
     if (checkpoint && bytes > folderCheckpointByteLimit)
-      throw new Error('Saved folder downloads are limited to 128 MiB.');
+      throw new Error('Saved folder transfers are limited to 128 MiB.');
     entries.push({
       parts,
       directory: info.isDirectory(),
@@ -302,7 +301,7 @@ export async function runFolderTransfer(options: {
     recoveryPathsSchema.parse({ local: localRoot, remote: options.remote });
     const previous = await checkpoint.load();
     if (!previous && rootExists)
-      throw new Error('Saved folder downloads require a new destination folder.');
+      throw new Error('Saved folder transfers require a new destination folder.');
     if (
       previous &&
       (previous.parentKey !== parentInfo.key ||
@@ -316,7 +315,7 @@ export async function runFolderTransfer(options: {
           );
         }))
     )
-      throw new Error('The saved source tree or destination parent changed. Start a new download.');
+      throw new Error('The saved source tree or destination parent changed. Start a new transfer.');
 
     // Verify the entire plan before writing. A retry will never adopt an existing file
     // or directory whose publication was not acknowledged in the encrypted journal.
@@ -335,29 +334,32 @@ export async function runFolderTransfer(options: {
       options.invalidate,
       folderCheckpointByteLimit,
     );
+    const sourceIO = uploading ? localIO : remoteIO;
+    const targetIO = uploading ? remoteIO : localIO;
     saved = previous ?? { parentKey: parentInfo.key, entries: [] };
     const children = new Map<string, string[]>();
+    const stages = new Map<string, Set<string>>();
     for (const [index, entry] of entries.entries()) {
       inspectSignal.throwIfAborted();
       const from = source.join(sourceRoot, ...entry.parts);
       const to = target.join(targetRoot, ...entry.parts);
       const existing = previous?.entries[index];
       const before = (await source.inspect(from)).key;
-      const snapshot = entry.directory ? undefined : await remoteIO.snapshot(from);
+      const snapshot = entry.directory ? undefined : await sourceIO.snapshot(from);
       if (
         before !== entry.key ||
         (await source.inspect(from)).key !== entry.key ||
         (!entry.directory && (!snapshot || snapshot.size !== entry.size)) ||
         (existing && existing.hash !== snapshot?.hash)
       )
-        throw new Error('A saved source file changed. Start a new download.');
+        throw new Error('A saved source file changed. Start a new transfer.');
 
       const destination = await target.stat(to);
       if (existing?.destinationKey) {
         const value = await target.inspect(to);
         if (value.key !== existing.destinationKey || entry.directory !== value.info.isDirectory())
           throw new Error('A completed destination changed. Inspect the partial folder.');
-        if (!entry.directory && (await localIO.snapshot(to))?.hash !== existing.hash)
+        if (!entry.directory && (await targetIO.snapshot(to))?.hash !== existing.hash)
           throw new Error('A completed destination file changed. Inspect the partial folder.');
         entry.targetKey = existing.destinationKey;
         if (entry.directory) children.set(to, []);
@@ -365,11 +367,20 @@ export async function runFolderTransfer(options: {
       } else if (destination) {
         throw new Error('An unrecorded destination already exists. Inspect the partial folder.');
       }
+      if (uploading && existing?.uploadStage) {
+        const parent = target.dirname(to);
+        const names = stages.get(parent) ?? new Set<string>();
+        names.add(existing.uploadStage.name);
+        stages.set(parent, names);
+      }
       if (!previous)
         saved.entries.push({ parts: entry.parts, sourceKey: entry.key, hash: snapshot?.hash });
     }
     for (const [directory, names] of children) {
-      const actual = await target.list(directory, folderLimits.entries);
+      const temporary = stages.get(directory);
+      const actual = (
+        await target.list(directory, folderLimits.entries + (temporary?.size ?? 0))
+      ).filter((name) => !temporary?.has(name));
       if (actual.length !== names.length || actual.some((name) => !names.includes(name)))
         throw new Error(
           'Unexpected entries exist in the partial folder. Inspect it before retrying.',
@@ -482,6 +493,17 @@ export async function runFolderTransfer(options: {
             remote,
             beforePublish: merge || checkpoint ? guard : undefined,
             expectedSourceHash: savedEntry?.hash,
+            uploadCheckpoint:
+              direction === 'upload' && checkpoint && saved && savedEntry
+                ? {
+                    maxBytes: folderCheckpointByteLimit,
+                    load: async () => savedEntry.uploadStage,
+                    save: async (stage) => {
+                      savedEntry.uploadStage = stage;
+                      await checkpoint.save(saved!);
+                    },
+                  }
+                : undefined,
             update: nested,
             publish: () => {
               update.transferred = completed + nested.transferred;
@@ -508,6 +530,7 @@ export async function runFolderTransfer(options: {
                   'A published destination file changed. Inspect the partial folder.',
                 );
               savedEntry.destinationKey = result.key;
+              delete savedEntry.uploadStage;
               await checkpoint!.save(saved);
             }
           }

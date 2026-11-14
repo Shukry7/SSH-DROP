@@ -8,7 +8,12 @@ import { identitySchema, sameIdentity, type ServerIdentity } from './recovery-st
 import { replacementIO } from './replacement-io';
 import { queuedFileSchema, type QueuedFile } from './transfer-queue';
 import { TransferFailure, transferWait } from './transfer-wait';
-import { folderCheckpointSchema, type FolderCheckpoint } from './folder-checkpoint';
+import {
+  folderCheckpointSchema,
+  uploadStageSchema,
+  type FolderCheckpoint,
+  type UploadStage,
+} from './folder-checkpoint';
 
 const journal = 'transfer-queue.enc';
 export const savedTransferByteLimit = 32 * 1024 * 1024;
@@ -23,24 +28,14 @@ const recordSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     folderCheckpoint: folderCheckpointSchema.optional(),
-    uploadStage: z
-      .object({
-        name: z.string().regex(/^\.sshdrop-[a-f0-9-]{36}\.part$/),
-        uid: z.number().int().nonnegative(),
-        gid: z.number().int().nonnegative(),
-      })
-      .strict()
-      .optional(),
+    uploadStage: uploadStageSchema.optional(),
     created: z.string().datetime(),
   })
   .strict()
   .refine((item) =>
-    item.file.folder
-      ? item.file.direction === 'download' && !item.hash && !item.uploadStage
-      : !!item.hash && !item.folderCheckpoint,
+    item.file.folder ? !item.hash && !item.uploadStage : !!item.hash && !item.folderCheckpoint,
   );
 type Record = z.infer<typeof recordSchema>;
-export type UploadStage = NonNullable<Record['uploadStage']>;
 const schema = z
   .object({ version: z.literal(1), records: z.array(recordSchema).max(100) })
   .strict()
@@ -145,7 +140,7 @@ export class TransferRecovery {
   private folderRecord(records: Record[], id: string) {
     const record = records.find((item) => item.id === id && item.file.folder);
     if (!record || !this.claimed.has(id))
-      throw new TransferFailure('The saved folder download is unavailable.');
+      throw new TransferFailure('The saved folder transfer is unavailable.');
     return record;
   }
 
@@ -161,7 +156,9 @@ export class TransferRecovery {
   }
 
   private uploadRecord(records: Record[], id: string) {
-    const record = records.find((item) => item.id === id && item.file.direction === 'upload');
+    const record = records.find(
+      (item) => item.id === id && !item.file.folder && item.file.direction === 'upload',
+    );
     if (!record || !this.claimed.has(id))
       throw new TransferFailure('The saved upload record is unavailable.');
     return record;

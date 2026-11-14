@@ -1,6 +1,6 @@
 # Transfer recovery
 
-In SSHDrop, **Saved transfers** appears after connecting to a server with SFTP. Enable **Remember new file transfers and folder downloads in this connection** before selecting files. This setting starts off in a new connection tab and lasts while the tab remains open. Folder uploads and transfers queued with the setting off stay session-only.
+In SSHDrop, **Saved transfers** appears after connecting to a server with SFTP. Enable **Remember new file and folder transfers in this connection** before selecting files. This setting starts off in a new connection tab and lasts while the tab remains open. Transfers queued with the setting off stay session-only.
 
 Recovery accepts up to eight files per batch, 32 MiB per file, and 100 saved records across the app. The queue must be idle before saving a batch. Choose an unused destination. SSHDrop reads and hashes each source before queuing, so large batches can take time. An unavailable OS key store blocks saving encrypted records.
 
@@ -24,4 +24,10 @@ The remote partial file contains the uploaded bytes and uses owner-only permissi
 
 Enable transfer recovery, choose **Download folder**, and select a parent where the destination folder does not exist. The original scan limits of 100 entries and 16 levels apply, with a 128 MiB total size limit for saved folders. Disable recovery for ordinary larger folder copies or merges.
 
-After a disconnect, reconnect to the same verified server and account and select **Review folder download**. The review shows how many files were recorded as copied. SSHDrop rechecks the source tree and its file hashes, verifies recorded local files, and starts unfinished files from byte zero. Source changes, missing or changed completed paths, and unexpected destination entries stop the retry. If the app stopped between publishing an entry and saving its record, the retry also stops. Inspect the partial folder and download into a new destination in that case. Cancelling an active folder download leaves its record available for another explicit review. **Forget transfer** removes the record and leaves copied files in place. Finished downloads are ordinary local files. Folder upload and merge recovery remain planned.
+After a disconnect, reconnect to the same verified server and account and select **Review folder download**. The review shows how many files were recorded as copied. SSHDrop rechecks the source tree and its file hashes, verifies recorded local files, and starts unfinished files from byte zero. Source changes, missing or changed completed paths, and unexpected destination entries stop the retry. If the app stopped between publishing an entry and saving its record, the retry also stops. Inspect the partial folder and download into a new destination in that case. Cancelling an active folder download leaves its record available for another explicit review. **Forget transfer** removes the record and leaves copied files in place. Finished downloads are ordinary local files.
+
+## Folder upload recovery in 0.5.0-alpha.5
+
+Enable recovery and use **Upload folder** to copy into a new remote destination. The 128 MiB, 100-entry and 16-level limits apply. After reconnecting to the same verified server and account, select **Review folder upload** to see the recorded progress and approve continuing. SSHDrop verifies the source tree and completed remote files. If an unfinished file has a recorded remote temporary file, SSHDrop checks its ownership, permissions and bytes before continuing. A missing temporary file starts that file from byte zero. Changed files or unexpected remote entries stop the retry.
+
+The temporary file contains the uploaded bytes and requests owner-only permissions. Forgetting the record leaves remote files and any temporary file available for inspection. Disable recovery to use ordinary folder merging. Recovery for merges remains planned.

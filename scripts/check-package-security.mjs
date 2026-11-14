@@ -28,6 +28,20 @@ for (const root of roots) {
 assert(binaries.length > 0, 'No unpacked application was found to inspect.');
 for (const { binary, asar } of binaries) {
   assert((await stat(asar)).isFile(), 'Packaged application must use app.asar.');
+  if (binary === join('dist', 'linux-unpacked', 'sshdrop')) {
+    // The native Sharp loader resolves libvips from the real filesystem at startup.
+    const nativeLibraries = join(`${asar}.unpacked`, 'node_modules', '@img');
+    const vips = (await readdir(nativeLibraries)).find((name) =>
+      name.startsWith('sharp-libvips-linux-'),
+    );
+    assert(vips, 'The Linux package must unpack the native Sharp libvips dependency.');
+    assert(
+      (await readdir(join(nativeLibraries, vips, 'lib'))).some((name) =>
+        name.startsWith('libvips-cpp.so.'),
+      ),
+      'The Linux package must include an unpacked libvips shared library.',
+    );
+  }
   const wire = await getCurrentFuseWire(binary);
   for (const option of [
     FuseV1Options.RunAsNode,
