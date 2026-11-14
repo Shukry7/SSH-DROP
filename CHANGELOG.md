@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.2] — Unreleased
+
+### Added
+
+- Saved downloads can continue from encrypted partial bytes after a detected connection interruption. Review the retry first. SSHDrop checks the checkpoint against the remote prefix and verifies the original full-file hash before publishing. Saved uploads still restart from byte zero.
+
 ## [0.5.0-alpha.1] — Unreleased
 
 ### Added

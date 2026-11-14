@@ -30,6 +30,11 @@ const metadata = (stats: Stats | LocalStats) => {
 export async function runTransfer(options: {
   beforePublish?: () => Promise<void>;
   expectedSourceHash?: string;
+  downloadCheckpoint?: {
+    maxBytes: number;
+    load: () => Promise<Buffer>;
+    save: (bytes: AsyncIterable<Buffer>, size: number) => Promise<void>;
+  };
   sourceFingerprint?: string;
   sftp: SFTPWrapper;
   direction: 'upload' | 'download';
@@ -59,6 +64,7 @@ export async function runTransfer(options: {
   let publishing = false;
   let lastUpdate = 0;
   let cleanupDeadline = Infinity;
+  let position = 0;
   const temporaryName = `.sshdrop-${randomUUID()}.part`;
   const temporary =
     direction === 'upload'
@@ -162,8 +168,8 @@ export async function runTransfer(options: {
       throw error;
     }
   };
-  const reader = (handle: Buffer, total: number) => {
-    let position = 0;
+  const reader = (handle: Buffer, total: number, start = 0) => {
+    let position = start;
     return new Readable({
       highWaterMark: 65536,
       read() {
@@ -271,6 +277,31 @@ export async function runTransfer(options: {
       }
       // Final publication below is exclusive even if another process creates this path later.
     }
+    const prefix =
+      options.downloadCheckpoint && direction === 'download'
+        ? await options.downloadCheckpoint.load()
+        : Buffer.alloc(0);
+    if (
+      options.downloadCheckpoint &&
+      (prefix.length > update.total || update.total > options.downloadCheckpoint.maxBytes)
+    )
+      throw new TransferFailure('The saved download size changed or exceeds the recovery limit.');
+    for (let offset = 0; offset < prefix.length;) {
+      const buffer = Buffer.alloc(Math.min(65536, prefix.length - offset));
+      const count = await request<number>((cb) =>
+        sftp.read(sourceRemote!, buffer, 0, buffer.length, offset, (error, count) =>
+          cb(error, count),
+        ),
+      );
+      if (
+        !Number.isInteger(count) ||
+        count <= 0 ||
+        count > buffer.length ||
+        !buffer.subarray(0, count).equals(prefix.subarray(offset, offset + count))
+      )
+        throw new TransferFailure('The saved download prefix no longer matches the remote file.');
+      offset += count;
+    }
     check();
     attemptedTemporary = true;
     if (direction === 'upload') targetRemote = await openRemote(temporary, 'wx');
@@ -283,7 +314,16 @@ export async function runTransfer(options: {
     const source =
       direction === 'upload'
         ? createReadStream(local, { fd: sourceLocal!.fd, autoClose: false, start: 0 })
-        : reader(sourceRemote!, update.total);
+        : prefix.length
+          ? Readable.from(
+              (async function* () {
+                for (let offset = 0; offset < prefix.length; offset += 65536)
+                  yield prefix.subarray(offset, offset + 65536);
+                yield* reader(sourceRemote!, update.total, prefix.length);
+              })(),
+              { objectMode: false },
+            )
+          : reader(sourceRemote!, update.total);
     const sourceHash = createHash('sha256');
     let counted = 0;
     const meter = new Transform({
@@ -297,7 +337,6 @@ export async function runTransfer(options: {
         callback(null, chunk);
       },
     });
-    let position = 0;
     const target = new Writable({
       highWaterMark: 65536,
       write(chunk: Buffer, _encoding, callback) {
@@ -468,6 +507,34 @@ export async function runTransfer(options: {
     options.signal.removeEventListener('abort', cancelled);
     sftp.removeListener('close', lost);
     sftp.removeListener('error', lost);
+    if (
+      targetLocal &&
+      options.downloadCheckpoint &&
+      update.status === 'failed' &&
+      position > 0 &&
+      !publishing &&
+      (!current() ||
+        invalidated ||
+        (options.signal.aborted && options.signal.reason?.name !== 'AbortError'))
+    ) {
+      const file = targetLocal;
+      const size = position;
+      const bytes = async function* () {
+        for (let offset = 0; offset < size;) {
+          const buffer = Buffer.alloc(Math.min(65536, size - offset));
+          const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
+          if (bytesRead <= 0) throw new Error('Incomplete download checkpoint.');
+          offset += bytesRead;
+          yield buffer.subarray(0, bytesRead);
+        }
+      };
+      try {
+        await options.downloadCheckpoint.save(bytes(), size);
+      } catch {
+        warn();
+      }
+    }
+    cleanupDeadline = Date.now() + limits.cleanup;
     for (const handle of [targetRemote, sourceRemote, verifyRemote])
       if (handle) await cleanup((cb) => sftp.close(handle, cb), true);
     for (const handle of [sourceLocal, targetLocal])

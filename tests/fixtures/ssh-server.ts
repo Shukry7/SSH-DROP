@@ -24,6 +24,7 @@ export async function sshFixture(
     denyChanges?: boolean;
     dropAfterChange?: boolean;
     stall?: string[];
+    stallReadAt?: (offset: number) => boolean;
     corruptReadback?: boolean;
     atomicReplace?: boolean;
     dropAfterReplace?: boolean;
@@ -234,7 +235,7 @@ export async function sshFixture(
             if (!options.stall?.includes('OPEN')) sftp.handle(id, opened);
           });
           sftp.on('READ', (id, raw, offset, length) => {
-            if (options.stall?.includes('READ')) return;
+            if (options.stall?.includes('READ') || options.stallReadAt?.(offset)) return;
             const entry = handles.get(raw.toString());
             const contents = entry && files.get(entry.path);
             if (!contents) return sftp.status(id, status.FAILURE);
