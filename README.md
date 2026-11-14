@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.4.0-alpha.2, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
+**Status: 0.4.0-alpha.3, early development preview.** Local Windows checks are available; current hosted CI cannot start because of the account billing block. Linux/macOS validation, real-device certification, and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.4.0-alpha.3`** adds **Edit in terminal** for regular remote files. Choose Nano or Vim in the confirmation. The selected editor must be installed on the server and saves directly to the remote file. Use **Edit text** for verified saves and optional SSHDrop recovery backups.
 
 **Development source `0.4.0-alpha.2`** adds **Open shell folder**. If your shell reports its working directory, use this button to open it in Files on the same SSH connection. Enter a path manually when no report is available.
 

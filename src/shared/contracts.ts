@@ -113,7 +113,7 @@ export type SessionEvent =
   | { type: 'workflow-reset' }
   | { type: 'queue'; queue: QueueState }
   | { type: 'terminal-reset' }
-  | { type: 'terminal-opened'; terminalId: string }
+  | { type: 'terminal-opened'; terminalId: string; editor?: { name: 'nano' | 'vim'; path: string } }
   | {
       type: 'status';
       connected: boolean;
@@ -190,6 +190,7 @@ export interface DesktopAPI {
   resumeQueue(): Promise<Result<void>>;
   cancel(id: string): Promise<Result<void>>;
   openTerminal(): Promise<Result<void>>;
+  openTerminalEditor(input: { directory: string; name: string }): Promise<Result<void>>;
   closeTerminal(terminalId: string): Promise<Result<void>>;
   input(data: string, terminalId?: string): Promise<Result<void>>;
   acknowledge(id: number): Promise<Result<void>>;

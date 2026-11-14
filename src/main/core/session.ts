@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, posix } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2';
 import type {
@@ -30,12 +30,18 @@ import { RemoteEditor } from './remote-editor';
 import { readImagePreview } from './image-preview';
 import type { EditorDocument, EditorComparison } from '../../shared/editor';
 import { runWorkflow } from './workflow-runner';
-import type { WorkflowPlan } from '../../shared/workflows';
+import { shellQuote, type WorkflowPlan } from '../../shared/workflows';
 import { TransferFailure, transferWait } from './transfer-wait';
 
 interface TerminalShell {
   channel: ClientChannel;
   pendingBytes: number;
+}
+
+type TerminalEditor = 'nano' | 'vim';
+interface TerminalEdit {
+  path: string;
+  choose: (signal: AbortSignal) => Promise<TerminalEditor | undefined>;
 }
 
 export class Session {
@@ -251,7 +257,10 @@ export class Session {
     this.emit({ type: 'terminal-reset' });
   }
 
-  private registerTerminal(channel: ClientChannel): string {
+  private registerTerminal(
+    channel: ClientChannel,
+    editor?: { name: TerminalEditor; path: string },
+  ): string {
     const terminalId = randomUUID();
     const terminal = { channel, pendingBytes: 0 };
     const decoder = new StringDecoder('utf8');
@@ -269,11 +278,11 @@ export class Session {
       this.exitedTerminals.add(terminalId);
       this.emit({ type: 'terminal-exit', terminalId });
     });
-    this.emit({ type: 'terminal-opened', terminalId });
+    this.emit({ type: 'terminal-opened', terminalId, ...(editor && { editor }) });
     return terminalId;
   }
 
-  async openTerminal(): Promise<void> {
+  async openTerminal(edit?: TerminalEdit): Promise<void> {
     const client = this.client;
     if (!client || this.connecting) throw new Error('Connect to a server first.');
     if (this.openingTerminal) throw new Error('A terminal is already opening.');
@@ -284,18 +293,64 @@ export class Session {
       throw new Error('Close a terminal before opening another.');
     const controller = new AbortController();
     this.openingTerminal = controller;
+    let started = false;
     let replied = false;
     const release = () => {
       if (this.openingTerminal === controller) this.openingTerminal = undefined;
     };
     try {
+      const sftp = edit && this.files();
+      const check = () => {
+        controller.signal.throwIfAborted();
+        if (this.client !== client || (sftp && sftp !== this.sftp))
+          throw new Error('The connection changed while opening a terminal.');
+      };
+      let editor: { name: TerminalEditor; path: string } | undefined;
+      if (edit && sftp) {
+        const path = remotePath(edit.path);
+        const name = await edit.choose(controller.signal);
+        check();
+        if (!name) return;
+        const parent = posix.dirname(path);
+        const canonical = await transferWait<string>(
+          (done) => sftp.realpath(parent, done),
+          this.setupTimeout,
+          controller.signal,
+        );
+        check();
+        if (canonical !== parent)
+          throw new Error('Refresh the file list and open the canonical folder.');
+        const stats = await transferWait<import('ssh2').Stats>(
+          (done) => sftp.lstat(path, done),
+          this.setupTimeout,
+          controller.signal,
+        );
+        check();
+        if (!stats.isFile()) throw new Error('Choose a regular remote file.');
+        editor = { name, path };
+      }
+      const pty = { term: 'xterm-256color', cols: 100, rows: 28 };
       const channel = await transferWait<ClientChannel>(
-        (done) =>
-          client.shell({ term: 'xterm-256color', cols: 100, rows: 28 }, (error, channel) => {
+        (done) => {
+          const callback = (error: Error | undefined, channel: ClientChannel) => {
             replied = true;
             done(error, channel);
             release();
-          }),
+          };
+          started = true;
+          try {
+            if (editor) {
+              const command =
+                editor.name === 'nano' ? 'nano -I' : "vim --clean -n --cmd 'set nomodeline'";
+              client.exec(`exec ${command} -- ${shellQuote(editor.path)} 2>&1`, { pty }, callback);
+            } else {
+              client.shell(pty, callback);
+            }
+          } catch (error) {
+            started = false;
+            throw error;
+          }
+        },
         this.setupTimeout,
         controller.signal,
         (late) => {
@@ -303,13 +358,16 @@ export class Session {
           else late.close();
         },
       );
-      if (controller.signal.aborted || this.client !== client) {
-        channel.close();
-        throw new Error('The connection changed while opening a terminal.');
+      try {
+        check();
+      } catch (error) {
+        if (this.client === client) this.endTerminal(channel);
+        else channel.close();
+        throw error;
       }
-      this.registerTerminal(channel);
+      this.registerTerminal(channel, editor);
     } finally {
-      if (replied) release();
+      if (!started || replied) release();
     }
   }
 

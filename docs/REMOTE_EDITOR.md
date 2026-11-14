@@ -27,3 +27,11 @@ The editor does not run scripts or load language servers, remote plugins, or ext
 Open up to eight files with **Edit text**. Use **Back to files** to browse for another file, or **Open editors** to return to your tabs. Opening the same path on the current connection selects its existing tab. With the tab strip focused, use Left/Right arrows to switch or Home/End to select the first/last tab.
 
 Each tab keeps its own draft, undo history, search and comparison. **Close editor** closes the selected tab and asks before discarding unsaved text. Closing SSHDrop warns about unsaved edits even when the editor is hidden. Disconnection disables saving old tabs and leaves drafts available for copying. Idle protection clears all tabs.
+
+## Edit in Nano or Vim in 0.4.0-alpha.3
+
+Choose **Edit in terminal** beside a regular remote file. Review the path in the confirmation, then choose **Open Nano** or **Open Vim**. The editor opens in a dedicated tab on the same SSH connection and counts toward the four-terminal limit. Nano or Vim must be installed on the server. If launch fails, check the terminal output.
+
+Nano saves with Ctrl+O followed by Enter, and exits with Ctrl+X. In Vim, press Esc, then use `:w` to save or `:q` to exit. Save and exit inside the editor before closing its tab. Closing the terminal can lose unsaved text. Refresh Files after editing to see updated metadata.
+
+Terminal editors write directly on the server. For verified saves, conflict checks, and optional SSHDrop recovery backups, use **Edit text**. Avoid editing the same file concurrently in both editors.

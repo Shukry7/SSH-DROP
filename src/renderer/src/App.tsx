@@ -874,6 +874,30 @@ export function App({ sessionProtection }: { sessionProtection?: ReactNode }) {
                                   Edit text
                                 </button>
                               )}
+                              {entry.kind === 'file' && (
+                                <button
+                                  className="text-button"
+                                  disabled={!filesReady || fileBusy}
+                                  onClick={() => {
+                                    void run(async () => {
+                                      const epoch = connectionEpoch.current;
+                                      setActionBusy(true);
+                                      try {
+                                        unwrap(
+                                          await window.sshdrop.openTerminalEditor({
+                                            directory: listing.path,
+                                            name: entry.name,
+                                          }),
+                                        );
+                                      } finally {
+                                        if (epoch === connectionEpoch.current) setActionBusy(false);
+                                      }
+                                    });
+                                  }}
+                                >
+                                  Edit in terminal
+                                </button>
+                              )}
                               <button
                                 className="text-button"
                                 disabled={!filesReady || fileBusy}

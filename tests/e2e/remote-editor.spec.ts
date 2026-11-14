@@ -23,9 +23,10 @@ async function withEditorWorkspace(
     fixture: Awaited<ReturnType<typeof sshFixture>>,
     application: ElectronApplication,
   ) => Promise<void>,
+  exec?: NonNullable<Parameters<typeof sshFixture>[0]>['exec'],
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-editor-ui-'));
-  const fixture = await sshFixture({ atomicReplace: true });
+  const fixture = await sshFixture({ atomicReplace: true, exec });
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
@@ -41,11 +42,13 @@ async function withEditorWorkspace(
         Object.assign(globalThis, { editorWarning: options });
         return {
           response:
-            options.title === 'Save edited remote file'
+            options.title === 'Edit in terminal'
               ? 2
-              : options.title === 'Unsaved editor changes'
-                ? 0
-                : 1,
+              : options.title === 'Save edited remote file'
+                ? 2
+                : options.title === 'Unsaved editor changes'
+                  ? 0
+                  : 1,
           checkboxChecked: false,
         };
       };
@@ -66,6 +69,41 @@ async function withEditorWorkspace(
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
+
+test('opens a confirmed Vim tab from Files and warns before closing it', async () => {
+  test.setTimeout(60000);
+  await withEditorWorkspace(
+    async (page, fixture, application) => {
+      const row = page
+        .getByRole('row')
+        .filter({ has: page.getByRole('cell', { name: /hello\.txt/ }) });
+      await row.getByRole('button', { name: 'Edit in terminal', exact: true }).click();
+      const terminal = page.getByRole('region', { name: 'Terminal panel' });
+      const vim = terminal.getByRole('tab', { name: /Vim.*hello\.txt/ });
+      await expect(vim).toHaveAttribute('aria-selected', 'true');
+      expect(
+        await application.evaluate(
+          () => (globalThis as unknown as { editorWarning: unknown }).editorWarning,
+        ),
+      ).toMatchObject({
+        title: 'Edit in terminal',
+        detail: expect.stringContaining('/hello.txt'),
+        defaultId: 0,
+        cancelId: 0,
+      });
+      await expect(terminal.getByRole('tabpanel')).toContainText('fixture-command-output');
+      await terminal.getByRole('button', { name: 'Close terminal' }).click();
+      await expect(terminal.getByRole('alert')).toContainText('Unsaved changes may be lost.');
+      await terminal.getByRole('button', { name: 'Close shell', exact: true }).click();
+      await expect(vim).toHaveCount(0);
+      await expect(terminal.getByRole('tab', { name: 'Terminal 1' })).toBeVisible();
+      expect(fixture.files.get('/hello.txt')?.toString()).toContain('Hello');
+    },
+    (_command, stream) => {
+      stream.write('fixture-command-output');
+    },
+  );
+});
 
 test('remote editor protects drafts, verifies saves and refuses external edits', async () => {
   test.setTimeout(60000);

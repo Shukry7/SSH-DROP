@@ -97,6 +97,7 @@ const api: DesktopAPI = {
   resumeQueue: () => ipcRenderer.invoke(channels.resumeQueue),
   cancel: (id) => ipcRenderer.invoke(channels.cancel, id),
   openTerminal: () => ipcRenderer.invoke(channels.openTerminal),
+  openTerminalEditor: (input) => ipcRenderer.invoke(channels.openTerminalEditor, input),
   closeTerminal: (terminalId) => ipcRenderer.invoke(channels.closeTerminal, terminalId),
   input: (data, terminalId) => ipcRenderer.invoke(channels.input, { data, terminalId }),
   acknowledge: (id) => ipcRenderer.invoke(channels.acknowledge, id),

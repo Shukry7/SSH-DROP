@@ -45,6 +45,7 @@ export const channels = {
   cancel: 'transfer:cancel',
   input: 'terminal:input',
   openTerminal: 'terminal:open',
+  openTerminalEditor: 'terminal:open-editor',
   closeTerminal: 'terminal:close',
   acknowledge: 'terminal:acknowledge',
   resize: 'terminal:resize',

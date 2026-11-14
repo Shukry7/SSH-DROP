@@ -719,6 +719,28 @@ function registerAPI(): void {
     z.undefined().parse(value);
     return session!.openTerminal();
   });
+  handle(channels.openTerminalEditor, (value) => {
+    const { directory, name } = openEditorSchema.parse(value);
+    const path = childPath(directory, name);
+    if (Buffer.byteLength(path) > 4096) throw new Error('The remote path is too long.');
+    return session!.openTerminal({
+      path,
+      choose: async (signal) => {
+        const { response } = await messageBox({
+          type: 'warning',
+          title: 'Edit in terminal',
+          message: 'Open this remote file in a terminal editor?',
+          detail: `${path}\n\nNano and Vim write directly to the server. SSHDrop’s verified save checks and recovery backups do not apply.\n\nChoose an editor installed on the server.`,
+          buttons: ['Cancel', 'Open Nano', 'Open Vim'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+          signal,
+        });
+        return response === 1 ? 'nano' : response === 2 ? 'vim' : undefined;
+      },
+    });
+  });
   handle(channels.closeTerminal, (value) => session!.closeTerminal(z.string().uuid().parse(value)));
   handle(channels.input, (value) => {
     const { data, terminalId } = z

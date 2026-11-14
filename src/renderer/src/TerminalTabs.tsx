@@ -9,6 +9,7 @@ interface Tab {
   number: number;
   running: boolean;
   directory?: string;
+  editor?: Extract<SessionEvent, { type: 'terminal-opened' }>['editor'];
 }
 
 export function TerminalTabs({
@@ -29,6 +30,10 @@ export function TerminalTabs({
   const generation = useRef(0);
   const outlets = useRef(new Map<string, { listener?: TerminalOutput; pending: OutputEvent[] }>());
   const selectedTab = tabs.find((tab) => tab.id === selected) ?? tabs[0];
+  const editorTabId = selectedTab?.editor ? selectedTab.id : undefined;
+  useEffect(() => {
+    if (editorTabId) document.getElementById(`terminal-tab-${editorTabId}`)?.focus();
+  }, [editorTabId]);
 
   useEffect(
     () =>
@@ -44,7 +49,12 @@ export function TerminalTabs({
           setError('');
         } else if (event.type === 'terminal-opened') {
           outlets.current.set(event.terminalId, { pending: [] });
-          const tab = { id: event.terminalId, number: ++sequence.current, running: true };
+          const tab = {
+            id: event.terminalId,
+            number: ++sequence.current,
+            running: true,
+            editor: event.editor,
+          };
           setTabs((previous) => [...previous, tab]);
           setSelected(tab.id);
           setConfirmClose('');
@@ -175,18 +185,26 @@ export function TerminalTabs({
               aria-selected={tab.id === selectedTab?.id}
               aria-controls={`terminal-panel-${tab.id}`}
               tabIndex={tab.id === selectedTab?.id ? 0 : -1}
+              title={tab.editor?.path}
               onClick={() => {
                 setSelected(tab.id);
                 setConfirmClose('');
               }}
             >
-              Terminal {tab.number}
+              {tab.editor ? (
+                <>
+                  {tab.editor.name === 'nano' ? 'Nano' : 'Vim'} ·{' '}
+                  <bdi>{tab.editor.path.split('/').at(-1)}</bdi>
+                </>
+              ) : (
+                `Terminal ${tab.number}`
+              )}
               {tab.running ? '' : ' · Closed'}
             </button>
           ))}
         </div>
       )}
-      {connected && selectedTab?.running && (
+      {connected && selectedTab?.running && !selectedTab.editor && (
         <div className="terminal-directory">
           <button
             className="secondary compact"
@@ -208,9 +226,23 @@ export function TerminalTabs({
           )}
         </div>
       )}
+      {selectedTab?.editor && (
+        <div className="terminal-directory">
+          <bdi className="terminal-directory-path">{selectedTab.editor.path}</bdi>
+          <span className="muted">
+            {selectedTab.editor.name === 'nano'
+              ? 'Ctrl+O to save, Ctrl+X to exit.'
+              : 'Esc, then :w to save or :q to exit.'}
+          </span>
+        </div>
+      )}
       {confirmClose && (
         <div className="terminal-notice" role="alert">
-          <p>Close this shell? Running commands in this terminal may stop.</p>
+          <p>
+            {selectedTab?.editor
+              ? 'Close this editor? Unsaved changes may be lost.'
+              : 'Close this shell? Running commands in this terminal may stop.'}
+          </p>
           <button className="secondary compact" onClick={() => setConfirmClose('')}>
             Cancel
           </button>

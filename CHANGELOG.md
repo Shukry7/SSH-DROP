@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.4.0-alpha.3] — Unreleased
+
+### Added
+
+- Open a remote file in a dedicated Nano or Vim terminal tab after reviewing a confirmation. Both editors run on the connected server and share the four-tab limit.
+
 ## [0.4.0-alpha.2] — Unreleased
 
 ### Added
