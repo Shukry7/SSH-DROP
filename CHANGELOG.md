@@ -158,6 +158,15 @@ Application versions follow Semantic Versioning. Alpha releases are development 
 
 ## [Unreleased]
 
+### Fixed
+
+- Development macOS packages now explicitly use ad-hoc signing after bundle/fuse changes, with Electron runtime entitlements. This is integrity signing only, not Apple Developer ID signing or notarization.
+- Add macOS validation of nested signatures, DMG checksums/mounting, embedded version/ASAR bytes and host-architecture packaged startup. A manual CI mode compares existing alpha.2 and alpha.5 release DMGs without modifying them.
+
+### Changed
+
+- CI runs on main pushes and pull requests instead of duplicating every feature push; successful runs retain no diagnostic artifacts, failure diagnostics and release handoff artifacts expire after one day. Tagged releases still retain their independent release assets.
+
 ## [0.2.0-alpha.4] — 2026-11-03
 
 ### Added

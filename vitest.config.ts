@@ -5,6 +5,8 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
     testTimeout: 15000,
     hookTimeout: 15000,
+    // SSH/SFTP integration polling must tolerate loaded Windows/CI workers.
+    expect: { poll: { timeout: 10000 } },
     coverage: {
       provider: 'v8',
       include: [

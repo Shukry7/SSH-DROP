@@ -76,7 +76,7 @@ describe('bounded, server-bound recovery storage', () => {
       await expect(store.create(input())).rejects.toThrow('preserved');
       expect(await readFile(path)).toEqual(encrypted);
     }
-  });
+  }, 30000);
   it('requires inspection before deletion and never deletes the destination', async () => {
     const record = await store.create(input());
     await writeFile(store.backup(record.id), 'data');

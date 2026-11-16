@@ -1,5 +1,9 @@
 # Roadmap
 
+## Immediate release-engineering work
+
+The Mac packaging fix branch includes ad-hoc development signing and DMG/signature/startup checks. Mac validation is pending because hosted Actions jobs fail at startup and the available development machine runs Windows. The private 0.3.0-alpha.1 draft contains the locally validated Windows build. Developer ID signing, notarization, and real-device Intel/Apple Silicon validation remain pending.
+
 ## Implementation priorities after 0.2.0-alpha.5
 
 The disconnect-and-clear part of priority 1 is implemented in alpha.6 development source as described below; authenticated lock/unlock remains planned. Alpha.6 development source includes per-file encrypted exports and offline restore-to-copy; whole-vault migration and rotation remain planned. Alpha.5 is a private draft with merged source, green cross-platform CI and verified release checksums. First manually validate its installers on supported devices, including the affected macOS terminal/display, workflow confirmation preferences and overwrite/recovery behavior. CI does not replace this device testing.

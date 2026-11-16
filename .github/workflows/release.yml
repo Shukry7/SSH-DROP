@@ -50,6 +50,9 @@ jobs:
         run: npm exec electron-builder -- --publish never
       - name: Inspect security fuses in packaged binaries
         run: npm run security:package
+      - name: Verify macOS signatures, DMG contents and packaged startup
+        if: runner.os == 'macOS'
+        run: npm run security:mac-package
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: installers-${{ matrix.os }}
@@ -60,7 +63,7 @@ jobs:
             dist/*.deb
             dist/*.blockmap
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   draft:
     name: Assemble draft release
