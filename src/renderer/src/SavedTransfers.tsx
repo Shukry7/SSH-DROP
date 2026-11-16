@@ -73,7 +73,7 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
           <div key={record.id} className="saved-transfer">
             <strong>
               {record.merge
-                ? 'Folder download merge'
+                ? `Folder ${record.direction} merge`
                 : record.folder
                   ? `Folder ${record.direction}`
                   : record.direction === 'upload'

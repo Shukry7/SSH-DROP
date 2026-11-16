@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.7] — Unreleased
+
+### Added
+
+- Recover interrupted folder upload merges using **Skip file** and **Keep both**. SSHDrop verifies original remote files and completed copies before resuming and stops when it finds an unrecorded copy.
+
 ## [0.5.0-alpha.6] — Unreleased
 
 ### Added
