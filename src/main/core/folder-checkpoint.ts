@@ -26,13 +26,17 @@ const entry = z
       .optional(),
     skipped: z.literal(true).optional(),
     alternate: actionNameSchema.optional(),
+    replacementId: z.string().uuid().optional(),
     originalNames: z.array(z.string().max(4096)).max(1000).optional(),
   })
   .strict()
   .refine(
     (item) =>
       (!item.uploadStage || (!!item.hash && !item.destinationKey && !item.original)) &&
-      (!item.original || (!!item.hash && !!item.destinationKey === !!item.alternate)) &&
+      (!item.original ||
+        (!!item.hash && (!!item.destinationKey === !!item.alternate || !!item.replacementId))) &&
+      (!item.replacementId ||
+        (!!item.original && !item.alternate && !item.skipped && !item.uploadStage)) &&
       (!item.alternate || !!item.original) &&
       (!item.skipped || (!!item.original && !item.destinationKey)) &&
       (!item.originalNames || (!item.hash && !!item.destinationKey)),

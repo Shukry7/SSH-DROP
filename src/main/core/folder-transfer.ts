@@ -9,6 +9,7 @@ import { folderCheckpointByteLimit, type FolderCheckpoint } from './folder-check
 import { copyName, type ReplacementApproval } from './replacement';
 import { replacementIO } from './replacement-io';
 import { recoveryPathsSchema } from './recovery-store';
+import type { RecoveryRecord } from './recovery-store';
 import { runTransfer, transferLimits } from './transfer';
 import { transferWait } from './transfer-wait';
 
@@ -70,6 +71,14 @@ export async function runFolderTransfer(options: {
   };
   merge?: {
     confirm: (approval: ReplacementApproval) => Promise<number>;
+    replaceDownload?: (
+      local: string,
+      remote: string,
+      transfer: (direction: 'upload' | 'download', local: string, remote: string) => Promise<void>,
+      guard: () => Promise<void>,
+      recordCreated: (record: RecoveryRecord) => Promise<void>,
+    ) => Promise<void>;
+    verifyReplacement?: (id: string, local: string, remote: string, hash: string) => Promise<void>;
     conflict: (
       local: string,
       remote: string,
@@ -365,7 +374,12 @@ export async function runFolderTransfer(options: {
         throw new Error('A saved source file changed. Start a new transfer.');
 
       const destination = await target.stat(to);
-      if (existing?.original) {
+      if (existing?.replacementId) {
+        if (uploading || !existing.destinationKey || !savedMerge?.verifyReplacement)
+          throw new Error('Replacement needs inspection in Recovery backups before continuing.');
+        await savedMerge.verifyReplacement(existing.replacementId, to, from, existing.hash!);
+      }
+      if (existing?.original && !existing.replacementId) {
         const value = await target.inspect(to);
         if (
           value.key !== existing.original.key ||
@@ -456,7 +470,7 @@ export async function runFolderTransfer(options: {
       const choice = await savedMerge.confirm({
         title: `Save and merge folder ${options.direction}?`,
         buttons: ['Cancel', 'Review file conflicts and merge'],
-        detail: `Source: ${sourceRoot}\nDestination: ${targetRoot}\n\nYou can skip conflicts or keep both files. Existing files are preserved. If interrupted, review the saved merge before continuing.`,
+        detail: `Source: ${sourceRoot}\nDestination: ${targetRoot}\n\nReview each conflict. ${!uploading && savedMerge.replaceDownload ? 'Back up and replace retains an encrypted local backup for rollback.' : 'Existing files are preserved.'} If interrupted, review the saved merge before continuing.`,
       });
       check();
       if (choice !== 1) {
@@ -627,8 +641,12 @@ export async function runFolderTransfer(options: {
             };
             const choice = await savedMerge.confirm({
               title: 'File already exists',
-              buttons: ['Skip file', 'Keep both'],
-              detail: `Existing file: ${to}\nKeep both creates: ${alternate}\n\nThe existing file stays in place.`,
+              buttons: [
+                'Skip file',
+                'Keep both',
+                ...(!uploading && savedMerge.replaceDownload ? ['Back up and replace'] : []),
+              ],
+              detail: `Existing file: ${to}\nKeep both creates: ${alternate}\n\n${!uploading && savedMerge.replaceDownload ? 'Back up and replace first retains an encrypted verified backup on this computer. The old file can be restored through Recovery backups. Stop other writers while replacing files.' : 'The existing file stays in place.'}`,
             });
             await verifyOriginal();
             if (choice === 0) {
@@ -650,6 +668,18 @@ export async function runFolderTransfer(options: {
                 checkAlternate,
               );
               await recordPublication(alternate, name);
+            } else if (choice === 2 && !uploading && savedMerge.replaceDownload) {
+              await savedMerge.replaceDownload(
+                local,
+                remote,
+                transfer,
+                verifyOriginal,
+                async (record) => {
+                  savedEntry.replacementId = record.id;
+                  await checkpoint.save(saved);
+                },
+              );
+              await recordPublication(to);
             } else {
               throw new Error('Invalid saved merge choice.');
             }

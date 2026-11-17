@@ -25,6 +25,7 @@ export interface ReplacementContext {
   remoteIO: ReplacementIO;
   check(): void;
   beforePublish?: () => Promise<void>;
+  recordCreated?: (record: RecoveryRecord) => Promise<void>;
   transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void>;
   confirm(approval: ReplacementApproval): Promise<number>;
 }
@@ -233,6 +234,14 @@ export class Replacements {
       throw error;
     }
   }
+  async replaceDownloadMerge(local: string, remote: string): Promise<void> {
+    recoveryPathsSchema.parse({ local, remote });
+    const previous = await this.c.localIO.snapshot(local);
+    const incoming = await this.c.remoteIO.snapshot(remote);
+    if (!previous || !incoming) throw new Error('A merge source or destination disappeared.');
+    await this.replace({ direction: 'download', local, remote, previous }, undefined, incoming);
+  }
+
   private async replace(
     input: Pick<RecoveryRecord, 'direction' | 'local' | 'remote' | 'previous'> & {
       parentId?: string;
@@ -250,6 +259,8 @@ export class Replacements {
     let publishing = false;
     let stageOwned = false;
     try {
+      await c.recordCreated?.(record);
+      c.check();
       try {
         await c.store.save(record, io.read(target), () => c.check());
       } catch (error) {

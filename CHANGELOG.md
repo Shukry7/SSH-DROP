@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.8] — Unreleased
+
+### Added
+
+- Saved folder download merges offer Back up and replace. Completed replacements stay linked to their encrypted recovery backups. Unrecorded or uncertain replacement outcomes require inspection before the merge can continue.
+
 ## [0.5.0-alpha.7] — Unreleased
 
 ### Added

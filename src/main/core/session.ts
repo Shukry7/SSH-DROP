@@ -948,7 +948,11 @@ export class Session {
     const identity = this.identity;
     const replacements =
       recovery && identity
-        ? (transfer: ReplacementContext['transfer'], guard?: () => Promise<void>) =>
+        ? (
+            transfer: ReplacementContext['transfer'],
+            guard?: () => Promise<void>,
+            recordCreated?: ReplacementContext['recordCreated'],
+          ) =>
             new Replacements({
               store: recovery.store,
               identity,
@@ -965,6 +969,7 @@ export class Session {
                 return choice;
               },
               beforePublish: guard,
+              recordCreated,
               transfer,
             })
         : undefined;
@@ -996,6 +1001,26 @@ export class Session {
             recovery && replacements
               ? {
                   confirm: recovery.confirm,
+                  replaceDownload: async (local, remote, transfer, guard, recordCreated) =>
+                    replacements(transfer, guard, recordCreated).replaceDownloadMerge(
+                      local,
+                      remote,
+                    ),
+                  verifyReplacement: async (id, local, remote, hash) => {
+                    const record = await recovery.store.load(id, identity!);
+                    if (
+                      record.direction !== 'download' ||
+                      record.local !== local ||
+                      record.remote !== remote ||
+                      record.state !== 'completed' ||
+                      record.installed?.hash !== hash
+                    )
+                      throw new Error('Replacement needs inspection in Recovery backups.');
+                    await recovery.store.verify(record, () => {
+                      controller.signal.throwIfAborted();
+                      if (!current()) throw new Error('Connection changed.');
+                    });
+                  },
                   conflict: (local, remote, transfer, guard) =>
                     replacements(transfer, guard).transfer(direction, local, remote, 'Skip file'),
                 }
