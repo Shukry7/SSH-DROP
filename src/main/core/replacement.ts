@@ -26,6 +26,7 @@ export interface ReplacementContext {
   check(): void;
   beforePublish?: () => Promise<void>;
   recordCreated?: (record: RecoveryRecord) => Promise<void>;
+  restoreImported?: (record: RecoveryRecord, check: () => void) => Promise<void>;
   transfer(direction: 'upload' | 'download', local: string, remote: string): Promise<void>;
   confirm(approval: ReplacementApproval): Promise<number>;
 }
@@ -63,6 +64,7 @@ export const recoveryView = (r: RecoveryRecord): RecoveryView => ({
   state: r.state,
   size: r.previous.size,
   encrypted: !!r.encrypted,
+  ...(r.imported && { imported: true }),
 });
 
 export class Replacements {
@@ -387,6 +389,16 @@ export class Replacements {
       return true;
     }
     await c.store.verify(record, () => c.check());
+    if (record.imported) {
+      if (action !== 'restore-copy')
+        throw new Error(
+          'Imported backups support restore-copy. Their recorded paths are from another vault.',
+        );
+      if (!c.restoreImported)
+        throw new Error('Choose a new local destination for this imported backup.');
+      await c.restoreImported(record, () => c.check());
+      return true;
+    }
     if (action === 'restore-copy') {
       const alternate = copyName(target, record.direction === 'upload');
       if (

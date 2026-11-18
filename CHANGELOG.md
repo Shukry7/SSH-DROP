@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.6.0-alpha.1] — Unreleased
+
+### Added
+
+- Password-protected whole recovery vault export/import for up to 100 encrypted backups and 64 MiB of backup contents. Imported backups preserve server identities, skip matching records, and use explicit restore-copy actions with native local destination selection.
+
 ## [0.5.0-alpha.9] — Unreleased
 
 ### Added

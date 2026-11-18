@@ -79,6 +79,7 @@ export function Recovery({
             <small>
               {record.encrypted ? 'Encrypted' : 'Legacy plaintext'} · {record.direction} ·{' '}
               {record.state} · {record.size} bytes · {new Date(record.created).toLocaleString()}
+              {record.imported && ' · Imported, restore-copy only'}
             </small>
           </div>
           <div className="recovery-actions">
@@ -87,7 +88,7 @@ export function Recovery({
             )}
             <button
               className="text-button"
-              disabled={busy}
+              disabled={busy || !!record.imported}
               onClick={() => void act(record.id, 'encrypt-backup')}
               title="Encrypt a legacy backup or retry interrupted plaintext cleanup"
             >
@@ -95,14 +96,16 @@ export function Recovery({
             </button>
             <button
               className="text-button"
-              disabled={busy || !record.encrypted}
+              disabled={busy || !record.encrypted || !!record.imported}
               onClick={() => void act(record.id, 'inspect')}
             >
               Inspect
             </button>
             <button
               className="text-button"
-              disabled={busy || !record.encrypted || record.state !== 'completed'}
+              disabled={
+                busy || !record.encrypted || !!record.imported || record.state !== 'completed'
+              }
               onClick={() => void act(record.id, 'rollback')}
             >
               Roll back
@@ -116,19 +119,24 @@ export function Recovery({
             </button>
             <button
               className="text-button danger-button"
-              disabled={busy || !['completed', 'restored', 'not-replaced'].includes(record.state)}
+              disabled={
+                busy ||
+                (!record.imported &&
+                  !['completed', 'restored', 'not-replaced'].includes(record.state))
+              }
               onClick={() => void act(record.id, 'delete-backup')}
             >
               Delete backup
             </button>
           </div>
-          {['preparing', 'backup-ready', 'publishing', 'uncertain'].includes(record.state) && (
-            <p className="recovery-note">
-              Unresolved operation: inspect before retrying. Temporary files may remain beside the
-              destination: .sshdrop-recovery-{record.id}.ready and .ready.original. Never remove
-              them until you have checked the destination and backup.
-            </p>
-          )}
+          {!record.imported &&
+            ['preparing', 'backup-ready', 'publishing', 'uncertain'].includes(record.state) && (
+              <p className="recovery-note">
+                Unresolved operation: inspect before retrying. Temporary files may remain beside the
+                destination: .sshdrop-recovery-{record.id}.ready and .ready.original. Never remove
+                them until you have checked the destination and backup.
+              </p>
+            )}
         </div>
       ))}
     </section>

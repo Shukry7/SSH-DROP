@@ -338,6 +338,13 @@ export function App({
         </div>
         <div className="topbar-right">
           <PortableBackup />
+          <details className="vault-tools">
+            <summary>Vault tools</summary>
+            <div>
+              <PortableBackup vault="export" />
+              <PortableBackup vault="import" />
+            </div>
+          </details>
           {sessionProtection}
           <span
             aria-live="polite"

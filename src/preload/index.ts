@@ -66,6 +66,8 @@ function makeAPI(workspace?: string): DesktopAPI {
     forWorkspace: (id) => makeAPI(id),
     exportBackup: (value) => invoke(channels.exportBackup, value),
     openBackup: (passphrase) => invoke(channels.openBackup, passphrase),
+    exportVault: (passphrase) => invoke(channels.exportVault, passphrase),
+    importVault: (passphrase) => invoke(channels.importVault, passphrase),
     idleStatus: () => invoke(channels.idleStatus),
     idleSettings: (value) => invoke(channels.idleSettings, value),
     idleStayActive: () => invoke(channels.idleStayActive),

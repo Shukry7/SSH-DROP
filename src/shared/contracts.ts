@@ -100,6 +100,7 @@ export interface SavedTransfer {
 }
 export interface RecoveryView {
   encrypted: boolean;
+  imported?: true;
   id: string;
   direction: 'upload' | 'download';
   path: string;
@@ -146,6 +147,8 @@ export interface DesktopAPI {
   forWorkspace(id: string): DesktopAPI;
   exportBackup(value: { id: string; passphrase: string }): Promise<Result<boolean>>;
   openBackup(passphrase: string): Promise<Result<boolean>>;
+  exportVault(passphrase: string): Promise<Result<boolean>>;
+  importVault(passphrase: string): Promise<Result<boolean>>;
   idleStatus(): Promise<Result<import('./idle').IdleState>>;
   idleSettings(
     settings: import('./idle').IdleSettings,

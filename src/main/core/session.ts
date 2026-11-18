@@ -87,10 +87,25 @@ export class Session {
     private readonly recoveryOptions?: {
       store: RecoveryStore;
       confirm: (approval: ReplacementApproval) => Promise<number>;
+      restoreImported?: ReplacementContext['restoreImported'];
     },
     private readonly setupTimeout = 30000,
     private readonly transferRecovery?: TransferRecovery,
   ) {}
+
+  assertVaultIdle(): void {
+    if (
+      this.connecting ||
+      this.workflow ||
+      this.fileAction ||
+      this.transfers.size ||
+      this.queue.size ||
+      this.recoveryBusy
+    )
+      throw new Error(
+        'Finish transfers, workflows and file operations in all tabs before moving the vault.',
+      );
+  }
 
   async connect(config: ConnectConfig, signal?: AbortSignal): Promise<{ sftp: boolean }> {
     if (this.client || this.connecting)
@@ -970,6 +985,7 @@ export class Session {
               },
               beforePublish: guard,
               recordCreated,
+              restoreImported: recovery.restoreImported,
               transfer,
             })
         : undefined;

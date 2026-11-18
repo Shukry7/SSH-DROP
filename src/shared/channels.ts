@@ -3,6 +3,8 @@ export const channels = {
   closeWorkspace: 'workspace:close',
   exportBackup: 'recovery:export-portable',
   openBackup: 'recovery:open-portable',
+  exportVault: 'recovery:export-vault',
+  importVault: 'recovery:import-vault',
   idleActivity: 'idle:activity',
   idleStatus: 'idle:status',
   idleSettings: 'idle:settings',
