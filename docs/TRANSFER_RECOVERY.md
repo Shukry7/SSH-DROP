@@ -42,4 +42,10 @@ After reconnecting to the same server and account, select **Review folder merge*
 
 Enable transfer recovery, choose **Upload folder**, and select a folder whose name matches an existing remote folder. The saved merge offers **Skip file** and **Keep both**. The same 100-entry, 16-level, and separate 128 MiB incoming and conflict limits apply. Reconnect to the original verified server and account and select **Review folder merge** to resume. SSHDrop rechecks the local source, remote originals, and completed copies.
 
-If a **Keep both** copy or temporary file appears on the server without a matching completed record, recovery stops so you can inspect it. Files with no conflict can reuse a verified upload checkpoint. Disable transfer recovery for overwrite options. Recovery for replacements remains planned.
+If a **Keep both** copy or temporary file appears on the server without a matching completed record, recovery stops so you can inspect it. Files with no conflict can reuse a verified upload checkpoint. Disable transfer recovery for upload overwrite options.
+
+## Backed-up download merge recovery in 0.5.0-alpha.8
+
+Saved folder download merges also offer **Back up and replace**. SSHDrop first retains an encrypted, verified local backup, then stages and verifies the incoming file before replacing the approved destination. An unlocked OS key store and sufficient space for the backup and staging are required. Keep other writers away from the destination.
+
+After reconnecting, SSHDrop verifies completed replacements and their linked backups before continuing. Corrupt, missing, deleted or unavailable backups block continuation. A replacement started without a recorded completion stops the merge for inspection in **Recovery backups**, even when the destination appears correct. Inspect it and choose a new transfer after resolving the uncertain result. Rollback and restore-copy use the existing Recovery backups controls. Forgetting the saved merge leaves its independent backups available. Saved merge replacements for uploads and replacement without a retained backup remain planned.

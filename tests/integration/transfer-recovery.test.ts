@@ -6,8 +6,187 @@ import { TransferRecovery } from '../../src/main/core/transfer-recovery';
 import { RecoveryStore } from '../../src/main/core/recovery-store';
 import { Session } from '../../src/main/core/session';
 import type { SessionEvent } from '../../src/shared/contracts';
-import { testVault } from '../fixtures/backup-vault';
+import { backupText, testVault } from '../fixtures/backup-vault';
 import { sshFixture } from '../fixtures/ssh-server';
+
+it('requires inspection when a replacement completes before its merge checkpoint is saved', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-merge-record-failure-'));
+  const root = join(dir, 'vault');
+  const local = join(dir, 'destination');
+  const remote = '/record-failure';
+  const fixture = await sshFixture();
+  const events: SessionEvent[] = [];
+  let store = new TransferRecovery(testVault(join(dir, 'transfers')));
+  const save = store.saveFolderCheckpoint.bind(store);
+  vi.spyOn(store, 'saveFolderCheckpoint').mockImplementation(async (id, checkpoint) => {
+    if (checkpoint.entries.some((entry) => entry.replacementId && entry.destinationKey))
+      throw new Error('Simulated journal write failure');
+    await save(id, checkpoint);
+  });
+  const confirm = vi.fn(async ({ title }: { title: string }) =>
+    title === 'File already exists' ? 2 : 1,
+  );
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => events.push(event),
+      undefined,
+      { store: new RecoveryStore(root, testVault(root)), confirm },
+      undefined,
+      store,
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  try {
+    await mkdir(local);
+    await writeFile(join(local, 'a.txt'), 'original');
+    await writeFile(join(local, 'b.txt'), 'original');
+    fixture.directories.add(remote);
+    fixture.files.set(remote + '/a.txt', Buffer.from('incoming'));
+    fixture.files.set(remote + '/b.txt', Buffer.from('incoming'));
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'download', local, remote, folder: true }]);
+    await vi.waitFor(
+      async () => {
+        expect(
+          events.some(
+            (event) =>
+              event.type === 'transfer' && event.transfer.error?.includes('journal write failure'),
+          ),
+        ).toBe(true);
+        expect(await session.savedTransfers()).toHaveLength(1);
+      },
+      { timeout: 10000 },
+    );
+    expect(await readFile(join(local, 'a.txt'), 'utf8')).toBe('incoming');
+    expect(await readFile(join(local, 'b.txt'), 'utf8')).toBe('original');
+    session.disconnect();
+    store = new TransferRecovery(testVault(join(dir, 'transfers')));
+    session = createSession();
+    await connect();
+    confirm.mockClear();
+    const [saved] = await session.savedTransfers();
+    await session.reviewSavedTransfer(saved.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'transfer' && event.transfer.error?.includes('needs inspection'),
+        ),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toHaveLength(1);
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    const [backup] = await session.recovery();
+    expect(await backupText(testVault(root), backup.id)).toBe('original');
+    expect(await readFile(join(local, 'b.txt'), 'utf8')).toBe('original');
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+}, 20000);
+
+it('recovers a completed backed-up download replacement and refuses a corrupt backup before continuing', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-backed-merge-'));
+  const local = join(dir, 'destination');
+  const root = join(dir, 'vault');
+  const fixture = await sshFixture();
+  const remote = '/backed-merge';
+  const events: SessionEvent[] = [];
+  let interrupt = true;
+  const conflicts: string[] = [];
+  const createSession = () =>
+    new Session(
+      { verify: async () => true },
+      (event) => {
+        events.push(event);
+        if (interrupt && event.type === 'transfer' && event.transfer.folderFiles?.copied === 1) {
+          interrupt = false;
+          session.disconnect();
+        }
+      },
+      undefined,
+      {
+        store: new RecoveryStore(root, testVault(root)),
+        confirm: async ({ title, buttons, detail }) => {
+          if (title !== 'File already exists') return 1;
+          expect(buttons).toEqual(['Skip file', 'Keep both', 'Back up and replace']);
+          conflicts.push(detail);
+          return 2;
+        },
+      },
+      undefined,
+      new TransferRecovery(testVault(join(root, 'transfers'))),
+    );
+  let session = createSession();
+  const connect = () =>
+    session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+  try {
+    await mkdir(local);
+    fixture.directories.add(remote);
+    for (const name of ['a.txt', 'b.txt']) {
+      await writeFile(join(local, name), 'original');
+      fixture.files.set(remote + '/' + name, Buffer.from('incoming'));
+    }
+    await connect();
+    session.setTransferMemory(true);
+    await session.queueFiles([{ direction: 'download', local, remote, folder: true }]);
+    await vi.waitFor(() => expect(interrupt).toBe(false), { timeout: 10000 });
+    session = createSession();
+    await connect();
+    const [saved] = await session.savedTransfers();
+    const [backup] = await session.recovery();
+    expect(backup).toMatchObject({ state: 'completed', encrypted: true });
+    expect(await backupText(testVault(root), backup.id)).toBe('original');
+    expect(await readFile(join(local, 'a.txt'), 'utf8')).toBe('incoming');
+    const backupPath = join(root, backup.id + '.bak.enc');
+    const bytes = await readFile(backupPath);
+    await writeFile(backupPath, Buffer.from('corrupt'));
+    await session.reviewSavedTransfer(saved.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'transfer' && event.transfer.error?.includes('Backup is locked'),
+        ),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toHaveLength(1);
+    });
+    expect(conflicts).toHaveLength(1);
+    expect(await readFile(join(local, 'b.txt'), 'utf8')).toBe('original');
+    await writeFile(backupPath, bytes);
+    await session.reviewSavedTransfer(saved.id, 'retry', async () => true);
+    await vi.waitFor(async () => {
+      expect(
+        events.some((event) => event.type === 'transfer' && event.transfer.status === 'completed'),
+      ).toBe(true);
+      expect(await session.savedTransfers()).toEqual([]);
+    });
+    expect(conflicts).toHaveLength(2);
+    expect(await readFile(join(local, 'b.txt'), 'utf8')).toBe('incoming');
+    expect(await session.recovery()).toHaveLength(2);
+    await session.recover({ id: backup.id, action: 'rollback' });
+    expect(await readFile(join(local, 'a.txt'), 'utf8')).toBe('original');
+    expect(await readFile(join(local, 'b.txt'), 'utf8')).toBe('incoming');
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+}, 20000);
 
 it.each(['download', 'upload'] as const)(
   'recovers a %s merge without repeating completed decisions or replacing originals',
@@ -36,13 +215,17 @@ it.each(['download', 'upload'] as const)(
           store: new RecoveryStore(root, testVault(root)),
           confirm: async ({ title, buttons, detail }) => {
             if (title !== 'File already exists') return 1;
-            expect(buttons).toEqual(['Skip file', 'Keep both']);
+            expect(buttons).toEqual(
+              uploading
+                ? ['Skip file', 'Keep both']
+                : ['Skip file', 'Keep both', 'Back up and replace'],
+            );
             conflicts.push(detail);
             return detail.includes('a.txt') ? 0 : 1;
           },
         },
         undefined,
-        new TransferRecovery(testVault(root)),
+        new TransferRecovery(testVault(join(root, 'transfers'))),
       );
     let session = createSession();
     const connect = () =>
@@ -77,7 +260,7 @@ it.each(['download', 'upload'] as const)(
       await connect();
       session.setTransferMemory(true);
       await session.queueFiles([{ direction, local, remote, folder: true }]);
-      await vi.waitFor(() => expect(interrupt).toBe(false));
+      await vi.waitFor(() => expect(interrupt).toBe(false), { timeout: 10000 });
       session = createSession();
       await connect();
       const [record] = await session.savedTransfers();
@@ -161,7 +344,7 @@ it('stops an upload merge retry after a remote copy lost its publication acknowl
       undefined,
       { store: new RecoveryStore(root, testVault(root)), confirm },
       undefined,
-      new TransferRecovery(testVault(root)),
+      new TransferRecovery(testVault(join(root, 'transfers'))),
     );
   let session = createSession();
   const connect = () =>
@@ -373,7 +556,7 @@ it('continues a saved folder between files after restart and refuses changed sou
     await connect();
     session.setTransferMemory(true);
     await session.queueFiles([{ direction: 'download', local, remote, folder: true }]);
-    await vi.waitFor(() => expect(interrupt).toBe(false));
+    await vi.waitFor(() => expect(interrupt).toBe(false), { timeout: 10000 });
     const first = join(local, 'a-sensitive.txt');
     const second = join(local, 'b.txt');
     expect(await readFile(first, 'utf8')).toBe('first private file');

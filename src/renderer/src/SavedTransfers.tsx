@@ -61,7 +61,8 @@ export function SavedTransfers({ blocked }: { blocked: boolean }) {
         <p>
           SSHDrop encrypts the paths and file hashes on this computer. With recovery enabled, queue
           up to eight individual files at a time, up to 32 MiB each. Folder transfers up to 128 MiB
-          can also be saved. Choose a new destination for each transfer.
+          can also be saved. Individual files need a new destination. Folder merges ask you to
+          review each conflict.
         </p>
         {error && (
           <p role="alert" className="error-banner">
