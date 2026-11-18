@@ -234,12 +234,21 @@ export class Replacements {
       throw error;
     }
   }
-  async replaceDownloadMerge(local: string, remote: string): Promise<void> {
+  async replaceMerge(
+    direction: 'upload' | 'download',
+    local: string,
+    remote: string,
+  ): Promise<void> {
     recoveryPathsSchema.parse({ local, remote });
-    const previous = await this.c.localIO.snapshot(local);
-    const incoming = await this.c.remoteIO.snapshot(remote);
+    const targetIO = this.io(direction);
+    if (!(await targetIO.supports(direction === 'upload' ? remote : local)))
+      throw new Error('This server does not support atomic replacement. Choose Keep both.');
+    const previous = await targetIO.snapshot(direction === 'upload' ? remote : local);
+    const incoming = await this.io(direction === 'upload' ? 'download' : 'upload').snapshot(
+      direction === 'upload' ? local : remote,
+    );
     if (!previous || !incoming) throw new Error('A merge source or destination disappeared.');
-    await this.replace({ direction: 'download', local, remote, previous }, undefined, incoming);
+    await this.replace({ direction, local, remote, previous }, undefined, incoming);
   }
 
   private async replace(

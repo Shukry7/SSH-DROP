@@ -2,6 +2,12 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.5.0-alpha.9] — Unreleased
+
+### Added
+
+- Saved folder upload merges support Back up and replace when the server supports OpenSSH atomic rename. Encrypted local backups and completed remote replacements are verified before continuing after reconnect.
+
 ## [0.5.0-alpha.8] — Unreleased
 
 ### Added

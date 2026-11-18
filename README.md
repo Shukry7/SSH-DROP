@@ -2,9 +2,11 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.5.0-alpha.8, early development preview.** Local Windows and Ubuntu WSL checks are available. Recent hosted CI runs failed before starting jobs. Native Linux and macOS device testing and signed installers remain pending.
+**Status: 0.5.0-alpha.9, early development preview.** Local Windows and Ubuntu WSL checks are available. Recent hosted CI runs failed before starting jobs. Native Linux and macOS device testing and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.5.0-alpha.9`** adds **Back up and replace** to saved folder upload merges on servers with OpenSSH atomic rename support. Independent encrypted backups are stored on this computer for rollback. See [backed-up upload merge recovery](docs/TRANSFER_RECOVERY.md#backed-up-upload-merge-recovery-in-050-alpha9).
 
 **Development source `0.5.0-alpha.8`** adds **Back up and replace** to saved folder download merges. SSHDrop retains a verified encrypted backup for rollback and checks it before resuming a completed replacement. See [backed-up merge recovery](docs/TRANSFER_RECOVERY.md#backed-up-download-merge-recovery-in-050-alpha8).
 

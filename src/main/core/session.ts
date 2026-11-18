@@ -1001,15 +1001,23 @@ export class Session {
             recovery && replacements
               ? {
                   confirm: recovery.confirm,
-                  replaceDownload: async (local, remote, transfer, guard, recordCreated) =>
-                    replacements(transfer, guard, recordCreated).replaceDownloadMerge(
+                  replacementSupported: (local, remote) =>
+                    replacementIO(
+                      direction === 'upload' ? sftp : undefined,
+                      controller.signal,
+                      current,
+                      invalidate,
+                    ).supports(direction === 'upload' ? remote : local),
+                  replace: async (local, remote, transfer, guard, recordCreated) =>
+                    replacements(transfer, guard, recordCreated).replaceMerge(
+                      direction,
                       local,
                       remote,
                     ),
                   verifyReplacement: async (id, local, remote, hash) => {
                     const record = await recovery.store.load(id, identity!);
                     if (
-                      record.direction !== 'download' ||
+                      record.direction !== direction ||
                       record.local !== local ||
                       record.remote !== remote ||
                       record.state !== 'completed' ||
