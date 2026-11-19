@@ -1,7 +1,15 @@
 import { useWorkspace } from './WorkspaceContext';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
-export function PortableBackup({ id, disabled = false }: { id?: string; disabled?: boolean }) {
+export function PortableBackup({
+  id,
+  vault,
+  disabled = false,
+}: {
+  id?: string;
+  vault?: 'export' | 'import';
+  disabled?: boolean;
+}) {
   const { api, active: workspaceActive } = useWorkspace();
   const dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
@@ -15,7 +23,14 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
       if (element?.open) element.close();
     };
   }, [open, workspaceActive]);
-  const title = id ? 'Export encrypted backup' : 'Open portable backup';
+  const exporting = !!id || vault === 'export';
+  const title = vault
+    ? exporting
+      ? 'Export recovery vault'
+      : 'Import recovery vault'
+    : id
+      ? 'Export encrypted backup'
+      : 'Open portable backup';
   const close = () => {
     setOpen(false);
     setError('');
@@ -27,7 +42,7 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
     const form = event.currentTarget;
     const fields = new FormData(form);
     const passphrase = String(fields.get('passphrase') ?? '');
-    if (id && passphrase !== fields.get('repeat')) {
+    if (exporting && passphrase !== fields.get('repeat')) {
       setError('The passphrases do not match.');
       return;
     }
@@ -35,12 +50,24 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
     setBusy(true);
     setError('');
     try {
-      const result = id
-        ? await api.exportBackup({ id, passphrase })
-        : await api.openBackup(passphrase);
+      const result = vault
+        ? exporting
+          ? await api.exportVault(passphrase)
+          : await api.importVault(passphrase)
+        : id
+          ? await api.exportBackup({ id, passphrase })
+          : await api.openBackup(passphrase);
       if (!result.ok) throw new Error(result.error);
       if (result.value)
-        setNotice(id ? 'Encrypted backup exported.' : 'Restored to a new local copy.');
+        setNotice(
+          vault
+            ? exporting
+              ? 'Encrypted recovery vault exported.'
+              : 'Recovery vault imported. Connect to the original server and account to review backups.'
+            : id
+              ? 'Encrypted backup exported.'
+              : 'Restored to a new local copy.',
+        );
       close();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Portable backup operation failed.');
@@ -79,9 +106,11 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
           <form onSubmit={(event) => void submit(event)}>
             <h3>{title}</h3>
             <p className="muted">
-              {id
-                ? 'Export up to 32 MiB. Use a unique passphrase of at least 16 characters and keep it separately. Without it, the exported file cannot be recovered.'
-                : 'Open a .sshdrop-backup file with its export passphrase. No SSH connection or original device is needed. The restored copy is unencrypted; choose a private folder.'}
+              {vault
+                ? 'Move up to 100 encrypted recovery backups with up to 64 MiB of contents. Server identities and paths are encrypted in the archive. Use a unique passphrase of at least 16 characters. Finish active operations in all tabs first.'
+                : id
+                  ? 'Export up to 32 MiB. Use a unique passphrase of at least 16 characters and keep it separately. Without it, the exported file cannot be recovered.'
+                  : 'Open a .sshdrop-backup file with its export passphrase. No SSH connection or original device is needed. The restored copy is unencrypted; choose a private folder.'}
             </p>
             <label>
               Backup passphrase
@@ -92,11 +121,11 @@ export function PortableBackup({ id, disabled = false }: { id?: string; disabled
                 minLength={16}
                 maxLength={256}
                 required
-                autoComplete={id ? 'new-password' : 'off'}
+                autoComplete={exporting ? 'new-password' : 'off'}
                 disabled={busy}
               />
             </label>
-            {id && (
+            {exporting && (
               <label>
                 Repeat backup passphrase
                 <input

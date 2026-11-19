@@ -2,6 +2,22 @@
 
 Application versions follow Semantic Versioning. Alpha releases are development previews.
 
+## [0.6.0-alpha.2] — Unreleased
+
+### Added
+
+- Confirmed recovery-vault encryption key rotation with verified encrypted staging, OS-protected dual keys during interruption, explicit retry, and retirement of the previous live key only after all backups and metadata verify with the replacement key. Older app versions cannot open a rotated vault. Saved-transfer checkpoints and exported archives are unchanged.
+
+### Changed
+
+- Exclude whole-vault archives from Git and reject them in the tracked-file secret gate.
+
+## [0.6.0-alpha.1] — Unreleased
+
+### Added
+
+- Password-protected whole recovery vault export/import for up to 100 encrypted backups and 64 MiB of backup contents. Imported backups preserve server identities, skip matching records, and use explicit restore-copy actions with native local destination selection.
+
 ## [0.5.0-alpha.9] — Unreleased
 
 ### Added

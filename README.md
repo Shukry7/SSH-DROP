@@ -2,9 +2,13 @@
 
 A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
 
-**Status: 0.5.0-alpha.9, early development preview.** Local Windows and Ubuntu WSL checks are available. Recent hosted CI runs failed before starting jobs. Native Linux and macOS device testing and signed installers remain pending.
+**Status: 0.6.0-alpha.2, early development preview.** Local Windows and Ubuntu WSL checks are available. Recent hosted CI runs failed before starting jobs. Native Linux and macOS device testing and signed installers remain pending.
 
 ## Current scope
+
+**Development source `0.6.0-alpha.1`** adds **Vault tools** for encrypted whole recovery vault export/import, with up to 100 backups and 64 MiB of contents. Imports use the destination OS key store and preserve server identities. Imported backups support restore-copy into a native-selected local file. See [vault portability](docs/PORTABLE_BACKUPS.md#whole-vault-portability-in-060-alpha1).
+
+**Development source `0.6.0-alpha.2`** adds **Vault tools → Rotate recovery vault key**. Rotation verifies and re-encrypts local recovery backups and metadata, preserves both OS-protected keys if interrupted, and supports an explicit retry. Export an independent archive first. Older app versions cannot open the rotated vault; exported archives and saved-transfer checkpoints are unchanged. See [rotation and its limits](docs/PORTABLE_BACKUPS.md#active-recovery-vault-rotation-in-060-alpha2).
 
 **Development source `0.5.0-alpha.9`** adds **Back up and replace** to saved folder upload merges on servers with OpenSSH atomic rename support. Independent encrypted backups are stored on this computer for rollback. See [backed-up upload merge recovery](docs/TRANSFER_RECOVERY.md#backed-up-upload-merge-recovery-in-050-alpha9).
 

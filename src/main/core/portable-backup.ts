@@ -9,7 +9,7 @@ import {
 import { constants } from 'node:fs';
 import { link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { portableBackupLimit } from '../../shared/portable-backup';
+import { portableBackupLimit, portableVaultPayloadLimit } from '../../shared/portable-backup';
 import { portablePassphrase } from '../../shared/validation';
 import type { FileSnapshot } from './recovery-store';
 import { folderName } from './folder-transfer';
@@ -17,6 +17,7 @@ import { folderName } from './folder-transfer';
 // Format 1: magic/version, 16-byte salt, 12-byte nonce, ciphertext, 16-byte tag.
 // The fixed header is authenticated. There are no filenames, paths, vault keys or KDF settings.
 const magic = Buffer.from('SSHDROP-PB1\0');
+const vaultMagic = Buffer.from('SSHDROP-VL1\0');
 const headerSize = magic.length + 16 + 12;
 const tagSize = 16;
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -49,14 +50,20 @@ export async function sealPortable(
   expected: Pick<FileSnapshot, 'size' | 'hash'>,
   passphrase: string,
   check: Check,
+  format: 'backup' | 'vault' = 'backup',
 ): Promise<Buffer> {
-  if (
-    !Number.isSafeInteger(expected.size) ||
-    expected.size < 0 ||
-    expected.size > portableBackupLimit
-  )
-    throw new Error('Portable export supports backups up to 32 MiB.');
-  const prefix = Buffer.concat([magic, randomBytes(16), randomBytes(12)]);
+  const maximum = format === 'vault' ? portableVaultPayloadLimit : portableBackupLimit;
+  if (!Number.isSafeInteger(expected.size) || expected.size < 0 || expected.size > maximum)
+    throw new Error(
+      format === 'vault'
+        ? 'Vault archive exceeds the portable size limit.'
+        : 'Portable export supports backups up to 32 MiB.',
+    );
+  const prefix = Buffer.concat([
+    format === 'vault' ? vaultMagic : magic,
+    randomBytes(16),
+    randomBytes(12),
+  ]);
   const secret = await key(passphrase, prefix.subarray(magic.length, magic.length + 16));
   try {
     check();
@@ -93,9 +100,12 @@ export async function openPortable(
   path: string,
   passphrase: string,
   check: Check,
+  format: 'backup' | 'vault' = 'backup',
 ): Promise<Buffer> {
-  const input = await readBounded(path, portableBackupLimit + headerSize + tagSize, check);
-  if (input.length < headerSize + tagSize || !input.subarray(0, magic.length).equals(magic))
+  const maximum = format === 'vault' ? portableVaultPayloadLimit : portableBackupLimit;
+  const expectedMagic = format === 'vault' ? vaultMagic : magic;
+  const input = await readBounded(path, maximum + headerSize + tagSize, check);
+  if (input.length < headerSize + tagSize || !input.subarray(0, magic.length).equals(expectedMagic))
     throw new Error('Unsupported or incomplete SSHDrop portable backup.');
   const prefix = input.subarray(0, headerSize);
   const secret = await key(passphrase, prefix.subarray(magic.length, magic.length + 16));

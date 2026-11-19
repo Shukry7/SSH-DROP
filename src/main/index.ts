@@ -17,7 +17,7 @@ import {
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { channels } from '../shared/channels';
@@ -63,6 +63,7 @@ import { portableExportRequest, portablePassphrase } from '../shared/validation'
 import { openPortable, sealPortable, writePortableCopy } from './core/portable-backup';
 
 let window: BrowserWindow | undefined;
+let vaultBusy = false;
 const primaryWorkspace = 'primary';
 type WorkflowPreview = {
   token: string;
@@ -206,6 +207,8 @@ function handle<T>(channel: string, operation: (value: unknown) => Promise<T> | 
   ipcMain.handle(channel, async (event, value, workspaceId): Promise<Result<T>> => {
     try {
       trustedSender(event);
+      if (vaultBusy && !protectionControls.has(channel))
+        throw new Error('Wait for the recovery vault operation to finish.');
       const lease = protectionControls.has(channel) ? undefined : protection.lease();
       const id =
         workspaceId === undefined ? primaryWorkspace : z.string().uuid().parse(workspaceId);
@@ -669,10 +672,13 @@ function registerAPI(): void {
   );
   // Keep the memory-hard KDF serialized even if the renderer is replaced mid-operation.
   let portableBusy = false;
-  const portableOperation = async <T>(operation: (check: () => void) => Promise<T>) => {
+  const portableOperation = async <T>(
+    operation: (check: () => void) => Promise<T>,
+    timeout = 120000,
+  ) => {
     if (portableBusy) throw new Error('Wait for the other portable backup operation to finish.');
     portableBusy = true;
-    const deadline = performance.now() + 120000;
+    const deadline = performance.now() + timeout;
     try {
       return await operation(() => {
         checkOperation();
@@ -682,6 +688,119 @@ function registerAPI(): void {
       portableBusy = false;
     }
   };
+  const vaultOperation = async (
+    operation: (check: () => void) => Promise<boolean>,
+    timeout = 120000,
+  ) =>
+    portableOperation(async (check) => {
+      for (const workspace of workspaces.values()) workspace.session.assertVaultIdle();
+      vaultBusy = true;
+      try {
+        return await operation(check);
+      } finally {
+        vaultBusy = false;
+      }
+    }, timeout);
+  handle(channels.rotateVaultKey, (value) => {
+    z.undefined().parse(value);
+    return selectFiles(async () => {
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Rotate recovery vault key',
+        message: 'Replace this computer’s recovery vault encryption key?',
+        detail:
+          'Export a password-protected vault archive first and keep it separately. All recovery backups and metadata will be re-encrypted and verified. Finish active operations in every tab. If interrupted, both OS-protected keys are retained; use Rotate recovery vault key again to finish. Older app versions cannot open the rotated vault. This does not rotate transfer checkpoints, change exported archives or recover a lost OS key. Filesystem snapshots and old copies may still contain the previous key.',
+        buttons: ['Cancel', 'Rotate key'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      return vaultOperation(
+        async (check) => {
+          await recoveryStore.rotateKey(check);
+          return true;
+        },
+        30 * 60 * 1000,
+      );
+    });
+  });
+  handle(channels.exportVault, (value) => {
+    const passphrase = portablePassphrase.parse(value);
+    return selectFiles(async () => {
+      const result = await saveDialog({
+        title: 'Export encrypted recovery vault',
+        defaultPath: 'recovery.sshdrop-vault',
+        filters: [{ name: 'SSHDrop recovery vault', extensions: ['sshdrop-vault'] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      if (!result.filePath.toLowerCase().endsWith('.sshdrop-vault'))
+        throw new Error('Use the .sshdrop-vault extension.');
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Export recovery vault',
+        message: 'Export all recovery backups into a password-protected archive?',
+        detail:
+          'The archive contains backup contents, paths and server/account identities from all servers. Up to 100 encrypted backups and 64 MiB of backup contents are supported. Secure legacy backups first. Keep the passphrase separately. Losing it makes this archive unrecoverable.',
+        buttons: ['Cancel', 'Export vault'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      return vaultOperation(async (check) => {
+        const payload = await recoveryStore.exportVault(check);
+        try {
+          const bytes = await sealPortable(
+            (async function* () {
+              yield payload;
+            })(),
+            { size: payload.length, hash: createHash('sha256').update(payload).digest('hex') },
+            passphrase,
+            check,
+            'vault',
+          );
+          await writePortableCopy(result.filePath!, bytes, app.getPath('userData'), check);
+          return true;
+        } finally {
+          payload.fill(0);
+        }
+      });
+    });
+  });
+  handle(channels.importVault, (value) => {
+    const passphrase = portablePassphrase.parse(value);
+    return selectFiles(async () => {
+      const result = await openDialog({
+        title: 'Import encrypted recovery vault',
+        properties: ['openFile'],
+        filters: [{ name: 'SSHDrop recovery vault', extensions: ['sshdrop-vault'] }],
+      });
+      if (result.canceled || result.filePaths.length !== 1) return false;
+      return vaultOperation(async (check) => {
+        const payload = await openPortable(result.filePaths[0], passphrase, check, 'vault');
+        try {
+          const approval = await messageBox({
+            type: 'warning',
+            title: 'Import recovery vault',
+            message: 'Add the verified archive to this computer’s recovery vault?',
+            detail:
+              'Backups will be encrypted using this OS account. Original server identities are preserved. Imported records allow restoring a new local copy after connecting to the same verified server and account. Recorded paths cannot be used for rollback. Matching backups are skipped. Existing recovery backups are preserved.',
+            buttons: ['Cancel', 'Import vault'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          });
+          check();
+          if (approval.response !== 1) return false;
+          await recoveryStore.importVault(payload, check);
+          return true;
+        } finally {
+          payload.fill(0);
+        }
+      });
+    });
+  });
   handle(channels.exportBackup, async (value) => {
     const { id, passphrase } = portableExportRequest.parse(value);
     const owner = window;
@@ -1123,6 +1242,43 @@ function createWindow(reset?: { bounds: Rectangle; visible: boolean; minimized: 
         undefined,
         {
           store: recoveryStore,
+          restoreImported: async (record, check) => {
+            const result = await saveDialog({
+              title: 'Restore imported backup as a new local file',
+            });
+            check();
+            if (result.canceled || !result.filePath) return;
+            const approval = await messageBox({
+              type: 'warning',
+              title: 'Restore imported backup',
+              message: 'Write a new unencrypted local copy?',
+              detail: `Destination: ${result.filePath}\n\nChoose a private folder. The backup remains encrypted in SSHDrop. Existing files are preserved.`,
+              buttons: ['Cancel', 'Restore copy'],
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true,
+            });
+            check();
+            if (approval.response !== 1) return;
+            await recoveryStore.verify(record, check);
+            const chunks: Buffer[] = [];
+            try {
+              for await (const chunk of recoveryStore.contents(record, check)) chunks.push(chunk);
+              const bytes = Buffer.concat(chunks);
+              try {
+                if (
+                  bytes.length !== record.previous.size ||
+                  createHash('sha256').update(bytes).digest('hex') !== record.previous.hash
+                )
+                  throw new Error('Imported backup verification failed.');
+                await writePortableCopy(result.filePath, bytes, app.getPath('userData'), check);
+              } finally {
+                bytes.fill(0);
+              }
+            } finally {
+              for (const chunk of chunks) chunk.fill(0);
+            }
+          },
           confirm: async (approval) => {
             const result = await messageBox({
               type: 'warning',

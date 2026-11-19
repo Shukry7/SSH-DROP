@@ -18,6 +18,7 @@ artifacts/
 profiles.json
 workflows.json
 *.sshdrop-backup
+*.sshdrop-vault
 .sshdrop-portable-*.part
 idle-settings.json
 known-hosts.json

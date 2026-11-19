@@ -23,6 +23,7 @@ import { SavedProfiles } from './SavedProfiles';
 import { FileActionDialog } from './FileActionDialog';
 import { Recovery } from './Recovery';
 import { PortableBackup } from './PortableBackup';
+import { RotateVaultKey } from './RotateVaultKey';
 import { Workflows } from './Workflows';
 import { SavedTransfers } from './SavedTransfers';
 import { EditorTabs, type EditorTab } from './EditorTabs';
@@ -338,6 +339,14 @@ export function App({
         </div>
         <div className="topbar-right">
           <PortableBackup />
+          <details className="vault-tools">
+            <summary>Vault tools</summary>
+            <div>
+              <PortableBackup vault="export" />
+              <PortableBackup vault="import" />
+              <RotateVaultKey />
+            </div>
+          </details>
           {sessionProtection}
           <span
             aria-live="polite"

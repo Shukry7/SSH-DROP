@@ -1,6 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readdir, rename, statfs, unlink } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import {
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  rename,
+  rm,
+  statfs,
+  unlink,
+} from 'node:fs/promises';
+import { isAbsolute, join, win32, posix } from 'node:path';
+import { createHash } from 'node:crypto';
+import { portableVaultLimit, portableVaultPayloadLimit } from '../../shared/portable-backup';
 import { z } from 'zod';
 import { readLocalData } from './local-data';
 import { BackupVault, privateFile } from './backup-vault';
@@ -40,12 +53,15 @@ export const recoveryPathsSchema = z
     remote: pathSchema.refine((s) => s.startsWith('/')),
   })
   .strict();
-const recordSchema = z
+const portableRecordSchema = z
   .object({
     id: z.string().uuid(),
     identity: identitySchema,
     direction: z.enum(['upload', 'download']),
     ...recoveryPathsSchema.shape,
+    local: pathSchema.refine(
+      (path) => isAbsolute(path) || win32.isAbsolute(path) || posix.isAbsolute(path),
+    ),
     created: z.string().datetime(),
     state: z.enum([
       'preparing',
@@ -60,8 +76,14 @@ const recordSchema = z
     installed: snapshotSchema.optional(),
     parentId: z.string().uuid().optional(),
     encrypted: z.literal(true).optional(),
+    imported: z.literal(true).optional(),
+    sourceId: z.string().uuid().optional(),
   })
-  .strict();
+  .strict()
+  .refine((record) => !!record.imported === !!record.sourceId);
+export const recordSchema = portableRecordSchema.refine(
+  (record) => !!record.imported || isAbsolute(record.local),
+);
 export type RecoveryRecord = z.infer<typeof recordSchema>;
 const schema = z
   .object({ version: z.literal(1), records: z.array(recordSchema).max(100) })
@@ -69,6 +91,31 @@ const schema = z
   .refine((data) => new Set(data.records.map((r) => r.id)).size === data.records.length);
 export const sameIdentity = (a: ServerIdentity, b: ServerIdentity) =>
   Object.keys(a).every((key) => a[key as keyof ServerIdentity] === b[key as keyof ServerIdentity]);
+
+function parseVaultPayload(payload: Buffer, check: () => void): unknown {
+  let quoted = false;
+  let escaped = false;
+  let depth = 0;
+  let metadataBytes = 0;
+  for (let index = 0; index < payload.length; index++) {
+    if (index % 65536 === 0) check();
+    const byte = payload[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (byte === 92) escaped = true;
+      else if (byte === 34) quoted = false;
+    } else {
+      if (++metadataBytes > 1024 * 1024)
+        throw new Error('Vault archive metadata exceeds the safety limit.');
+      if (byte === 34) quoted = true;
+      else if (byte === 123 || byte === 91) {
+        if (++depth > 16) throw new Error('Vault archive nesting exceeds the safety limit.');
+      } else if (byte === 125 || byte === 93) depth--;
+    }
+  }
+  check();
+  return JSON.parse(payload.toString('utf8'));
+}
 
 export class RecoveryStore {
   private pending: Promise<unknown> = Promise.resolve();
@@ -104,6 +151,219 @@ export class RecoveryStore {
   contents(record: RecoveryRecord, check: () => void): AsyncIterable<Buffer> {
     if (!record.encrypted) throw new Error('Encrypt this legacy backup before using it.');
     return this.vault.read(`${record.id}.bak.enc`, record.previous.size, check);
+  }
+
+  exportVault(check: () => void): Promise<Buffer> {
+    return this.queue(async () => {
+      const records = await this.read();
+      if (!records.length) throw new Error('There are no recovery backups to export.');
+      const total = records.reduce((size, record) => size + record.previous.size, 0);
+      if (total > portableVaultLimit)
+        throw new Error('Whole-vault export supports up to 64 MiB of backup contents.');
+      const entries = [];
+      for (const record of records) {
+        check();
+        await this.verify(record, check);
+        const chunks: Buffer[] = [];
+        try {
+          for await (const chunk of this.contents(record, check)) chunks.push(chunk);
+          const bytes = Buffer.concat(chunks);
+          try {
+            if (
+              bytes.length !== record.previous.size ||
+              createHash('sha256').update(bytes).digest('hex') !== record.previous.hash
+            )
+              throw new Error('A recovery backup changed during export.');
+            entries.push({ record, contents: bytes.toString('base64') });
+          } finally {
+            bytes.fill(0);
+          }
+        } finally {
+          for (const chunk of chunks) chunk.fill(0);
+        }
+      }
+      check();
+      const payload = Buffer.from(JSON.stringify({ version: 1, entries }));
+      if (payload.length > portableVaultPayloadLimit) {
+        payload.fill(0);
+        throw new Error('Vault archive exceeds the portable size limit.');
+      }
+      return payload;
+    });
+  }
+
+  rotateKey(check: () => void): Promise<void> {
+    return this.queue(async () => {
+      const records = await this.read();
+      if (!records.length) throw new Error('There are no recovery backups to rotate.');
+      if (records.some((record) => !record.encrypted))
+        throw new Error('Secure all legacy recovery backups before rotating the vault key.');
+      const metadata = Buffer.from(await this.vault.metadata());
+      try {
+        await this.vault.rotate(
+          [
+            {
+              name: 'recovery.enc',
+              size: metadata.length,
+              hash: createHash('sha256').update(metadata).digest('hex'),
+            },
+            ...records.map((record) => ({ name: `${record.id}.bak.enc`, ...record.previous })),
+          ],
+          check,
+        );
+      } finally {
+        metadata.fill(0);
+      }
+    });
+  }
+
+  importVault(payload: Buffer, check: () => void): Promise<{ added: number; skipped: number }> {
+    return this.queue(async () => {
+      check();
+      if (payload.length > portableVaultPayloadLimit)
+        throw new Error('Vault archive is too large.');
+      const archive = z
+        .object({
+          version: z.literal(1),
+          entries: z
+            .array(
+              z
+                .object({
+                  record: portableRecordSchema,
+                  contents: z.string().max(Math.ceil(portableVaultLimit / 3) * 4),
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(100),
+        })
+        .strict()
+        .parse(parseVaultPayload(payload, check));
+      const ids = archive.entries.map(({ record }) => record.sourceId ?? record.id);
+      if (new Set(ids).size !== ids.length)
+        throw new Error('Vault archive contains duplicate records.');
+      const records = await this.read();
+      const prepared: { record: RecoveryRecord; bytes: Buffer }[] = [];
+      let total = 0;
+      let skipped = 0;
+      let staging: string | undefined;
+      const installed: string[] = [];
+      let committing = false;
+      try {
+        // Authenticate and validate every entry before writing any imported backup.
+        for (const { record, contents } of archive.entries) {
+          check();
+          const bytes = Buffer.from(contents, 'base64');
+          total += bytes.length;
+          try {
+            if (
+              total > portableVaultLimit ||
+              bytes.toString('base64') !== contents ||
+              bytes.length !== record.previous.size ||
+              createHash('sha256').update(bytes).digest('hex') !== record.previous.hash ||
+              !record.encrypted
+            )
+              throw new Error('Vault archive contains an invalid backup.');
+            const sourceId = record.sourceId ?? record.id;
+            const existing = records.find((item) => (item.sourceId ?? item.id) === sourceId);
+            if (existing) {
+              if (
+                !sameIdentity(existing.identity, record.identity) ||
+                existing.direction !== record.direction ||
+                existing.local !== record.local ||
+                existing.remote !== record.remote ||
+                JSON.stringify(existing.previous) !== JSON.stringify(record.previous)
+              )
+                throw new Error('An imported record conflicts with an existing backup.');
+              await this.verify(existing, check);
+              skipped++;
+              bytes.fill(0);
+            } else {
+              prepared.push({
+                record: {
+                  ...record,
+                  id: randomUUID(),
+                  sourceId,
+                  imported: true,
+                  parentId: undefined,
+                },
+                bytes,
+              });
+            }
+          } catch (error) {
+            bytes.fill(0);
+            throw error;
+          }
+        }
+        if (
+          records.length + prepared.length > 100 ||
+          records.reduce((size, record) => size + record.previous.size, 0) +
+            prepared.reduce((size, item) => size + item.bytes.length, 0) >
+            10 * 1024 ** 3
+        )
+          throw new Error('Imported backups exceed the recovery storage limit.');
+        if (!prepared.length) return { added: 0, skipped };
+        const importedIds = new Map(
+          archive.entries.map(({ record }) => [
+            record.id,
+            [...records, ...prepared.map((item) => item.record)].find(
+              (item) => (item.sourceId ?? item.id) === (record.sourceId ?? record.id),
+            )!.id,
+          ]),
+        );
+        for (const item of prepared) {
+          const original = archive.entries.find(
+            ({ record }) => (record.sourceId ?? record.id) === item.record.sourceId,
+          )!.record;
+          item.record.parentId = original.parentId ? importedIds.get(original.parentId) : undefined;
+        }
+        const space = await statfs(this.directory);
+        if (space.bavail * space.bsize < total + 50 * 1024 ** 2)
+          throw new Error('Insufficient local space to import the recovery vault.');
+        staging = await mkdtemp(join(this.directory, '.vault-import-'));
+        for (const item of prepared) {
+          check();
+          const name = item.record.id + '.bak.enc';
+          const temporary = join(staging.slice(this.directory.length + 1), name);
+          await this.vault.seal(
+            temporary,
+            (async function* () {
+              yield item.bytes;
+            })(),
+            check,
+            name,
+          );
+          const hash = createHash('sha256');
+          let size = 0;
+          for await (const chunk of this.vault.read(temporary, item.bytes.length, check, name)) {
+            hash.update(chunk);
+            size += chunk.length;
+            chunk.fill(0);
+          }
+          if (size !== item.bytes.length || hash.digest('hex') !== item.record.previous.hash)
+            throw new Error('Imported encrypted backup verification failed.');
+        }
+        if (!records.length) await this.write([]);
+        for (const item of prepared) {
+          check();
+          const name = item.record.id + '.bak.enc';
+          const destination = this.backup(item.record.id);
+          await link(join(staging, name), destination);
+          installed.push(destination);
+          await unlink(join(staging, name));
+        }
+        check();
+        committing = true;
+        await this.write([...records, ...prepared.map((item) => item.record)]);
+        return { added: prepared.length, skipped };
+      } finally {
+        for (const item of prepared) item.bytes.fill(0);
+        // A metadata write can commit before reporting a filesystem failure.
+        // Preserve installed backups once commit begins so no referenced data is removed.
+        if (!committing) for (const path of installed) await unlink(path).catch(() => undefined);
+        if (staging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      }
+    });
   }
   async encryptLegacy(
     record: RecoveryRecord,
@@ -264,7 +524,10 @@ export class RecoveryStore {
     return this.queue(async () => {
       const records = await this.read();
       const record = records.find((r) => r.id === id && sameIdentity(r.identity, identity));
-      if (!record || !['completed', 'restored', 'not-replaced'].includes(record.state))
+      if (
+        !record ||
+        (!record.imported && !['completed', 'restored', 'not-replaced'].includes(record.state))
+      )
         throw new Error('Inspect the operation before removing its recovery backup.');
       await unlink(this.backup(id)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
