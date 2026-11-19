@@ -5,6 +5,7 @@ export const channels = {
   openBackup: 'recovery:open-portable',
   exportVault: 'recovery:export-vault',
   importVault: 'recovery:import-vault',
+  rotateVaultKey: 'recovery:rotate-key',
   idleActivity: 'idle:activity',
   idleStatus: 'idle:status',
   idleSettings: 'idle:settings',

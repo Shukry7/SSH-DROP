@@ -10,7 +10,7 @@ const patterns = [
 ];
 export function looksSensitive(file, contents) {
   return (
-    (/(?:^|\/)(?:profiles\.json|workflows\.json|[^/]+\.sshdrop-backup|\.sshdrop-portable-[a-f0-9-]+\.part|idle-settings\.json|known-hosts\.json|vault-key\.json|recovery\.(?:json|enc)|transfer-queue\.enc|[a-f0-9-]{36}\.download(?:\.tmp)?\.enc|[a-f0-9-]{36}\.bak(?:\.enc)?|\.env(?:\.[^/]+)?|id_(?:rsa|ed25519|ecdsa))$/.test(
+    (/(?:^|\/)(?:profiles\.json|workflows\.json|[^/]+\.sshdrop-(?:backup|vault)|\.sshdrop-portable-[a-f0-9-]+\.part|idle-settings\.json|known-hosts\.json|vault-key\.json|recovery\.(?:json|enc)|transfer-queue\.enc|[a-f0-9-]{36}\.download(?:\.tmp)?\.enc|[a-f0-9-]{36}\.bak(?:\.enc)?|\.env(?:\.[^/]+)?|id_(?:rsa|ed25519|ecdsa))$/.test(
       file,
     ) &&
       !file.endsWith('.env.example')) ||

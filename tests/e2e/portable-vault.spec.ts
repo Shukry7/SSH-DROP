@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sshFixture } from '../fixtures/ssh-server';
 
-test('exports and imports a recovery vault across app data directories and restores an imported copy', async () => {
+test('rotates, exports and imports a recovery vault across app data directories and restores an imported copy', async () => {
   test.setTimeout(120000);
   const directory = await mkdtemp(join(tmpdir(), 'sshdrop-vault-ui-'));
   const fixture = await sshFixture();
@@ -71,6 +71,33 @@ test('exports and imports a recovery vault across app data directories and resto
     await expect(
       page.getByRole('region', { name: 'Recovery backups' }).locator('.recovery-record'),
     ).toHaveCount(1);
+    const keyFile = join(directory, 'source', 'backups', 'vault-key.json');
+    const originalKey = await readFile(keyFile);
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
+    });
+    await page.getByText('Vault tools', { exact: true }).click();
+    const rotate = page.getByRole('button', { name: 'Rotate recovery vault key', exact: true });
+    await rotate.click();
+    await expect(rotate).toBeEnabled();
+    expect(await readFile(keyFile)).toEqual(originalKey);
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async (...args: unknown[]) => {
+        const options = args.at(-1) as import('electron').MessageBoxOptions;
+        if (options.defaultId !== 0 || options.cancelId !== 0)
+          throw new Error('Unsafe rotation default');
+        return { response: 1, checkboxChecked: false };
+      };
+    });
+    await rotate.click();
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'Recovery vault key rotated and all backups verified.' }),
+    ).toBeVisible();
+    expect(await readFile(keyFile)).not.toEqual(originalKey);
+    expect(JSON.parse(await readFile(keyFile, 'utf8')).previous).toBeUndefined();
+    await page.getByText('Vault tools', { exact: true }).click();
     await app.evaluate(({ dialog }, archive) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: archive });
     }, archive);

@@ -589,7 +589,7 @@ it('recovers a folder upload using only verified remote files and a verified par
     await rejectsRetry('prefix does not match');
     fixture.files.set(stage, original.subarray(0, 65536));
     await retry();
-    await vi.waitFor(() => expect(fixture.files.get(second)).toEqual(original));
+    await expect.poll(() => fixture.files.get(second)).toEqual(original);
     expect(offsets[0]).toBe(65536);
     expect(fixture.files.has(stage)).toBe(false);
     await vi.waitFor(() =>

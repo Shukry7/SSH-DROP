@@ -192,6 +192,31 @@ export class RecoveryStore {
     });
   }
 
+  rotateKey(check: () => void): Promise<void> {
+    return this.queue(async () => {
+      const records = await this.read();
+      if (!records.length) throw new Error('There are no recovery backups to rotate.');
+      if (records.some((record) => !record.encrypted))
+        throw new Error('Secure all legacy recovery backups before rotating the vault key.');
+      const metadata = Buffer.from(await this.vault.metadata());
+      try {
+        await this.vault.rotate(
+          [
+            {
+              name: 'recovery.enc',
+              size: metadata.length,
+              hash: createHash('sha256').update(metadata).digest('hex'),
+            },
+            ...records.map((record) => ({ name: `${record.id}.bak.enc`, ...record.previous })),
+          ],
+          check,
+        );
+      } finally {
+        metadata.fill(0);
+      }
+    });
+  }
+
   importVault(payload: Buffer, check: () => void): Promise<{ added: number; skipped: number }> {
     return this.queue(async () => {
       check();

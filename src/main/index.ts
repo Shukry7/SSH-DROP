@@ -672,10 +672,13 @@ function registerAPI(): void {
   );
   // Keep the memory-hard KDF serialized even if the renderer is replaced mid-operation.
   let portableBusy = false;
-  const portableOperation = async <T>(operation: (check: () => void) => Promise<T>) => {
+  const portableOperation = async <T>(
+    operation: (check: () => void) => Promise<T>,
+    timeout = 120000,
+  ) => {
     if (portableBusy) throw new Error('Wait for the other portable backup operation to finish.');
     portableBusy = true;
-    const deadline = performance.now() + 120000;
+    const deadline = performance.now() + timeout;
     try {
       return await operation(() => {
         checkOperation();
@@ -685,7 +688,10 @@ function registerAPI(): void {
       portableBusy = false;
     }
   };
-  const vaultOperation = async (operation: (check: () => void) => Promise<boolean>) =>
+  const vaultOperation = async (
+    operation: (check: () => void) => Promise<boolean>,
+    timeout = 120000,
+  ) =>
     portableOperation(async (check) => {
       for (const workspace of workspaces.values()) workspace.session.assertVaultIdle();
       vaultBusy = true;
@@ -694,7 +700,31 @@ function registerAPI(): void {
       } finally {
         vaultBusy = false;
       }
+    }, timeout);
+  handle(channels.rotateVaultKey, (value) => {
+    z.undefined().parse(value);
+    return selectFiles(async () => {
+      const approval = await messageBox({
+        type: 'warning',
+        title: 'Rotate recovery vault key',
+        message: 'Replace this computer’s recovery vault encryption key?',
+        detail:
+          'Export a password-protected vault archive first and keep it separately. All recovery backups and metadata will be re-encrypted and verified. Finish active operations in every tab. If interrupted, both OS-protected keys are retained; use Rotate recovery vault key again to finish. Older app versions cannot open the rotated vault. This does not rotate transfer checkpoints, change exported archives or recover a lost OS key. Filesystem snapshots and old copies may still contain the previous key.',
+        buttons: ['Cancel', 'Rotate key'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (approval.response !== 1) return false;
+      return vaultOperation(
+        async (check) => {
+          await recoveryStore.rotateKey(check);
+          return true;
+        },
+        30 * 60 * 1000,
+      );
     });
+  });
   handle(channels.exportVault, (value) => {
     const passphrase = portablePassphrase.parse(value);
     return selectFiles(async () => {

@@ -149,6 +149,7 @@ export interface DesktopAPI {
   openBackup(passphrase: string): Promise<Result<boolean>>;
   exportVault(passphrase: string): Promise<Result<boolean>>;
   importVault(passphrase: string): Promise<Result<boolean>>;
+  rotateVaultKey(): Promise<Result<boolean>>;
   idleStatus(): Promise<Result<import('./idle').IdleState>>;
   idleSettings(
     settings: import('./idle').IdleSettings,
