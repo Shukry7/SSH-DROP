@@ -117,6 +117,8 @@ npm run package:dir    # unpacked application for this platform
 npm run dist           # unsigned development installers
 ```
 
+Desktop tests require the generated application in `out/`. If `npm run check` fails before its build step, fix the failures and run `npm run build` successfully before running `npm run test:e2e`; launch failures without a build are not desktop feature results.
+
 Headless Linux desktop tests need `xvfb-run -a npm run test:e2e`. Build on each target operating system. macOS release distribution needs signing and notarization; signing is not configured in this alpha.
 
 ## Contributing and releases

@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -713,8 +723,55 @@ it('continues a saved folder between files after restart and refuses changed sou
   }
 }, 20000);
 
+it('rejects aliased local ancestors for saved transfers and accepts the canonical directory', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'sshdrop-transfer-alias-')));
+  const fixture = await sshFixture();
+  const session = new Session(
+    { verify: async () => true },
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    new TransferRecovery(testVault(join(dir, 'journal'))),
+  );
+  try {
+    const actual = join(dir, 'actual');
+    const alias = join(dir, 'alias');
+    await mkdir(join(actual, 'nested'), { recursive: true });
+    await symlink(actual, alias, 'junction');
+    const local = join(actual, 'nested', 'source.txt');
+    await writeFile(local, 'canonical source');
+    await session.connect({
+      host: '127.0.0.1',
+      port: fixture.port,
+      username: 'tester',
+      password: 'test-password',
+    });
+    session.setTransferMemory(true);
+    await expect(
+      session.queueFiles([
+        {
+          direction: 'upload',
+          local: join(alias, 'nested', 'source.txt'),
+          remote: '/canonical.txt',
+        },
+      ]),
+    ).rejects.toThrow('missing or unsafe');
+    expect(fixture.files.has('/canonical.txt')).toBe(false);
+    await session.queueFiles([{ direction: 'upload', local, remote: '/canonical.txt' }]);
+    await expect
+      .poll(() => fixture.files.get('/canonical.txt')?.toString())
+      .toBe('canonical source');
+    await expect.poll(() => session.savedTransfers()).toEqual([]);
+  } finally {
+    session.disconnect();
+    await fixture.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
 it('preserves an encrypted interrupted job and permits only a confirmed, unchanged retry', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-saved-transfer-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'sshdrop-saved-transfer-')));
   const stalled = ['WRITE'];
   const fixture = await sshFixture({ stall: stalled });
   const other = await sshFixture();
@@ -784,7 +841,7 @@ it('preserves an encrypted interrupted job and permits only a confirmed, unchang
 });
 
 it('resumes the recorded upload stage without rewriting its prefix', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-upload-resume-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'sshdrop-upload-resume-')));
   const original = Buffer.alloc(256 * 1024, 29);
   const local = join(dir, 'upload.bin');
   const remote = '/upload.bin';
@@ -856,7 +913,7 @@ it('resumes the recorded upload stage without rewriting its prefix', async () =>
 }, 20000);
 
 it('authenticates a retained download prefix, rejects changed remote bytes and resumes safely', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'sshdrop-download-resume-'));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'sshdrop-download-resume-')));
   let stall = false;
   const fixture = await sshFixture({ stallReadAt: (offset) => stall && offset >= 65536 });
   const local = join(dir, 'destination.bin');
