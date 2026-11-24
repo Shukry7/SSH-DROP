@@ -1,8 +1,8 @@
 import { useWorkspace } from './WorkspaceContext';
 import {
   useCallback,
-  useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -111,7 +111,7 @@ export function App({
     queue.pending > 0 ||
     transfers.some((transfer) => transfer.status === 'running' || transfer.status === 'queued');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     void api.info().then((result) => {
       if (result.ok) setInfo(result.value);
       else setError(result.error);

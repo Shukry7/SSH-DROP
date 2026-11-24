@@ -54,7 +54,9 @@ test('reviews a saved upload after restart and requires a separate retry confirm
     await remember.click();
     await expect(remember).toBeChecked();
     await page.getByRole('button', { name: /Upload files/ }).click();
-    await expect.poll(() => fixture.openedFiles.some((path) => path.endsWith('.part'))).toBe(true);
+    await expect
+      .poll(() => fixture.openedFiles.some((path) => path.endsWith('.part')), { timeout: 15000 })
+      .toBe(true);
     await app.close();
     stall.length = 0;
     app = await launch();

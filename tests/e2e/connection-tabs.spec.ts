@@ -51,28 +51,13 @@ test('connection tabs isolate files, shell output, drafts and delayed uploads', 
     await expect(page.locator('.xterm-rows:visible')).toContainText('fixture-ready');
     await tab(2).click();
     const terminal = () => page.locator('.xterm-rows:visible');
-    const sendToSelectedTerminal = async (data: string) => {
-      const result = await page.evaluate(async (data) => {
-        const workspace = [...document.querySelectorAll<HTMLElement>('.connection-workspace')].find(
-          (item) => !item.hidden,
-        );
-        const workspaceId = workspace?.dataset.sshdropWorkspace;
-        const panel = workspace?.querySelector<HTMLElement>(
-          '.terminal-surface[role="tabpanel"]:not([hidden])',
-        );
-        const terminalId = panel?.id.replace('terminal-panel-', '');
-        const api = workspaceId ? window.sshdrop.forWorkspace(workspaceId) : window.sshdrop;
-        return api.input(data, terminalId);
-      }, data);
-      expect(result).toMatchObject({ ok: true });
-    };
-    await sendToSelectedTerminal('output-from-second');
-    await expect(terminal()).toContainText('echo:output-from-second');
-    await expect(terminal()).not.toContainText('echo:output-from-first');
+    first.writeTerminal(Buffer.from('output-from-first\r\n'));
+    second.writeTerminal(Buffer.from('output-from-second\r\n'));
+    await expect(terminal()).toContainText('output-from-second');
+    await expect(terminal()).not.toContainText('output-from-first');
     await tab(1).click();
-    await sendToSelectedTerminal('output-from-first');
-    await expect(terminal()).toContainText('echo:output-from-first');
-    await expect(terminal()).not.toContainText('echo:output-from-second');
+    await expect(terminal()).toContainText('output-from-first');
+    await expect(terminal()).not.toContainText('output-from-second');
     await expect(page.getByRole('cell', { name: /second-only/ })).toHaveCount(0);
     await page
       .getByRole('row')

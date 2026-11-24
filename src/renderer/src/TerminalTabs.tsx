@@ -1,5 +1,5 @@
 import { useWorkspace } from './WorkspaceContext';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SessionEvent } from '../../shared/contracts';
 import { terminalTabLimit } from '../../shared/terminal-limits';
 import { Terminal, type TerminalOutput } from './Terminal';
@@ -37,7 +37,7 @@ export function TerminalTabs({
     if (editorTabId) document.getElementById(`terminal-tab-${editorTabId}`)?.focus();
   }, [editorTabId]);
 
-  useEffect(
+  useLayoutEffect(
     () =>
       api.onEvent((event) => {
         if (event.type === 'terminal-reset') {
