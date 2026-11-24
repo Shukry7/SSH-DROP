@@ -44,7 +44,12 @@ test('connection tabs isolate files, shell output, drafts and delayed uploads', 
         .getByRole('tab', { name: new RegExp(`^Connection ${index}( |$)`) });
     await connect(first.port, 'first-only');
     await page.getByRole('button', { name: 'New connection tab' }).click();
+    await expect(tab(2)).toHaveAttribute('aria-selected', 'true');
     await connect(second.port, 'second-only');
+    await expect(page.locator('.xterm-rows:visible')).toContainText('fixture-ready');
+    await tab(1).click();
+    await expect(page.locator('.xterm-rows:visible')).toContainText('fixture-ready');
+    await tab(2).click();
     first.writeTerminal(Buffer.from('output-from-first\r\n'));
     second.writeTerminal(Buffer.from('output-from-second\r\n'));
     const terminal = () => page.locator('.xterm-rows:visible');

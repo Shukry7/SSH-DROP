@@ -84,10 +84,14 @@ test('terminal tabs preserve output, confirm closing, and clear on disconnect', 
     const first = terminal.getByRole('tab', { name: 'Terminal 1', exact: true });
     const second = terminal.getByRole('tab', { name: 'Terminal 2', exact: true });
     const visibleRows = terminal.getByRole('tabpanel').locator('.xterm-rows');
+    await expect(visibleRows).toContainText('fixture-ready');
     fixture.writeTerminal(Buffer.from('FIRST-TAB-OUTPUT\r\n'));
     await expect(visibleRows).toContainText('FIRST-TAB-OUTPUT');
     await terminal.getByRole('button', { name: 'New terminal' }).click();
     await expect(second).toHaveAttribute('aria-selected', 'true');
+    await expect(terminal.getByRole('tabpanel').locator('.xterm-rows:visible')).toContainText(
+      'fixture-ready',
+    );
     fixture.writeTerminal(Buffer.from('SECOND-TAB-OUTPUT\r\n'));
     await expect(visibleRows).toContainText('SECOND-TAB-OUTPUT');
     await expect(visibleRows).not.toContainText('FIRST-TAB-OUTPUT');

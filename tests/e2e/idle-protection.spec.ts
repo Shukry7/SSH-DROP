@@ -71,6 +71,7 @@ test('idle countdown requires Stay active, ignores remote output and clears the 
       settings: { minutes: 10, notifications: false },
     });
     await advance(app, 300000);
+    await expect(page.locator('.xterm-rows')).toContainText('fixture-ready');
     fixture.writeTerminal(Buffer.from('REMOTE-OUTPUT-IS-NOT-ACTIVITY\r\n'));
     await expect(page.locator('.xterm-rows')).toContainText('REMOTE-OUTPUT-IS-NOT-ACTIVITY');
     const idleBeforeInput = await page.evaluate(() => window.sshdrop.idleStatus());

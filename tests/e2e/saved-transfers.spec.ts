@@ -48,11 +48,11 @@ test('reviews a saved upload after restart and requires a separate retry confirm
       return page;
     };
     let page = await connect();
-    await page
-      .getByRole('checkbox', {
-        name: 'Remember new file and folder transfers in this connection',
-      })
-      .check();
+    const remember = page.getByRole('checkbox', {
+      name: 'Remember new file and folder transfers in this connection',
+    });
+    await remember.click();
+    await expect(remember).toBeChecked();
     await page.getByRole('button', { name: /Upload files/ }).click();
     await expect.poll(() => fixture.openedFiles.some((path) => path.endsWith('.part'))).toBe(true);
     await app.close();
@@ -118,7 +118,8 @@ test('reviews a partial folder download and continues only after approval', asyn
     await page.getByLabel('Password', { exact: true }).fill('test-password');
     await page.getByRole('button', { name: 'Connect to server', exact: true }).click();
     const panel = page.getByRole('region', { name: 'Saved transfers' });
-    await panel.getByRole('checkbox').check();
+    await panel.getByRole('checkbox').click();
+    await expect(panel.getByRole('checkbox')).toBeChecked();
     await page
       .getByRole('row')
       .filter({ hasText: 'sample-tree' })
