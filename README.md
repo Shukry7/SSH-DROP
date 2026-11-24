@@ -1,134 +1,420 @@
 # SSHDrop
 
-A desktop SSH workspace for Windows, Linux, and macOS: an interactive terminal, remote file explorer, and explicit file transfers in one window.
+### Your SSH workspace. One desktop. Complete control.
 
-**Status: 0.6.0-alpha.2, early development preview.** Local Windows and Ubuntu WSL checks are available. Recent hosted CI runs failed before starting jobs. Native Linux and macOS device testing and signed installers remain pending.
+SSHDrop is a cross-platform desktop SSH workspace that brings remote terminal access, visual SFTP file management, and reliable file transfers into one application.
 
-## Current scope
+Built for developers and system administrators who want a cleaner, safer, and more productive way to manage remote servers without constantly switching between terminal and file-transfer tools.
 
-**Development source `0.6.0-alpha.1`** adds **Vault tools** for encrypted whole recovery vault export/import, with up to 100 backups and 64 MiB of contents. Imports use the destination OS key store and preserve server identities. Imported backups support restore-copy into a native-selected local file. See [vault portability](docs/PORTABLE_BACKUPS.md#whole-vault-portability-in-060-alpha1).
+<p align="center">
+  <strong>Windows · Linux · macOS</strong>
+</p>
 
-**Development source `0.6.0-alpha.2`** adds **Vault tools → Rotate recovery vault key**. Rotation verifies and re-encrypts local recovery backups and metadata, preserves both OS-protected keys if interrupted, and supports an explicit retry. Export an independent archive first. Older app versions cannot open the rotated vault; exported archives and saved-transfer checkpoints are unchanged. See [rotation and its limits](docs/PORTABLE_BACKUPS.md#active-recovery-vault-rotation-in-060-alpha2).
+<p align="center">
+  <a href="https://github.com/Shukry7/SSH-DROP">GitHub Repository</a> ·
+  <a href="https://github.com/Shukry7/SSH-DROP/issues">Report an Issue</a> ·
+  <a href="https://github.com/Shukry7/SSH-DROP/blob/main/CONTRIBUTING.md">Contribute</a>
+</p>
 
-**Development source `0.5.0-alpha.9`** adds **Back up and replace** to saved folder upload merges on servers with OpenSSH atomic rename support. Independent encrypted backups are stored on this computer for rollback. See [backed-up upload merge recovery](docs/TRANSFER_RECOVERY.md#backed-up-upload-merge-recovery-in-050-alpha9).
+---
 
-**Development source `0.5.0-alpha.8`** adds **Back up and replace** to saved folder download merges. SSHDrop retains a verified encrypted backup for rollback and checks it before resuming a completed replacement. See [backed-up merge recovery](docs/TRANSFER_RECOVERY.md#backed-up-download-merge-recovery-in-050-alpha8).
+## Project Status
 
-**Development source `0.5.0-alpha.7`** adds recovery for folder upload merges. Review the saved merge after reconnecting. Existing files are preserved. See [folder upload merge recovery](docs/TRANSFER_RECOVERY.md#folder-upload-merge-recovery-in-050-alpha7).
+**Status: 0.6.0-alpha.2, early development preview.**
 
-**Development source `0.5.0-alpha.6`** adds recovery for folder download merges. Saved merges preserve existing files and offer **Skip file** or **Keep both** for conflicts. See [saved merges](docs/TRANSFER_RECOVERY.md#folder-download-merge-recovery-in-050-alpha6).
+SSHDrop is actively developed, but it is not yet production-ready.
 
-**Development source `0.5.0-alpha.5`** adds opt-in folder upload recovery to new remote destinations. SSHDrop verifies completed remote files and can continue an unfinished file from a verified remote temporary file. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
+- Core SSH and SFTP functionality is implemented.
+- Confirmed transfer recovery, encrypted vault export/import, and recovery-key rotation are implemented.
+- Apple Silicon Mac source, desktop, DMG integrity, and packaged-startup checks passed. Native Linux device testing and Intel Mac startup testing remain pending.
+- Windows installers are unsigned. Mac packages use ad-hoc signatures without Apple Developer ID signing or notarization.
+- Some capabilities available in the development source are not included in older packaged builds.
+- The public [0.6.0-alpha.2 release](https://github.com/Shukry7/SSH-DROP/releases/tag/v0.6.0-alpha.2) includes Windows, Linux, and Mac packages with SHA-256 checksums. It remains an alpha preview.
 
-**Development source `0.5.0-alpha.4`** adds opt-in folder download recovery between files. SSHDrop verifies the source manifest and partial destination before continuing on the same verified server and account. See [folder download recovery](docs/TRANSFER_RECOVERY.md).
+Use disposable test servers and files when evaluating the application.
 
-**Development source `0.5.0-alpha.3`** adds resume for saved individual uploads. SSHDrop verifies its remote temporary file before writing the remainder. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
+## Why SSHDrop?
 
-**Development source `0.5.0-alpha.2`** adds encrypted checkpoints for interrupted saved downloads. Review the download after reconnecting to continue from a verified partial file. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
+Managing remote servers often means switching between several applications:
 
-**Development source `0.5.0-alpha.1`** adds opt-in encrypted recovery for individual transfers. Find **Saved transfers** after connecting. Retry starts from the beginning after explicit confirmation and checks the original source hash and destination. See [transfer recovery](docs/TRANSFER_RECOVERY.md).
+- One application for SSH terminal access.
+- Another for browsing remote files.
+- Another for uploading and downloading files.
+- Additional tools for managing backups and recovering interrupted operations.
 
-**Development source `0.4.0-alpha.4`** adds up to four independent SSH connection tabs. Each tab keeps its own file browser, terminals, drafts, transfer queue, and workflow runs. Saved profiles and workflow definitions remain shared across tabs. See [connection tabs](docs/RECONNECT.md#connection-tabs-in-040-alpha4).
+SSHDrop brings these workflows together.
 
-**Development source `0.4.0-alpha.3`** adds **Edit in terminal** for regular remote files. Choose Nano or Vim in the confirmation. The selected editor must be installed on the server and saves directly to the remote file. Use **Edit text** for verified saves and optional SSHDrop recovery backups.
+Instead of treating terminal access and file management as separate experiences, SSHDrop provides a unified workspace where you can connect to servers, execute commands, browse remote directories, edit files, and manage transfers.
 
-**Development source `0.4.0-alpha.2`** adds **Open shell folder**. If your shell reports its working directory, use this button to open it in Files on the same SSH connection. Enter a path manually when no report is available.
+## Features
 
-**Development source `0.4.0-alpha.1`** adds up to four terminal tabs on one SSH connection. Use **New terminal** to start another shell. Tabs preserve separate scrollback and can be closed independently. Disconnecting or idle clearing removes all terminal tabs and their output.
+### SSH Workspace
 
-**Development source `0.3.0-alpha.5`** adds up to eight remote editor tabs. Use **Back to files** to browse while keeping drafts open. Each tab keeps its own undo history, comparison, and verified save baseline.
-
-**Development source `0.3.0-alpha.4`** adds read-only remote image previews for PNG, JPEG, WebP, and GIF (first frame only). Select **Preview image** in the explorer. Use fit, actual size, and zoom; closing, disconnecting, or idle protection removes the preview. Sources are limited to 10 MiB, 8,388,608 pixels and 8,192 pixels per side. See [image preview](docs/IMAGE_PREVIEW.md).
-
-**Development source `0.3.0-alpha.3`** adds editor line numbers and syntax highlighting for JavaScript, TypeScript, JSON, YAML, Python, and shell scripts. The filename selects the initial mode; **Highlighting** lets you change it or choose Plain text. This changes display only and never executes file contents.
-
-**Development source `0.3.0-alpha.2`** adds in-file search and a comparison view to the remote editor. **Compare with server** shows the current server text beside the draft. After review and confirmation, keep the draft against the reviewed baseline or use the server text. A later save still checks for newer remote changes and uses the normal backup/save confirmation.
-
-**Development source `0.3.0-alpha.1`** adds a remote text editor. Select **Edit text** on a regular UTF-8 file up to 1 MiB, edit the draft, and review the save warning. Choose an encrypted recovery backup or confirm saving without a backup. The editor checks for remote changes before replacing the file and verifies the result. LF/CRLF endings and a UTF-8 BOM are preserved. See [remote editing](docs/REMOTE_EDITOR.md).
-
-**Development source `0.2.0-alpha.6`** adds optional [idle session protection](docs/IDLE_PROTECTION.md): a visible timer, final-minute countdown and disconnect-and-clear privacy screen. It defaults off. It does not keep an authenticated connection behind an app lock; expiry may interrupt active work. Existing alpha.5 installers do not contain this feature.
-
-Alpha.6 development source also adds [portable encrypted backup recovery](docs/PORTABLE_BACKUPS.md): export an individual recovery backup up to 32 MiB, then recover it offline into a new local file with its export passphrase. Export and test a copy before losing access to the original OS key store.
-
-If SSH is lost, use **Reconnect to server** to authenticate and start a fresh session. SSHDrop keeps connection fields in the current workspace but clears submitted passwords and key passphrases. It never automatically retries commands, transfers or workflows. A closed shell does not by itself end SSH or file browsing. See [connection recovery](docs/RECONNECT.md).
-
-Version **0.2.0-alpha.5** adds optional **Replace without backup** (permanent, no rollback) and [saved commands/workflows](docs/WORKFLOWS.md), including variables, exact previews and server confirmation enabled by default. It also fixes terminal layout/refitting for clipped rows. Run again reviews the latest saved workflow with fresh variable inputs and the saved confirmation preference; it never resumes or automatically replays previous commands. Older alpha.4 installers do not include these additions.
-
-- Password or private-key authentication for one active SSH connection.
-- Beginner connection guide and accessible `?` help for each connection field, with examples and guidance on finding server details.
-- Explicit trust prompt for unknown server keys; changed identities are rejected.
+- Password and private-key authentication.
+- Up to four independent SSH connection tabs.
+- Up to four terminal tabs within each connection.
 - Interactive remote terminal with resizing.
-- SFTP directory browsing with an explicit destination.
-- Streamed individual uploads/downloads with progress and cancellation. Transfers use exclusive temporary files, SHA-256 destination readback, and publication without replacement. Setup/cleanup waits and stalled transfers are bounded; generic interruption notices survive reconnect without retaining old filenames.
-- Session-only credentials; private keys stay on the local machine.
-- Saved server profiles: add, edit, delete with confirmation, and load connection details. Profiles remember the chosen key-file location, never passwords, passphrases, or key contents.
-- Create remote folders, rename files/folders within their current folder, and permanently delete files or empty folders after native confirmation. Existing destinations are refused; symlinks, special files, recursive deletion, and undo are unsupported.
-- **New file** in unreleased `0.2.0-alpha.6` creates an empty file in the displayed remote folder after confirmation. The app requests owner-only read/write permissions (`0600`) and preserves existing paths.
-- **Copy or move** in unreleased `0.2.0-alpha.6` sends regular files to an existing folder on the same server. Copies up to 128 MiB stream through the app without a local file, verify SHA-256, and request owner-only permissions. Moves use standard SFTP rename. Both require confirmation and refuse existing destinations. If the server rejects a move across filesystems, the operation stops and preserves the source.
-- **Permissions** in unreleased `0.2.0-alpha.6` edits read, write, and execute access for owner, group, and others on one file or folder at a time. The dialog shows both modes before confirmation. The server must support a read-only SFTP open and handle-based permission changes for the selected item. Special permission bits, ownership changes, and recursive updates are outside this feature.
-- File transfer conflicts offer Cancel, Keep both, or verified backup and replacement where supported. Persistent recovery records support inspection, restore-copy, and guarded rollback; general undo for deletion or renaming is unsupported.
+- Saved server profiles.
+- Beginner connection guidance and field tooltips.
+- Explicit server fingerprint verification; changed identities are rejected.
+- Explicit reconnect with fresh authentication and no automatic replay.
+- Session-only password and private-key passphrase handling.
 
-This version includes saved profiles, remote file actions, a bounded text editor, and hardened transfers. Older `0.1.0-alpha.1` release artifacts do not include them. Upload verification downloads the temporary remote file once, adding roughly its size in network traffic. Downloads require a local filesystem supporting hard links for publication without replacement; unsupported filesystems fail safely. Persistent secrets, terminal directory following, Docker browsing, and Mobile Bridge are planned. See the [roadmap](docs/ROADMAP.md).
+### Visual SFTP File Manager
 
-For a step-by-step list of implemented behaviors to try, see the [manual testing checklist](docs/MANUAL_TESTING.md).
+- Browse remote directories.
+- Upload and download individual files.
+- Upload and download folders.
+- Queue multiple file transfers.
+- Create empty remote files and folders.
+- Rename files/folders within a folder; permanently delete regular files and empty folders after confirmation. Recursive deletion is not implemented.
+- Copy and move regular files on the same server into existing folders, with confirmation and no replacement of existing destinations. Copies are limited to 128 MiB.
+- Inspect and edit ordinary permission bits for one file or folder at a time.
+- Drag and drop supported local files after reviewing the destination.
+- Edit UTF-8 text files up to 1 MiB with syntax highlighting, search, draft/server comparison, guarded saves, and up to eight editor tabs.
+- Open dedicated Nano or Vim terminal tabs when the editor is installed on the server.
+- Read-only PNG, JPEG, WebP, and first-frame GIF previews, limited to 10 MiB and 8,388,608 pixels.
 
-**Version 0.2.0-alpha.4:** Upload files accepts multiple native-selected files. Select remote-file checkboxes and Download selected to queue downloads into a native-selected folder. The session-only queue runs one file at a time, with at most 100 active/waiting jobs, per-file status/cancellation, and existing verification/overwrite safeguards. A failure pauses the queue until you confirm Continue queue; the failed file is never automatically retried. Disconnect discards waiting jobs. Folder copies are also available in 0.2.0-alpha.4: Upload folder or a remote folder’s Download button copies into a **new** destination folder. A native warning defaults to Cancel and shows both paths. The complete scan is limited to 100 items including folders, 16 levels, 10 GiB and 30 seconds. Links, special files, nonportable/colliding names and existing destination folders are refused. Empty folders are preserved; files are staged and SHA-256 verified. A folder is one queue job with aggregate byte progress and cancellation; a failed/cancelled copy can retain completed files and empty folders. Inspect or rename the partial copy before retrying. There is no folder merging, metadata/ACL preservation, automatic cleanup, automatic retry, or byte-level resume. Stop other writers during a copy. Existing alpha.3 installers do not include the queue.
+### Reliable File Transfers
 
-Queued source contents are read/checked when the job starts, rather than frozen at selection time. Keep selected files and destination folders stable while waiting. Declining an overwrite skips that individual file; active cancellation/failure pauses remaining jobs.
+File operations should be predictable, even when network connections fail.
 
-**Unreleased 0.2.0-alpha.6:** Drop up to 100 local files from your file manager onto the remote explorer. Review the displayed destination and confirm to queue the upload. The queue refuses dropped directories, symbolic links, hard-linked files, duplicate names, and files that change after review. Use **Upload folder** for folders and **Upload files** to open the native file picker.
+SSHDrop includes:
 
-**Workflow library in unreleased 0.2.0-alpha.6:** Search names, descriptions, and groups; assign an optional group; or duplicate a workflow into the editor. Export selected definitions as readable JSON after reviewing the sharing warning. Import opens a definition for review with a new ID and run confirmation enabled. Save it explicitly before running. Exports include saved commands and settings, so review them for private details before sharing.
+- Transfer progress and cancellation.
+- SHA-256 integrity verification.
+- Temporary-file staging.
+- Destination conflict handling.
+- Skip file, Keep both, and guarded replacement options.
+- Explicit Replace without backup, with a separate warning: this is permanent and has no rollback.
+- Opt-in encrypted saved-transfer records and checkpoints with a confirmed retry or supported resume.
+- Folder transfer recovery and reviewed merges into existing destinations.
+- Encrypted recovery backups.
+- Recovery inspection and rollback workflows.
 
-**Unreleased 0.2.0-alpha.6:** Folder uploads and downloads can also merge into an existing folder after separate confirmation. Each conflicting file offers **Skip file**, **Keep both**, and, where supported, **Back up and replace** or **Replace without backup**. The last option requires another confirmation. A bounded scan checks the destination before writing, and the transfer row shows copied and skipped counts. A merge keeps completed changes after interruption. Stop other writers and inspect partial results before retrying. See the [folder merge checklist](docs/MANUAL_TESTING.md#folder-merges-unreleased-020-alpha6).
+Recovery and replacement capabilities depend on the operation, filesystem, server support, and application version. Upload replacement requires OpenSSH atomic rename support. Folder scans are bounded to 100 items, 16 levels, and 10 GiB. Upload verification reads the staged remote contents back, adding network traffic; local no-replacement publication requires hard-link support.
 
-## Overwrite and recovery (0.2.0-alpha.2)
+An interrupted publication can have an uncertain outcome. Inspect retained records and partial results before retrying; nothing is automatically rolled back or replayed. See [transfer recovery](docs/TRANSFER_RECOVERY.md) and the [manual testing checklist](docs/MANUAL_TESTING.md).
 
-Version 0.2.0-alpha.2 offers Cancel / Keep both / Back up and replace when a regular-file destination exists. Replace first stores an independent verified backup locally, stages the incoming file, rechecks the original, and requires atomic replacement support (OpenSSH POSIX rename for uploads; native replacement for local downloads). The **Recovery backups** panel is scoped to the connected server key, address, port, and account. Inspect unresolved outcomes; restore a separate copy if the destination changed. Rollback first backs up the current version too. Nothing is retried or restored automatically.
+### Encrypted Recovery Vault
 
-The existing `0.2.0-alpha.2` installers store **unencrypted backup contents and paths**, retained until explicitly deleted (100 records / 10 GiB accounted contents; 50 MiB reserve). Protect your device and disk. Stop other writers. Remote ACLs, extended attributes, hidden hard links, and power-loss durability cannot be guaranteed. This feature is not in existing `0.2.0-alpha.1` installers; see the [recovery testing checklist](docs/MANUAL_TESTING.md).
+SSHDrop includes an encrypted recovery system designed to help protect backups and support recovery operations.
 
-**Version 0.2.0-alpha.3:** new backup contents and recovery metadata use AES-256-GCM authenticated encryption, with an OS-protected vault key. There is no plaintext fallback. Legacy backups show **Legacy plaintext** until you explicitly choose **Secure backup**; migration verifies the encrypted copy and saves metadata before removing the original. A non-sensitive format marker prevents older plaintext-only versions from silently starting a second recovery journal. Other legacy contents remain plaintext until individually secured. Repeat Secure backup after interrupted cleanup. This does not securely erase earlier disk contents.
+Capabilities in the current development source include:
 
-Keep the entire `backups` folder, including `vault-key.json`, and retain access to the original OS account/key store. Losing either can make recovery impossible; copying the folder to another computer/account is not a portable recovery method. Encryption does not protect against other software running as your OS user. Linux requires a recognized, unlocked libsecret/KWallet backend; headless or `basic_text` environments cannot create or unlock encrypted backups. Unique-file transfers and Keep both remain available without a vault. See [encrypted recovery testing](docs/MANUAL_TESTING.md#encrypted-recovery-020-alpha3).
+- AES-256-GCM authenticated encryption.
+- Operating-system-protected vault keys.
+- Individual password-protected backup export and offline restore-to-copy, up to 32 MiB.
+- Whole-vault export/import, up to 100 backups and 64 MiB of contents.
+- Confirmed recovery-vault key rotation.
+- Backup verification.
+- Recovery-copy restoration.
+- Both OS-protected keys are retained during interrupted rotation; retry explicitly to finish.
 
-## Download the alpha
+**Important:** Recovery encryption does not protect against malicious software running under the same operating-system account. Export and verify an independent archive before rotating or moving OS accounts. Losing the original OS key before export can make recovery impossible. Older app versions cannot open a rotated vault. Exported archives and saved-transfer checkpoints use separate keys and are not changed by recovery-vault rotation.
 
-Public builds, when published, are available from [GitHub Releases](https://github.com/Shukry7/SSH-DROP/releases). Start with the installation notes and known platform limitations in [INSTALLING.md](docs/INSTALLING.md). This alpha uses unsigned installers and should be evaluated with disposable test servers.
+Recovery records are bound to the verified server and account. Imported records permit restore-copy only, not rollback using paths recorded on another computer. Local recovery storage is limited to 100 records and 10 GiB of backup contents. Legacy plaintext backups require explicit migration; migration and deletion are not secure erasure.
 
-End users do not need Node.js or npm for a packaged build. Developers building from source need Node.js 24.
+See [portable backups and rotation](docs/PORTABLE_BACKUPS.md) for limits, interruption behavior, and OS key-store requirements.
 
-## Development
+### Saved Commands & Workflows
 
-Install Node.js 24, then:
+- Save, edit, delete, search, group, and duplicate workflow definitions locally; the library persists across server changes and restarts.
+- Run sequential noninteractive command steps in a selected remote working directory.
+- Preview exact scripts with typed variable inputs before execution.
+- Confirmation is enabled by default. Disabling it requires an explicit warning; Run again respects the saved preference and asks for fresh variable values.
+- Stream bounded stdout/stderr and stop on failure, timeout, cancellation, or connection loss.
+- Import and export workflow definitions as readable JSON; imports open for review with new IDs and confirmation enabled.
 
-```sh
+Imported workflows should always be reviewed before execution. Exports contain commands and settings, which may include private details. Interactive programs and password prompts belong in the terminal. See [saved workflows](docs/WORKFLOWS.md).
+
+### Idle Session Protection
+
+- Optional inactivity protection, off by default.
+- A visible timer and final-minute countdown with an explicit Stay active action.
+- Disconnect-and-clear on expiry and supported OS lock/sleep events, invalidating pending approvals.
+- A privacy screen replaces the workspace; returning requires a fresh SSH connection.
+
+Expiry can interrupt active work. Authenticated app unlocking that keeps connections running is not implemented. See [idle protection](docs/IDLE_PROTECTION.md).
+
+---
+
+## Screenshots & Demo
+
+Screenshots and a short demonstration video will be added here as the interface and release experience stabilize.
+
+Recommended demonstrations:
+
+1. Connecting to a remote Linux server.
+2. Working with multiple terminal sessions.
+3. Browsing remote files through SFTP.
+4. Uploading and downloading files.
+5. Recovering an interrupted transfer.
+6. Managing encrypted recovery backups.
+
+---
+
+## Security
+
+Security is a core design consideration in SSHDrop.
+
+Current security-oriented design decisions include:
+
+| Area                    | Approach                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| SSH host verification   | Explicit trust confirmation for unknown fingerprints                                                         |
+| Changed host identities | Rejected rather than silently accepted                                                                       |
+| Credentials             | Session-only passwords/passphrases; saved profile metadata and key-file locations remain unencrypted locally |
+| Private keys            | Remain on the local machine                                                                                  |
+| File transfers          | Temporary staging and SHA-256 verification                                                                   |
+| File replacement        | Explicit confirmation and guarded replacement                                                                |
+| Recovery backups        | Authenticated encryption with AES-256-GCM                                                                    |
+| Vault keys              | Operating-system-protected storage                                                                           |
+| Workflow execution      | Exact previews and default-on confirmation controls                                                          |
+| Renderer boundary       | Sandboxing, context isolation, and a narrow validated preload/IPC API                                        |
+
+SSHDrop does not automatically replay commands, transfers, or workflows after reconnecting.
+
+### Security limitations
+
+SSHDrop is an early development preview.
+
+It has not undergone a comprehensive independent security audit. Unsigned installers and platform-specific limitations also remain.
+
+Do not use it for sensitive production infrastructure without conducting your own security assessment.
+
+For vulnerability reporting, see [SECURITY.md](SECURITY.md). See the [privacy policy](PRIVACY.md) for local-data retention and the [security review](docs/SECURITY_REVIEW.md) for threat boundaries and remaining validation.
+
+---
+
+## Technology Stack
+
+| Technology       | Purpose                        |
+| ---------------- | ------------------------------ |
+| Electron         | Cross-platform desktop runtime |
+| React            | User interface                 |
+| TypeScript       | Application development        |
+| Node.js          | Backend application logic      |
+| SSH2             | SSH and SFTP connectivity      |
+| Zod              | Data validation                |
+| Vitest           | Unit and regression testing    |
+| Playwright       | Desktop end-to-end testing     |
+| Electron Builder | Application packaging          |
+
+---
+
+## Architecture
+
+SSHDrop separates its desktop interface from privileged application operations.
+
+```mermaid
+flowchart TD
+    UI["Sandboxed React / TypeScript renderer"] --> Bridge["Narrow preload API and validated IPC"]
+    Bridge --> Main["Electron main: SSH, SFTP, transfers and recovery"]
+    Main --> Server["Remote server over SSH / SFTP"]
+    Main --> Vault["Local recovery vault and OS key store"]
+```
+
+This is a conceptual overview of the application architecture.
+
+---
+
+## Getting Started
+
+### For users
+
+Download the [0.6.0-alpha.2 preview](https://github.com/Shukry7/SSH-DROP/releases/tag/v0.6.0-alpha.2): Windows x64 installer, Linux x64 AppImage/Debian package, or macOS Apple Silicon/Intel DMG. Choose the correct architecture and verify the download against the attached `SHA256SUMS.txt`.
+
+The Mac packages are ad-hoc signed and not notarized. Package checks do not establish normal Gatekeeper acceptance on another Mac.
+
+See [Installation Guide](docs/INSTALLING.md) for platform-specific instructions and known limitations.
+
+End users do not need Node.js or npm to run a packaged application.
+
+### For developers
+
+#### Requirements
+
+- Node.js 24
+- npm
+- Git
+- A development environment supported by Electron
+
+#### Clone the repository
+
+```bash
+git clone https://github.com/Shukry7/SSH-DROP.git
+
+cd SSH-DROP
+```
+
+#### Install dependencies
+
+```bash
 npm ci
+```
+
+#### Start development
+
+```bash
 npm run dev
 ```
 
-Use a disposable Linux SSH server with SFTP enabled. The first connection prompts you to verify its SHA-256 fingerprint through a trusted channel. The explorer path is independent of the terminal's directory.
+### Available commands
 
-```sh
-npm run check          # metadata, formatting, lint, types, regression coverage, build
-npm run test:coverage  # core coverage and thresholds
-npm run test:e2e       # real Electron desktop/security checks
-npm run package:dir    # unpacked application for this platform
-npm run dist           # unsigned development installers
+```bash
+# Development
+npm run dev
+
+# Application checks
+npm run check
+
+# Test coverage
+npm run test:coverage
+
+# Desktop end-to-end tests
+npm run test:e2e
+
+# Build application
+npm run build
+
+# Create unpacked application
+npm run package:dir
+
+# Create development installers
+npm run dist
 ```
 
-Desktop tests require the generated application in `out/`. If `npm run check` fails before its build step, fix the failures and run `npm run build` successfully before running `npm run test:e2e`; launch failures without a build are not desktop feature results.
+Desktop end-to-end tests require the generated application in `out/`. `npm run check` builds only after its earlier checks pass. Run this chain so desktop tests stop if checks or the build fail:
 
-Headless Linux desktop tests need `xvfb-run -a npm run test:e2e`. Build on each target operating system. macOS release distribution needs signing and notarization; signing is not configured in this alpha.
+```bash
+npm run check && npm run test:e2e
+```
 
-## Contributing and releases
+For a separate build, use `npm run build` before `npm run test:e2e`.
 
-Use focused branches and pull requests, with regression tests for new operations and bug fixes. GitHub Actions checks Windows, Linux, and macOS. See [contributing](CONTRIBUTING.md), [architecture](docs/ARCHITECTURE.md), [security](SECURITY.md), [versioning](docs/VERSIONING.md), and [changelog](CHANGELOG.md).
+For headless Linux environments:
 
-Licensed under [MIT](LICENSE).
+```bash
+xvfb-run -a npm run test:e2e
+```
 
-Read the [privacy policy](PRIVACY.md) and [security review](docs/SECURITY_REVIEW.md) for local-data handling, automated checks, temporary dependency exceptions, and remaining signing/independent-review requirements. These improvements are not included in the older `0.1.0-alpha.1` installers.
+Build and validate release packages on their respective target operating systems. After packaging, run `npm run security:package`; on macOS, also run `npm run security:mac-package` to check both DMGs and startup on the host architecture. `npm run security:audit` and `npm run security:secrets` check dependency policy and tracked-file secrets.
 
-### macOS development package integrity
+---
 
-The Mac packaging fix branch adds explicit ad-hoc signing and DMG/signature/startup checks. It awaits a Mac validation run before release assembly. Developer ID signing and notarization remain pending, and downloaded previews may still be blocked by Gatekeeper. See [MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md) for diagnosis and validation limits.
+## Platform Support
+
+| Platform | Architecture  | Status                                                                                                                |
+| -------- | ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Windows  | x64           | Local checks, desktop tests, package fuses, and packaged startup passed; unsigned                                     |
+| Linux    | x64           | Ubuntu WSL checks, desktop tests, package fuses, and startup passed; native desktop/key-store validation pending      |
+| macOS    | Apple Silicon | Native checks and desktop tests passed; DMG integrity, ad-hoc signature, version, ASAR, and packaged startup verified |
+| macOS    | Intel         | DMG integrity, ad-hoc signature, version, ASAR, and fuses verified; Intel startup pending                             |
+
+The availability of a generated package does not mean that every platform and architecture has been independently validated.
+
+See [INSTALLING.md](docs/INSTALLING.md) for current packaging and compatibility information.
+
+---
+
+## Roadmap
+
+SSHDrop is being developed incrementally, with reliability and security taking priority over feature quantity.
+
+### Current development priorities
+
+- [ ] Maintain cross-platform CI and release checks.
+- [ ] Native Linux desktop/key-store validation, Intel Mac startup testing, and broader OS key-store lifecycle testing.
+- [ ] Apple Developer ID signing/notarization and Windows signing.
+- [ ] Independent security review, accessibility review, and power-loss/recovery testing.
+- [ ] Improve onboarding and installation guidance.
+
+### Future possibilities
+
+- [ ] Authenticated app locking that can keep active connections running.
+- [ ] Optional OS-backed saved SSH credentials.
+- [ ] Remote editor merging and additional text encodings.
+- [ ] Recursive deletion with a separate destructive-operation design.
+- [ ] Container filesystem browsing, remote-to-remote transfers, and native drag-out.
+- [ ] Mobile Bridge with a separate pairing, TLS, permission, and revocation design.
+
+Roadmap items are proposals and may change as development progresses. See the [detailed roadmap](docs/ROADMAP.md) for implemented scope and future work.
+
+---
+
+## Contributing
+
+SSHDrop is an open-source project, and contributions are welcome.
+
+You can contribute through:
+
+- Bug reports.
+- Feature suggestions.
+- Documentation improvements.
+- Testing on different operating systems.
+- Code contributions.
+- Security-related improvements.
+
+Before submitting a pull request:
+
+1. Review existing issues.
+2. Create a focused branch.
+3. Include tests for new functionality.
+4. Run the available project checks.
+5. Document important behavioral changes.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing.
+
+Please never include passwords, private keys, credentials, or sensitive server information in issues or pull requests.
+
+---
+
+## Project Documentation
+
+| Document                                       | Description                                             |
+| ---------------------------------------------- | ------------------------------------------------------- |
+| [Installation](docs/INSTALLING.md)             | Installation and platform limitations                   |
+| [Contributing](CONTRIBUTING.md)                | Contribution guidelines                                 |
+| [Security](SECURITY.md)                        | Security policy and vulnerability reporting             |
+| [Privacy](PRIVACY.md)                          | Privacy and local-data handling                         |
+| [Changelog](CHANGELOG.md)                      | Version history and changes                             |
+| [Architecture](docs/ARCHITECTURE.md)           | Desktop boundaries and application structure            |
+| [Manual testing](docs/MANUAL_TESTING.md)       | Feature checks using disposable data                    |
+| [Transfer recovery](docs/TRANSFER_RECOVERY.md) | Saved transfers, supported resume, and folder recovery  |
+| [Vault portability](docs/PORTABLE_BACKUPS.md)  | Exports, imports, key rotation, and recovery limits     |
+| [Workflows](docs/WORKFLOWS.md)                 | Saved commands, variables, previews, and rerun behavior |
+| [Versioning](docs/VERSIONING.md)               | Version source, checks, and release flow                |
+| [Documentation](docs/)                         | Architecture, testing, design and feature documentation |
+
+---
+
+## License
+
+SSHDrop is released under the [MIT License](LICENSE).
+
+You are free to use, modify, and distribute the software under the terms of the license.
+
+---
+
+## Author
+
+**Faik Ahmed Sukry**
+
+Software Engineer · Open-Source Developer
+
+GitHub: [@Shukry7](https://github.com/Shukry7)
+
+---
+
+<p align="center">
+
+<strong>SSHDrop</strong>
+
+A better workspace for working with remote servers.
+
+Built with care for developers who work beyond their local machine.
+
+<a href="https://github.com/Shukry7/SSH-DROP">Explore the repository</a>
+
+</p>
